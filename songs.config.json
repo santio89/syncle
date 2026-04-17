@@ -1,0 +1,23 @@
+{
+  "$schema": "Edit this file to manage Syncle's daily catalog. Run `npm run build:manifest` (or just `npm run dev` / `npm run build`) to refresh public/songs/manifest.json from this config + the GitHub Release.",
+
+  "release": {
+    "owner": "YOUR_GH_USERNAME",
+    "repo": "syncle",
+    "tag": "songs-v1"
+  },
+
+  "schedule": [
+    { "date": "2026-04-17", "songId": "credens-justitiam" }
+  ],
+
+  "songs": {
+    "credens-justitiam": {
+      "title": "Credens justitiam",
+      "artist": "Kajiura Yuki",
+      "year": 2011,
+      "audio": "osu-mania/audio 0.900x.mp3",
+      "chart": "osu-mania/Kajiura Yuki - Credens justitiam (Extended Edit) ([Crz]Zetsfy) [Quowjaz 0.9x].osu"
+    }
+  }
+}

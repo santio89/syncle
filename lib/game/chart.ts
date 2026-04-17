@@ -8,7 +8,7 @@ import { parseOsu } from "./osu";
  *
  * NOTE: there is intentionally NO usable audioUrl here — there is no
  * "always-works" fallback song shipped with the repo. The only audio
- * that plays is whatever the loaded osu! beatmap points to.
+ * that plays is whatever today's manifest entry points to.
  */
 export const PLACEHOLDER_META: SongMeta = {
   id: "",
@@ -21,43 +21,90 @@ export const PLACEHOLDER_META: SongMeta = {
   difficulty: "easy",
 };
 
+/* ------------------------------------------------------------------------- */
+/* Manifest-driven loading                                                   */
+/* ------------------------------------------------------------------------- */
+
 /**
- * Candidate osu! beatmaps to try, in order. The first one whose chart file
- * loads + parses as 4K mania wins. Each entry pairs a `.osu` chart with the
- * audio file it expects (relative to /public).
+ * Runtime view of an entry in `public/songs/manifest.json`. The manifest is
+ * generated at build time by `scripts/build-manifest.mjs` from
+ * `songs.config.json` (+ optionally a GitHub Release).
  *
- *   public/songs/today/chart.osu      ← preferred drop-in slot for the daily
- *   public/songs/osu-mania/...        ← dev test set
+ *   mode = "remote" → audioUrl/chartUrl point at GitHub Releases CDN
+ *   mode = "local"  → they point at /songs/... in /public
+ *
+ * The runtime doesn't care which — it just fetches by URL.
  */
-interface OsuCandidate {
-  chartUrl: string;
+interface ManifestSong {
+  id: string;
+  title: string;
+  artist: string;
+  year?: number;
   audioUrl: string;
-  /** Override song meta (title/artist) when this chart is the one used. */
-  metaOverride?: Partial<Pick<SongMeta, "title" | "artist" | "year" | "id">>;
+  chartUrl: string;
 }
 
-const OSU_CANDIDATES: OsuCandidate[] = [
-  // Drop-in slot for the "official" daily song. If you put a chart.osu +
-  // audio.mp3 here it takes precedence over everything else.
-  {
-    chartUrl: "/songs/today/chart.osu",
-    audioUrl: "/songs/today/audio.mp3",
-  },
-  // Dev test beatmap: Kajiura Yuki - Credens justitiam, charted by Quowjaz.
-  // Using the 0.9x time-stretched version (slowest audio + matching chart
-  // timings) so streams are more readable on easy/normal.
-  {
-    chartUrl:
-      "/songs/osu-mania/Kajiura Yuki - Credens justitiam (Extended Edit) ([Crz]Zetsfy) [Quowjaz 0.9x].osu",
-    audioUrl: "/songs/osu-mania/audio 0.900x.mp3",
-    metaOverride: {
-      id: "credens-justitiam",
-      title: "Credens justitiam",
-      artist: "Kajiura Yuki",
-      year: 2011,
-    },
-  },
-];
+interface Manifest {
+  generatedAt: string;
+  mode: "remote" | "local";
+  modeReason?: string;
+  schedule: { date: string; songId: string }[];
+  songs: Record<string, ManifestSong>;
+}
+
+let manifestPromise: Promise<Manifest> | null = null;
+
+async function loadManifest(): Promise<Manifest> {
+  if (!manifestPromise) {
+    manifestPromise = (async () => {
+      const res = await fetch("/songs/manifest.json", { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(
+          `manifest fetch failed: HTTP ${res.status} ` +
+            "— did `npm run build:manifest` run?",
+        );
+      }
+      return (await res.json()) as Manifest;
+    })().catch((err) => {
+      // Reset so a later retry can succeed (e.g. after the user fixes config).
+      manifestPromise = null;
+      throw err;
+    });
+  }
+  return manifestPromise;
+}
+
+/** YYYY-MM-DD in the local timezone — matches the format in songs.config.json. */
+function todayKey(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * Pick which song the manifest says is "today's". Strategy:
+ *   1. exact date match in schedule
+ *   2. otherwise the most recent past entry (so the schedule "sticks" when
+ *      you forget to add tomorrow's song)
+ *   3. otherwise the first song in `songs` (dev fallback)
+ */
+function pickTodaySong(m: Manifest): ManifestSong {
+  const today = todayKey();
+  const sorted = [...m.schedule].sort((a, b) => a.date.localeCompare(b.date));
+  const exact = sorted.find((e) => e.date === today);
+  const past = [...sorted].reverse().find((e) => e.date <= today);
+  const fallbackId = Object.keys(m.songs)[0];
+  const songId = exact?.songId ?? past?.songId ?? fallbackId;
+  const song = songId ? m.songs[songId] : undefined;
+  if (!song) throw new Error("manifest has no songs");
+  return song;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Difficulty quantization (unchanged)                                       */
+/* ------------------------------------------------------------------------- */
 
 /**
  * Difficulty modes for osu! charts. Most osu!mania beatmaps are charted for
@@ -73,7 +120,6 @@ const OSU_CANDIDATES: OsuCandidate[] = [
  */
 export type ChartMode = "easy" | "normal" | "hard";
 
-/** Default mode if the caller doesn't specify. */
 const DEFAULT_MODE: ChartMode = "easy";
 
 /**
@@ -126,22 +172,10 @@ function quantizeToGrid(
   return out;
 }
 
-/**
- * URL-encode a path segment-by-segment so spaces, brackets and parens in
- * filenames (very common in osu! beatmaps) survive the round-trip through
- * fetch() and Next's static handler. Slashes between segments are kept.
- */
-function encodePath(path: string): string {
-  return path.split("/").map(encodeURIComponent).join("/");
-}
+/* ------------------------------------------------------------------------- */
+/* Public API                                                                */
+/* ------------------------------------------------------------------------- */
 
-/**
- * Try each candidate beatmap in order. Returns the first one that loads as
- * a valid 4K mania chart. Falls back to the hand-built chart if none work.
- *
- * The returned `meta` has bpm/offset/duration taken from the .osu file so
- * the rhythm engine locks to the actual song timing, not our guesses.
- */
 export interface LoadSongResult {
   meta: SongMeta;
   notes: Note[];
@@ -152,62 +186,56 @@ export interface LoadSongResult {
 }
 
 /**
- * Try every candidate osu! beatmap until one loads. Resolves with the
- * playable chart, or rejects with an error describing what failed (no
- * silent fallback — there's no shipped audio to fall back to).
+ * Resolve today's song from the manifest, fetch + parse its osu! chart, and
+ * return a playable result. Rejects with a descriptive error if the manifest
+ * is missing, the song schedule is empty, or the chart isn't 4K mania.
  */
 export async function loadSong(
   mode: ChartMode = DEFAULT_MODE,
 ): Promise<LoadSongResult> {
-  const errors: string[] = [];
-  for (const cand of OSU_CANDIDATES) {
-    const encodedChart = encodePath(cand.chartUrl);
-    try {
-      const res = await fetch(encodedChart, { cache: "no-store" });
-      if (!res.ok) {
-        if (res.status !== 404) {
-          errors.push(`${encodedChart} → HTTP ${res.status}`);
-        }
-        continue;
-      }
-      const text = await res.text();
-      const parsed = parseOsu(text);
-      if (!parsed) {
-        errors.push(`${encodedChart} parsed null (not 4K mania?)`);
-        continue;
-      }
+  const manifest = await loadManifest();
+  const song = pickTodaySong(manifest);
 
-      let notes = parsed.notes;
-      if (mode === "easy") {
-        notes = quantizeToGrid(notes, parsed.bpm, parsed.offset, 1);
-      } else if (mode === "normal") {
-        notes = quantizeToGrid(notes, parsed.bpm, parsed.offset, 2);
-      }
-
-      const meta: SongMeta = {
-        id: cand.metaOverride?.id ?? "today",
-        title: cand.metaOverride?.title ?? parsed.title,
-        artist: cand.metaOverride?.artist ?? parsed.artist,
-        year: cand.metaOverride?.year,
-        bpm: parsed.bpm,
-        offset: parsed.offset,
-        duration: parsed.duration,
-        audioUrl: encodePath(cand.audioUrl),
-        difficulty: mode,
-      };
-      return {
-        meta,
-        notes,
-        source: "osu",
-        rawNoteCount: parsed.notes.length,
-        mode,
-      };
-    } catch (err) {
-      errors.push(`${encodedChart} threw ${(err as Error)?.message ?? err}`);
-    }
+  // GitHub Releases (and our local /public) serve immutable bytes per URL,
+  // so an aggressive cache hint cuts retries from ~5 MB/play to ~0.
+  const res = await fetch(song.chartUrl, { cache: "force-cache" });
+  if (!res.ok) {
+    throw new Error(
+      `chart fetch failed for "${song.id}": HTTP ${res.status} (${song.chartUrl})`,
+    );
+  }
+  const text = await res.text();
+  const parsed = parseOsu(text);
+  if (!parsed) {
+    throw new Error(
+      `chart for "${song.id}" is not a valid 4K mania beatmap (${song.chartUrl})`,
+    );
   }
 
-  const detail = errors.length ? ` (${errors.join("; ")})` : "";
-  throw new Error(`No playable chart found${detail}`);
-}
+  let notes = parsed.notes;
+  if (mode === "easy") {
+    notes = quantizeToGrid(notes, parsed.bpm, parsed.offset, 1);
+  } else if (mode === "normal") {
+    notes = quantizeToGrid(notes, parsed.bpm, parsed.offset, 2);
+  }
 
+  const meta: SongMeta = {
+    id: song.id,
+    title: song.title,
+    artist: song.artist,
+    year: song.year,
+    bpm: parsed.bpm,
+    offset: parsed.offset,
+    duration: parsed.duration,
+    audioUrl: song.audioUrl,
+    difficulty: mode,
+  };
+
+  return {
+    meta,
+    notes,
+    source: "osu",
+    rawNoteCount: parsed.notes.length,
+    mode,
+  };
+}

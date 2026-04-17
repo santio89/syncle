@@ -3,4 +3,5 @@
   <rect x="6" y="6" width="20" height="20"
         fill="#3da9ff" fill-opacity="0.2"
         stroke="#3da9ff" stroke-width="3"/>
+  <polygon points="14,11 22,16 14,21" fill="#3da9ff"/>
 </svg>

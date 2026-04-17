@@ -69,30 +69,51 @@ body {
   box-shadow: 5px 5px 0 0 #000;
 }
 
-/* Big square play CTA on the home page. */
+/* Big play CTA on the home page. Square on >=sm, full-width banner below. */
 .brut-play-cta {
   position: relative;
   background: var(--accent);
   color: var(--ink-900);
   border: 3px solid var(--accent);
-  box-shadow: 10px 10px 0 0 #000;
+  /* Smaller offset shadow on mobile so the CTA + halo never push past the
+   * viewport edge and trigger horizontal scroll. Bumped up at >=sm where the
+   * CTA becomes a square sitting in its own column. */
+  box-shadow: 6px 6px 0 0 #000;
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
+@media (min-width: 640px) {
+  .brut-play-cta { box-shadow: 10px 10px 0 0 #000; }
+}
 .brut-play-cta:hover {
-  transform: translate(-3px, -3px);
-  box-shadow: 13px 13px 0 0 #000;
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 0 #000;
+}
+@media (min-width: 640px) {
+  .brut-play-cta:hover {
+    transform: translate(-3px, -3px);
+    box-shadow: 13px 13px 0 0 #000;
+  }
 }
 .brut-play-cta:active {
-  transform: translate(4px, 4px);
-  box-shadow: 4px 4px 0 0 #000;
+  transform: translate(3px, 3px);
+  box-shadow: 2px 2px 0 0 #000;
+}
+@media (min-width: 640px) {
+  .brut-play-cta:active {
+    transform: translate(4px, 4px);
+    box-shadow: 4px 4px 0 0 #000;
+  }
 }
 .brut-play-cta::before {
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: -4px;
   border: 2px solid rgba(61, 169, 255, 0.55);
   pointer-events: none;
   animation: ctaPulse 2.2s ease-out infinite;
+}
+@media (min-width: 640px) {
+  .brut-play-cta::before { inset: -6px; }
 }
 @keyframes ctaPulse {
   0%   { transform: scale(1);    opacity: 0.75; }

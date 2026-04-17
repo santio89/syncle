@@ -1,75 +1,130 @@
-# How to drop in an osu! chart
+# Song catalog & manifest
 
-Syncle plays real, human-charted **osu!mania 4K** beatmaps. There is no
-hidden audio fallback shipped with the repo — if no chart is found here,
-the game shows a "no chart available" message instead of pretending.
+Syncle plays real, human-charted **osu!mania 4K** beatmaps. The runtime
+doesn't have any audio hard-coded — at startup it reads `manifest.json`
+(generated from `songs.config.json` at the repo root) and fetches whatever
+that points to.
 
-## Folder layout
+`manifest.json` is **a build artifact**: do not edit it directly, do not
+commit it. It's regenerated every time you run `npm run dev`,
+`npm run build`, or `npm run build:manifest`.
+
+## Two delivery modes
+
+The build script picks one automatically:
+
+- **remote** — `release.owner/repo/tag` in `songs.config.json` is set, the
+  GitHub API is reachable, and the listed assets exist in that release.
+  Manifest URLs point at GitHub Releases (free, fast, CDN-served, no repo
+  bloat). This is what you want in production.
+
+- **local** — no release configured (or the API call failed). Manifest
+  URLs point at `/songs/...` in `/public`. Useful for offline development
+  and for trying out a new song before you publish it.
+
+The manifest itself records which mode it was built in (`"mode": "remote"`
+or `"mode": "local"`) and the reason — handy for debugging.
+
+## Adding a new song (recommended workflow)
+
+### 1. Pick a 4K mania beatmap
+
+Download a `.osz` (it's just a renamed zip). Sources without an account:
+[osu.direct](https://osu.direct/), [catboy.best](https://catboy.best/),
+[nerinyan.moe](https://nerinyan.moe/) — filter by **mode = mania, keys = 4**.
+
+Open the `.osu` files inside and pick the difficulty whose `[General]` /
+`[Difficulty]` section has:
 
 ```
-public/songs/
-  today/
-    chart.osu           ← osu! 4K mania difficulty (rename any .osu to chart.osu)
-    audio.mp3           ← song audio referenced by the chart
-  osu-mania/            ← dev-only test set; loaded automatically if `today/` is empty
-    *.osu
-    *.mp3
+Mode: 3
+CircleSize: 4
 ```
 
-The lookup order is hard-coded in `lib/game/chart.ts → OSU_CANDIDATES`:
-`today/` first, then the dev test set, then `loadSong()` rejects.
+Anything else is rejected by our parser.
 
-## Step-by-step: import a beatmap
+### 2. Upload the audio + chart to your GitHub Release
 
-1. **Download a `.osz` beatmap.** A `.osz` is just a renamed zip.
-   - In-game: install [osu!](https://osu.ppy.sh/home/download), search the
-     beatmap browser, click download. The file lands in your osu! `Songs/` folder.
-   - No-account mirrors: [osu.direct](https://osu.direct/),
-     [catboy.best](https://catboy.best/), [nerinyan.moe](https://nerinyan.moe/).
-     **Filter by mode = mania, keys = 4.**
+```bash
+gh release upload songs-v1 ./path/to/audio.mp3 ./path/to/chart.osu
+```
 
-2. **Pick a 4K Easy/Normal difficulty.** A beatmap set usually contains
-   several `.osu` files (one per difficulty). Open them in a text editor —
-   the right one has these lines in `[General]` and `[Difficulty]`:
+(Or drag-and-drop in github.com → Releases → edit `songs-v1` → attach.)
 
-   ```
-   Mode: 3
-   ...
-   CircleSize: 4
-   ```
+Filenames are arbitrary as long as they match the `audio` and `chart`
+fields you put in `songs.config.json`. Recommended: `<song-id>.mp3` and
+`<song-id>.osu` for sanity.
 
-   Anything other than `Mode: 3` and `CircleSize: 4` is rejected by the
-   parser and the game moves on to the next candidate.
+### 3. Add the song to `songs.config.json`
 
-3. **Extract two files** from the `.osz` zip:
-   - the chosen `.osu` file → rename to **`chart.osu`**
-   - the audio file (filename matches the chart's `AudioFilename:` line, often
-     `audio.mp3`) → keep as **`audio.mp3`**
+```json
+{
+  "release": { "owner": "you", "repo": "syncle", "tag": "songs-v1" },
+  "schedule": [
+    { "date": "2026-04-17", "songId": "credens-justitiam" },
+    { "date": "2026-04-18", "songId": "your-new-song" }
+  ],
+  "songs": {
+    "your-new-song": {
+      "title": "Display Title",
+      "artist": "Artist Name",
+      "year": 2024,
+      "audio": "your-new-song.mp3",
+      "chart": "your-new-song.osu"
+    }
+  }
+}
+```
 
-4. **Drop them here:**
-   ```
-   public/songs/today/chart.osu
-   public/songs/today/audio.mp3
-   ```
+### 4. Push
 
-5. **Refresh the game.** The start card shows `osu! 4K chart` next to the
-   song title once the parse works.
+`git push` → Vercel rebuilds → `npm run build:manifest` runs as a
+prebuild hook → manifest gets regenerated with the new URLs → live.
 
-## What gets used from the .osu file
+## Local-only workflow (no GitHub setup needed)
+
+For a quick test before you create the release: drop the files anywhere
+under `public/songs/` and reference them as paths in `songs.config.json`:
+
+```json
+"songs": {
+  "demo": {
+    "title": "Demo",
+    "artist": "Me",
+    "audio": "demo/audio.mp3",
+    "chart": "demo/chart.osu"
+  }
+}
+```
+
+Files at `public/songs/demo/audio.mp3` and `public/songs/demo/chart.osu`
+will be served by Next directly. The manifest will be built in `local`
+mode and everything just works for dev.
+
+## Schedule rules
+
+- Dates are local-time `YYYY-MM-DD`.
+- Lookup picks: exact-date match → most recent past date → first song.
+- So if you forget to schedule tomorrow, today's song "sticks" until you
+  add a new entry.
+
+## What gets read from the .osu file
 
 | Section          | What we read                                             |
 | ---------------- | -------------------------------------------------------- |
 | `[General]`      | `Mode` (must be 3), `AudioFilename`                      |
-| `[Metadata]`     | `Title`, `Artist` (used as the displayed song name)      |
+| `[Metadata]`     | `Title`, `Artist` (overridden by config when present)    |
 | `[Difficulty]`   | `CircleSize` (must be 4)                                 |
 | `[TimingPoints]` | First uninherited point → BPM (60000/beatLen) and offset |
 | `[HitObjects]`   | `x` → lane (`floor(x*4/512)`), `time` → seconds          |
-|                  | Hold notes also get an `endTime` (sustains are real now) |
+|                  | Hold notes also get an `endTime` (sustains are real)     |
 
 Variable-BPM songs only use the first BPM marker — acceptable for v1.
 
 ## Notes on legality
 
-For local development this is fine — the files never leave your machine.
-If you ever want to ship publicly, audio needs to be CC-licensed (or you
-need rights). The folder structure here doesn't change either way.
+For local development this is fine — files never leave your machine.
+Once you publish a release with copyrighted audio, you're hosting it
+publicly regardless of where it physically sits (GitHub, S3, R2, etc.).
+For anything beyond personal use, prefer CC-licensed audio or a
+"bring your own beatmap" model.
