@@ -127,3 +127,24 @@ body {
   49% { opacity: 1; }
 }
 .flicker { animation: flicker 5s infinite; }
+
+/* Animated EQ-style waveform bars on the home "today's track" card.
+ * Each bar reads its own --bar-dur and --bar-delay so they pulse out of
+ * phase with each other and the whole strip looks like a real spectrum
+ * analyzer. Animating transform: scaleY (instead of height) keeps it on
+ * the GPU compositor — even 70+ bars stays at full framerate. */
+@keyframes waveformBar {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+/* Per-bar duration & delay come from inline style so React passes them
+ * through unchanged. Using the longhand form (not the `animation`
+ * shorthand with var()) avoids a known browser quirk where some engines
+ * fail to re-evaluate var() inside the animation shorthand. */
+.waveform-bar {
+  transform-origin: bottom center;
+  animation-name: waveformBar;
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+  animation-fill-mode: both;
+}

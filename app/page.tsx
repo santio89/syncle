@@ -182,18 +182,28 @@ export default function HomePage() {
 
             <div className="mt-5 flex items-end gap-3">
               <div className="flex h-12 flex-1 items-end gap-1">
-                {Array.from({ length: 72 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`flex-1 ${
-                      load.status === "ready" ? "bg-accent/70" : "bg-bone-50/10"
-                    }`}
-                    style={{
-                      height: `${20 + Math.abs(Math.sin(i * 0.6)) * 80}%`,
-                      opacity: 0.3 + (i % 5) * 0.15,
-                    }}
-                  />
-                ))}
+                {Array.from({ length: 72 }).map((_, i) => {
+                  const ready = load.status === "ready";
+                  // Deterministic-but-irregular stagger so each bar pulses
+                  // out of phase with its neighbors. Two coprime multipliers
+                  // (47, 73) make the pattern look chaotic without RNG.
+                  // Durations 1.4s–2.6s — slow breathing EQ, just a touch
+                  // livelier than full ambient.
+                  const delayMs = (i * 47) % 1800;
+                  const durMs = 1400 + ((i * 73) % 1200);
+                  return (
+                    <div
+                      key={i}
+                      className={`flex-1 ${ready ? "bg-accent/70 waveform-bar" : "bg-bone-50/10"}`}
+                      style={{
+                        height: `${20 + Math.abs(Math.sin(i * 0.6)) * 80}%`,
+                        opacity: 0.3 + (i % 5) * 0.15,
+                        animationDelay: ready ? `${delayMs}ms` : undefined,
+                        animationDuration: ready ? `${durMs}ms` : undefined,
+                      }}
+                    />
+                  );
+                })}
               </div>
               {load.status === "ready" ? (
                 <Link
