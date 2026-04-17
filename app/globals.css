@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink-900: #000000;
+  --ink-800: #040506;
+  --ink-700: #08090b;
+  --ink-600: #101216;
+  --bone-50: #f5f5f0;
+  --accent: #3da9ff;
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--ink-900);
+  color: var(--bone-50);
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+}
+
+/* Brutalist utility classes */
+.brut-card {
+  background: rgba(4, 5, 8, 0.6);
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+  border: 2px solid var(--bone-50);
+  box-shadow: 6px 6px 0 0 #000;
+}
+.brut-card-accent {
+  background: rgba(4, 5, 8, 0.6);
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+  border: 2px solid var(--accent);
+  box-shadow: 6px 6px 0 0 var(--accent);
+}
+.brut-btn {
+  background: var(--bone-50);
+  color: var(--ink-900);
+  border: 2px solid var(--bone-50);
+  box-shadow: 5px 5px 0 0 #000;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.brut-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 6px 6px 0 0 #000;
+}
+.brut-btn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0 0 #000;
+}
+.brut-btn-accent {
+  background: var(--accent);
+  color: var(--ink-900);
+  border: 2px solid var(--accent);
+  box-shadow: 5px 5px 0 0 #000;
+}
+
+/* Big square play CTA on the home page. */
+.brut-play-cta {
+  position: relative;
+  background: var(--accent);
+  color: var(--ink-900);
+  border: 3px solid var(--accent);
+  box-shadow: 10px 10px 0 0 #000;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.brut-play-cta:hover {
+  transform: translate(-3px, -3px);
+  box-shadow: 13px 13px 0 0 #000;
+}
+.brut-play-cta:active {
+  transform: translate(4px, 4px);
+  box-shadow: 4px 4px 0 0 #000;
+}
+.brut-play-cta::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border: 2px solid rgba(61, 169, 255, 0.55);
+  pointer-events: none;
+  animation: ctaPulse 2.2s ease-out infinite;
+}
+@keyframes ctaPulse {
+  0%   { transform: scale(1);    opacity: 0.75; }
+  100% { transform: scale(1.18); opacity: 0; }
+}
+
+.scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.02) 0,
+    rgba(255, 255, 255, 0.02) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.glow-pulse { animation: pulseGlow 1.6s ease-in-out infinite; }
+
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  47% { opacity: 1; }
+  48% { opacity: 0.55; }
+  49% { opacity: 1; }
+}
+.flicker { animation: flicker 5s infinite; }
