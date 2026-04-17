@@ -32,12 +32,12 @@ export const LANE_ALT_LABEL: Record<number, string> = {
 };
 
 /** Distinct, vibrant colors per lane. */
-export const LANE_COLORS: Record<number, string> = {
-  0: "#ff3b6b", // D / ← — red
-  1: "#ffd23f", // F / ↓ — yellow
-  2: "#3dff8a", // J / ↑ — green
-  3: "#3da9ff", // K / → — blue (brand accent)
-};
+export const LANE_COLORS: readonly string[] = [
+  "#ff3b6b", // 0: D / ← — red
+  "#ffd23f", // 1: F / ↓ — yellow
+  "#3dff8a", // 2: J / ↑ — green
+  "#3da9ff", // 3: K / → — blue (brand accent)
+];
 
 /** Pitches used by the audio feedback when a lane is hit. A minor pentatonic. */
 export const LANE_PITCH: Record<number, number> = {

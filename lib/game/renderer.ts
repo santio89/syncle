@@ -32,7 +32,8 @@ export interface Particle {
   /** Total life so we can compute alpha as life/maxLife. */
   maxLife: number;
   size: number;
-  color: string;
+  /** Index into LANE_RGB — avoids per-particle string storage and reparse. */
+  laneIdx: number;
 }
 
 export interface PendingHit {
@@ -72,6 +73,26 @@ interface RenderCache {
 }
 
 const PARTICLE_BUDGET = 200;
+
+/**
+ * Pre-parsed lane colors. `withAlpha("#3da9ff", a)` does 3 parseInts every
+ * call; the particle hot loop calls it ~200×/frame. Pre-parsing once and
+ * using a templated rgba() string drops that to a single string concat.
+ */
+interface RGB { r: number; g: number; b: number; }
+const LANE_RGB: RGB[] = LANE_COLORS.map(hexToRgb);
+
+function rgba(c: RGB, a: number): string {
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
+
+function hexToRgb(hex: string): RGB {
+  return {
+    r: parseInt(hex.slice(1, 3), 16),
+    g: parseInt(hex.slice(3, 5), 16),
+    b: parseInt(hex.slice(5, 7), 16),
+  };
+}
 
 export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
   leadTime: 1.2,
@@ -407,11 +428,12 @@ function drawHoldTrail(
   const wTail = lerp(10, 26, 1 - visTail);
 
   const color = LANE_COLORS[n.lane];
+  const colorRgb = LANE_RGB[n.lane];
   const consumed = n.holding === true;
   const alpha = consumed ? 0.85 : n.tailJudged === "miss" ? 0.18 : 0.55;
 
   ctx.save();
-  ctx.fillStyle = withAlpha(color, alpha);
+  ctx.fillStyle = rgba(colorRgb, alpha);
   ctx.shadowColor = color;
   ctx.shadowBlur = consumed ? 22 : 10;
   // Trapezoid between (xTail±wTail/2, yTail) and (xHead±wHead/2, yHead).
@@ -425,7 +447,7 @@ function drawHoldTrail(
 
   // Thin bright outline so the trail reads even on dark bg.
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = withAlpha(color, consumed ? 1 : 0.7);
+  ctx.strokeStyle = rgba(colorRgb, consumed ? 1 : 0.7);
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.restore();
@@ -459,6 +481,7 @@ function drawLaneGate(
 ) {
   const r = 30;
   const color = LANE_COLORS[lane];
+  const colorRgb = LANE_RGB[lane];
 
   ctx.save();
   ctx.lineWidth = 4;
@@ -475,7 +498,7 @@ function drawLaneGate(
     flash,
   );
   if (fillAlpha > 0) {
-    ctx.fillStyle = withAlpha(color, fillAlpha);
+    ctx.fillStyle = rgba(colorRgb, fillAlpha);
     ctx.beginPath();
     ctx.arc(x, y, r - 4, 0, Math.PI * 2);
     ctx.fill();
@@ -494,7 +517,7 @@ function drawLaneGate(
   ctx.fillText(LANE_LABEL[lane], x, y - 4);
 
   ctx.font = "600 11px var(--font-mono), ui-monospace, monospace";
-  ctx.fillStyle = held || holding ? "rgba(10,12,16,0.7)" : withAlpha(color, 0.7);
+  ctx.fillStyle = held || holding ? "rgba(10,12,16,0.7)" : rgba(colorRgb, 0.7);
   ctx.fillText(LANE_ALT_LABEL[lane] ?? "", x, y + 12);
   ctx.restore();
 }
@@ -568,12 +591,11 @@ function drainHits(rs: RenderState, cache: RenderCache): void {
     if (h.judgment === "miss") continue; // misses get the "duck" sfx, no sparkles
     const x = cache.laneX[h.lane];
     const y = cache.judgeY;
-    const color = LANE_COLORS[h.lane] ?? "#3da9ff";
     const count =
       h.judgment === "perfect" ? 18 : h.judgment === "great" ? 12 : 6;
     const speed =
       h.judgment === "perfect" ? 380 : h.judgment === "great" ? 280 : 180;
-    spawnBurst(rs, x, y, color, count, speed, h.tail === true);
+    spawnBurst(rs, x, y, h.lane, count, speed, h.tail === true);
   }
   rs.pendingHits.length = 0;
 }
@@ -582,7 +604,7 @@ function spawnBurst(
   rs: RenderState,
   x: number,
   y: number,
-  color: string,
+  laneIdx: number,
   count: number,
   speed: number,
   tail: boolean,
@@ -602,7 +624,7 @@ function spawnBurst(
       life,
       maxLife: life,
       size: tail ? 1.5 + Math.random() * 1.5 : 2 + Math.random() * 2.5,
-      color,
+      laneIdx,
     });
   }
 }
@@ -630,7 +652,7 @@ function updateAndDrawParticles(
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     const a = p.life / p.maxLife;
-    ctx.fillStyle = withAlpha(p.color, a * a);
+    ctx.fillStyle = rgba(LANE_RGB[p.laneIdx], a * a);
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.size * (0.4 + a * 0.6), 0, Math.PI * 2);
     ctx.fill();
@@ -650,6 +672,11 @@ function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+/**
+ * Convert "#rrggbb" to "rgba(r,g,b,a)". Slow path — three parseInts each call.
+ * Prefer the pre-parsed `rgba(LANE_RGB[i], a)` form on per-frame hot paths.
+ * Kept here for one-off colors (popup grades, beat dot variants).
+ */
 function withAlpha(hex: string, a: number) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);

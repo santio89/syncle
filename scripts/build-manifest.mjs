@@ -154,18 +154,37 @@ async function main() {
     };
   }
 
+  // Pool entries are runtime-only — the build script just passes them through.
+  // Each entry: { id: number, diff?: string, label?: string }
+  const pool = Array.isArray(cfg.pool)
+    ? cfg.pool
+        .filter((e) => e && typeof e.id === "number")
+        .map((e) => ({
+          id: e.id,
+          ...(e.diff ? { diff: String(e.diff) } : {}),
+          ...(e.label ? { label: String(e.label) } : {}),
+        }))
+    : [];
+
+  const pickStrategy = cfg.pickStrategy === "random" ? "random" : "daily";
+
   const manifest = {
     generatedAt: new Date().toISOString(),
     mode,
     modeReason,
+    pickStrategy,
     schedule: Array.isArray(cfg.schedule) ? cfg.schedule : [],
     songs,
+    ...(pool.length > 0 ? { pool } : {}),
   };
 
   mkdirSync(dirname(MANIFEST_PATH), { recursive: true });
   writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + "\n");
 
-  const summary = `wrote ${Object.keys(songs).length} song(s), mode=${mode}`;
+  const summary =
+    `wrote ${Object.keys(songs).length} local song(s) + ` +
+    `${pool.length} pool entr${pool.length === 1 ? "y" : "ies"}, ` +
+    `mode=${mode}, pickStrategy=${pickStrategy}`;
   log(skipped ? `${summary}, ${skipped} skipped` : summary);
 }
 

@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
-import { ChartMode, loadSong, PLACEHOLDER_META } from "@/lib/game/chart";
+import {
+  ChartMode,
+  loadSong,
+  PLACEHOLDER_META,
+  prefetchAudio,
+} from "@/lib/game/chart";
 import {
   DEFAULT_RENDER_OPTIONS,
   drawFrame,
@@ -51,6 +56,21 @@ export default function Game() {
   });
   const heldRef = useRef<boolean[]>(new Array(TOTAL_LANES).fill(false));
   const rafRef = useRef<number | null>(null);
+  /** Shared empty state used during idle/loading frames (drawing a blank highway).
+   *  Avoids `new GameState([])` per frame which is a hidden alloc + GC churn. */
+  const emptyStateRef = useRef<GameState>(new GameState([]));
+  /** Mutable RenderOptions reused every frame to avoid allocating in the loop. */
+  const renderOptsRef = useRef({ ...DEFAULT_RENDER_OPTIONS });
+  /** Last-loaded chart result, kept in a ref so the audio-prep effect can
+   *  reach the raw audio bytes (for remote-delivery songs) without depending
+   *  on a state field that changes identity on every difficulty toggle. */
+  const loadedRef = useRef<{
+    meta: SongMeta;
+    notes: Note[];
+    audioBytes?: ArrayBuffer;
+    audioKey?: string;
+    delivery: "local" | "remote";
+  } | null>(null);
   /** Highest beat index for which a metronome click has already been scheduled. */
   const lastScheduledBeatRef = useRef<number>(-1);
   const songRef = useRef<{ meta: SongMeta; notes: Note[] }>({
@@ -71,6 +91,12 @@ export default function Game() {
   const [displayMeta, setDisplayMeta] = useState<SongMeta | null>(null);
   /** Error string if the chart preview fetch failed. */
   const [previewError, setPreviewError] = useState<string | null>(null);
+  /** Live progress message during preview/load (e.g. "Trying catboy.best…"). */
+  const [progressMsg, setProgressMsg] = useState<string | null>(null);
+  /** Mirror name when the song was fetched remotely (e.g. "catboy.best"). */
+  const [mirror, setMirror] = useState<string | null>(null);
+  /** Beatmapset id when delivered remotely. */
+  const [beatmapsetId, setBeatmapsetId] = useState<number | null>(null);
   const [best, setBest] = useState<DailyBest | null>(null);
   /** True if the just-finished run set a new daily best. */
   const [newBest, setNewBest] = useState<boolean>(false);
@@ -84,27 +110,108 @@ export default function Game() {
   const [touchAck, setTouchAck] = useState<boolean>(false);
 
   // Pre-load chart meta on mount + whenever the difficulty changes.
+  //
+  // For local songs this is cheap: a small chart fetch + parse, then we kick
+  // off an audio prefetch so PLAY click is instant.
+  //
+  // For remote pool songs this is the heavy work: download a 3–8 MB .osz
+  // from a public mirror, unzip it in the browser, extract the 4K mania
+  // chart + audio bytes. We expose live progress via setProgressMsg so the
+  // start card can show "Trying catboy.best…" rather than a dead spinner.
   useEffect(() => {
     let cancelled = false;
     setDisplayMeta(null);
     setPreviewError(null);
-    loadSong(chartMode)
+    setProgressMsg(null);
+    setMirror(null);
+    setBeatmapsetId(null);
+    loadSong(chartMode, {
+      onProgress: (msg) => {
+        if (!cancelled) setProgressMsg(msg);
+      },
+    })
       .then((loaded) => {
         if (cancelled) return;
+        loadedRef.current = {
+          meta: loaded.meta,
+          notes: loaded.notes,
+          audioBytes: loaded.audioBytes,
+          audioKey: loaded.audioKey,
+          delivery: loaded.delivery,
+        };
         setDisplayMeta(loaded.meta);
         setSongSource(loaded.source);
         setChartLength(loaded.notes.length);
         setRawNoteCount(loaded.rawNoteCount);
         setBest(loadBest(bestKey(loaded.meta.id, chartMode)));
+        setProgressMsg(null);
+        if (loaded.delivery === "remote") {
+          setMirror(loaded.mirror ?? null);
+          setBeatmapsetId(loaded.beatmapsetId ?? null);
+        } else {
+          // Warm the HTTP cache for the audio bytes — safe to do without a
+          // user gesture since we're not creating an AudioContext yet.
+          prefetchAudio(loaded.meta.audioUrl);
+        }
       })
       .catch((err) => {
         if (cancelled) return;
         setPreviewError(err?.message ?? "Could not load today's chart");
+        setProgressMsg(null);
       });
     return () => {
       cancelled = true;
     };
   }, [chartMode]);
+
+  // Once we have a real meta AND the user has interacted with the page at
+  // least once (any click / keydown / pointermove), spin up the AudioContext
+  // and decode the song in the background. Decoding requires a context but
+  // not necessarily a *running* one — a suspended context is enough — so by
+  // the time the user clicks PLAY the AudioBuffer is ready and start() is
+  // basically a no-op.
+  useEffect(() => {
+    if (!displayMeta) return;
+    let cancelled = false;
+    let prepped = false;
+    const prep = () => {
+      if (prepped || cancelled) return;
+      prepped = true;
+      window.removeEventListener("pointerdown", prep);
+      window.removeEventListener("keydown", prep);
+      window.removeEventListener("pointermove", prep);
+      try {
+        if (!audioRef.current) audioRef.current = new AudioEngine();
+        audioRef.current.ensureContext();
+        audioRef.current.setMetronome(metronome);
+        audioRef.current.setVolume(volume);
+        // Fire and forget — by the time PLAY is clicked, this is usually done.
+        const loaded = loadedRef.current;
+        if (loaded?.delivery === "remote" && loaded.audioBytes && loaded.audioKey) {
+          // Bytes were already extracted by oszFetcher; just decode them.
+          // We pass a SLICE so the original buffer survives if start() needs
+          // to retry (decodeAudioData detaches the input).
+          void audioRef.current
+            .loadFromBytes(loaded.audioBytes.slice(0), loaded.audioKey)
+            .catch(() => {});
+        } else if (displayMeta.audioUrl) {
+          void audioRef.current.load(displayMeta.audioUrl).catch(() => {});
+        }
+      } catch {
+        // Some browsers refuse to create an AudioContext outside a gesture;
+        // fall back to creating it lazily inside start() like before.
+      }
+    };
+    window.addEventListener("pointerdown", prep, { once: false });
+    window.addEventListener("keydown", prep, { once: false });
+    window.addEventListener("pointermove", prep, { once: false });
+    return () => {
+      cancelled = true;
+      window.removeEventListener("pointerdown", prep);
+      window.removeEventListener("keydown", prep);
+      window.removeEventListener("pointermove", prep);
+    };
+  }, [displayMeta, metronome, volume]);
 
   useEffect(() => {
     audioRef.current?.setMetronome(metronome);
@@ -139,6 +246,25 @@ export default function Game() {
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
       renderStateRef.current.cache = undefined;
+      // Pre-build the gradient cache + JIT-compile the draw path right now
+      // (still on the loading screen, before any notes scroll), so the very
+      // first in-game frame doesn't spend 20–40ms building gradients and
+      // hot-compiling drawHighway / drawTapNote.
+      if (ctx) {
+        try {
+          drawFrame(
+            ctx,
+            new GameState([]),
+            -COUNTDOWN_SECONDS,
+            0,
+            DEFAULT_RENDER_OPTIONS,
+            renderStateRef.current,
+          );
+        } catch {
+          // Pre-warm is best-effort. If it throws (e.g. ctx in a weird
+          // state mid-resize), we'll get there on the first real frame.
+        }
+      }
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -151,24 +277,51 @@ export default function Game() {
   }, []);
 
   // ---- Start / load -----------------------------------------------------
+  // Most of the heavy lifting (fetch + decode the audio, parse the chart,
+  // build the gradient cache) has already happened by the time we get here:
+  //   - chart: loaded by the preview useEffect, returned from cache
+  //   - audio: fetched + decoded by the prep effect on first user gesture
+  //   - canvas/gradients: pre-built by the resize effect's warmup draw
+  // So this is now ~mostly synchronous: build the GameState, await fonts
+  // (cheap — already loading from layout), schedule audio, kick countdown.
   const start = useCallback(async () => {
     setError(null);
     setNewBest(false);
     setPhase("loading");
     try {
-      const audio = new AudioEngine();
-      audioRef.current = audio;
+      // Re-use the engine the prep effect built; otherwise create one now.
+      let audio = audioRef.current;
+      if (!audio) {
+        audio = new AudioEngine();
+        audioRef.current = audio;
+      }
       audio.ensureContext();
       audio.setMetronome(metronome);
       audio.setVolume(volume);
 
-      const loaded = await loadSong(chartMode);
+      const loaded = await loadSong(chartMode); // cached → instant
       songRef.current = { meta: loaded.meta, notes: loaded.notes };
       setSongSource(loaded.source);
       setChartLength(loaded.notes.length);
       setRawNoteCount(loaded.rawNoteCount);
 
-      await audio.load(loaded.meta.audioUrl);
+      // Idempotent: skips fetch+decode if the prep effect already did it.
+      if (loaded.delivery === "remote" && loaded.audioBytes && loaded.audioKey) {
+        await audio.loadFromBytes(loaded.audioBytes.slice(0), loaded.audioKey);
+      } else {
+        await audio.load(loaded.meta.audioUrl);
+      }
+
+      // Make sure the display font has loaded before we start drawing the
+      // judgment popups + countdown — otherwise the first popup triggers a
+      // sync font swap and skips a frame.
+      if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+        try {
+          await (document as any).fonts.ready;
+        } catch {
+          /* noop */
+        }
+      }
 
       const state = new GameState(loaded.notes);
       stateRef.current = state;
@@ -215,16 +368,15 @@ export default function Game() {
   }, [phase]);
 
   const giveUp = useCallback(() => {
+    // Stop the song but keep the AudioEngine + decoded buffer alive so the
+    // next start() doesn't re-fetch / re-decode the audio.
     audioRef.current?.stop();
-    audioRef.current = null;
     stateRef.current = null;
-    renderStateRef.current = {
-      recentEvents: [],
-      laneFlash: new Array(TOTAL_LANES).fill(0),
-      particles: [],
-      pendingHits: [],
-    };
-    heldRef.current = new Array(TOTAL_LANES).fill(false);
+    renderStateRef.current.recentEvents = [];
+    renderStateRef.current.laneFlash.fill(0);
+    renderStateRef.current.particles.length = 0;
+    renderStateRef.current.pendingHits.length = 0;
+    heldRef.current.fill(false);
     lastScheduledBeatRef.current = -1;
     songRef.current = { meta: PLACEHOLDER_META, notes: [] };
     setStats(null);
@@ -411,17 +563,19 @@ export default function Game() {
       }
       if (state) rs.recentEvents = state.events;
 
+      // Mutate a single options object every frame instead of allocating a
+      // fresh one (with a fresh laneHeld copy via [...spread]). The renderer
+      // only reads laneHeld, so passing the ref directly is safe.
+      renderOptsRef.current.bpm = songMeta.bpm;
+      renderOptsRef.current.offset = songMeta.offset;
+      renderOptsRef.current.laneHeld = heldRef.current;
+
       drawFrame(
         ctx,
-        state ?? new GameState([]),
+        state ?? emptyStateRef.current,
         songTime,
         dt,
-        {
-          ...DEFAULT_RENDER_OPTIONS,
-          bpm: songMeta.bpm,
-          offset: songMeta.offset,
-          laneHeld: [...heldRef.current],
-        },
+        renderOptsRef.current,
         rs,
       );
 
@@ -470,16 +624,15 @@ export default function Game() {
   }, []);
 
   const restart = useCallback(() => {
+    // Keep the AudioEngine + decoded buffer; just stop the current playback.
+    // The "Try again" button thus goes from PLAY-click → first note in <50ms.
     audioRef.current?.stop();
-    audioRef.current = null;
     stateRef.current = null;
-    renderStateRef.current = {
-      recentEvents: [],
-      laneFlash: new Array(TOTAL_LANES).fill(0),
-      particles: [],
-      pendingHits: [],
-    };
-    heldRef.current = new Array(TOTAL_LANES).fill(false);
+    renderStateRef.current.recentEvents = [];
+    renderStateRef.current.laneFlash.fill(0);
+    renderStateRef.current.particles.length = 0;
+    renderStateRef.current.pendingHits.length = 0;
+    heldRef.current.fill(false);
     lastScheduledBeatRef.current = -1;
     songRef.current = { meta: PLACEHOLDER_META, notes: [] };
     setSongSource(null);
@@ -548,6 +701,9 @@ export default function Game() {
               best={best}
               volume={volume}
               onVolume={setVolume}
+              progressMsg={progressMsg}
+              mirror={mirror}
+              beatmapsetId={beatmapsetId}
             />
           )}
         </Overlay>
@@ -615,6 +771,9 @@ function StartCard({
   best,
   volume,
   onVolume,
+  progressMsg,
+  mirror,
+  beatmapsetId,
 }: {
   meta: SongMeta | null;
   onStart: () => void;
@@ -630,6 +789,9 @@ function StartCard({
   best: DailyBest | null;
   volume: number;
   onVolume: (v: number) => void;
+  progressMsg: string | null;
+  mirror: string | null;
+  beatmapsetId: number | null;
 }) {
   const ready = meta !== null;
   const nps =
@@ -638,14 +800,18 @@ function StartCard({
     <div className="brut-card w-full max-w-xl p-6 sm:p-8">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
-          Today&rsquo;s track
+          {mirror ? "Random pick" : "Today\u2019s track"}
         </p>
         {ready && songSource && (
           <span
             className="font-mono text-[9px] uppercase tracking-widest text-accent/70"
-            title="Loaded from a real osu!mania 4K beatmap"
+            title={
+              mirror
+                ? `Pulled from ${mirror} at runtime`
+                : "Loaded from a real osu!mania 4K beatmap"
+            }
           >
-            osu! 4K chart
+            {mirror ? `via ${mirror}` : "osu! 4K chart"}
           </span>
         )}
       </div>
@@ -658,14 +824,35 @@ function StartCard({
           <p className="mt-1 text-bone-50/70">
             {meta!.artist}
             {meta!.year ? ` · ${meta!.year}` : ""}
+            {beatmapsetId != null && (
+              <a
+                href={`https://osu.ppy.sh/beatmapsets/${beatmapsetId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-2 font-mono text-[10px] uppercase tracking-widest text-bone-50/40 hover:text-accent"
+                title="Open on osu.ppy.sh"
+              >
+                #{beatmapsetId} ↗
+              </a>
+            )}
           </p>
         </>
       ) : (
         <div className="mt-3 flex items-center gap-3">
           <Spinner />
           <div className="space-y-1">
-            <div className="h-7 w-48 animate-pulse bg-bone-50/10" />
-            <div className="h-3 w-32 animate-pulse bg-bone-50/10" />
+            {progressMsg ? (
+              <p className="font-mono text-[11px] uppercase tracking-widest text-bone-50/70">
+                {progressMsg}
+              </p>
+            ) : (
+              <div className="h-7 w-48 animate-pulse bg-bone-50/10" />
+            )}
+            <p className="font-mono text-[9px] tracking-widest text-bone-50/40">
+              {progressMsg
+                ? "first load downloads + unzips a 3\u20138 MB osu! beatmap"
+                : "loading\u2026"}
+            </p>
           </div>
         </div>
       )}

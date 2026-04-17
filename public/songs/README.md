@@ -29,12 +29,24 @@ or `"mode": "local"`) and the reason — handy for debugging.
 
 ### 1. Pick a 4K mania beatmap
 
-Download a `.osz` (it's just a renamed zip). Sources without an account:
-[osu.direct](https://osu.direct/), [catboy.best](https://catboy.best/),
-[nerinyan.moe](https://nerinyan.moe/) — filter by **mode = mania, keys = 4**.
+**Easy way — use the built-in fetcher:**
 
-Open the `.osu` files inside and pick the difficulty whose `[General]` /
-`[Difficulty]` section has:
+```bash
+# Search public mirrors for mania charts
+npm run fetch-song -- search "camellia"
+
+# Install one by beatmapset id (optionally pick a specific difficulty)
+npm run fetch-song -- 2012308 "Beginner"
+```
+
+The fetcher pulls from [catboy.best](https://catboy.best/) (with
+[nerinyan.moe](https://nerinyan.moe/) as a fallback), unzips the `.osz` in
+memory, picks a 4K mania difficulty, and drops `audio.mp3` + `chart.osu`
+into `public/songs/<slug>/`. It then prints a ready-to-paste
+`songs.config.json` snippet.
+
+**Manual way:** download a `.osz` from any of the mirrors above, rename it
+to `.zip`, extract, then look for an `.osu` whose header has:
 
 ```
 Mode: 3

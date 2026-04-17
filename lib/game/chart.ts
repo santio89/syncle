@@ -1,5 +1,6 @@
 import { Note, SongMeta } from "./types";
 import { parseOsu } from "./osu";
+import { fetchAndExtract, ExtractedSong } from "./oszFetcher";
 
 /**
  * Empty skeleton meta used as the type-safe initial state before a real
@@ -44,12 +45,31 @@ interface ManifestSong {
   chartUrl: string;
 }
 
+/** Entry in the remote pool — points at a public mirror beatmapset. */
+export interface PoolEntry {
+  /** osu! beatmapset id (the number in the URL on osu.ppy.sh/beatmapsets/...). */
+  id: number;
+  /** Substring of the difficulty Version to prefer (case-insensitive). */
+  diff?: string;
+  /** Optional human-readable label, used in dev consoles / debug tooltips. */
+  label?: string;
+}
+
 interface Manifest {
   generatedAt: string;
   mode: "remote" | "local";
   modeReason?: string;
+  /**
+   * Strategy the runtime should use to pick a chart on each load:
+   *   - "daily"  → use today's scheduled song (production behaviour)
+   *   - "random" → pick a random entry from `pool`, falling back to
+   *                local songs if all mirrors fail (test/dev behaviour)
+   */
+  pickStrategy?: "daily" | "random";
   schedule: { date: string; songId: string }[];
   songs: Record<string, ManifestSong>;
+  /** Beatmapset ids fetched from public mirrors at runtime. */
+  pool?: PoolEntry[];
 }
 
 let manifestPromise: Promise<Manifest> | null = null;
@@ -183,21 +203,79 @@ export interface LoadSongResult {
   /** How many notes the original chart had before easy/normal thinning. */
   rawNoteCount: number;
   mode: ChartMode;
+  /**
+   * How this song reached the player:
+   *   - "local"  → /public asset, fetched from our own origin
+   *   - "remote" → unzipped from a mirror's .osz at runtime
+   * The UI can use this to show "fetched from catboy.best" etc.
+   */
+  delivery: "local" | "remote";
+  /** Set when delivery === "remote" — raw audio bytes for AudioEngine.loadFromBytes. */
+  audioBytes?: ArrayBuffer;
+  /** Set when delivery === "remote" — opaque dedup key for the audio cache. */
+  audioKey?: string;
+  /** Set when delivery === "remote" — which mirror served the bytes. */
+  mirror?: string;
+  /** Set when delivery === "remote" — beatmapset id we pulled. */
+  beatmapsetId?: number;
 }
 
 /**
- * Resolve today's song from the manifest, fetch + parse its osu! chart, and
- * return a playable result. Rejects with a descriptive error if the manifest
- * is missing, the song schedule is empty, or the chart isn't 4K mania.
+ * Per-mode in-memory cache of the most recent successful loadSong result.
+ * Lives for the lifetime of the page. Critical for "random" pickStrategy:
+ * the random choice is made ONCE on first call, then frozen for the session
+ * (preview + start + retries all see the same song). Refresh = new pick.
+ */
+const loadCache = new Map<ChartMode, Promise<LoadSongResult>>();
+
+/**
+ * Resolve a chart according to the manifest's pickStrategy:
+ *   - "daily"  → today's scheduled local song
+ *   - "random" → random entry from the remote pool, with local fallback
+ *
+ * Cached per difficulty for the page session. Pass `force: true` to refetch.
  */
 export async function loadSong(
   mode: ChartMode = DEFAULT_MODE,
+  opts: { force?: boolean; onProgress?: (msg: string) => void } = {},
+): Promise<LoadSongResult> {
+  if (!opts.force) {
+    const cached = loadCache.get(mode);
+    if (cached) return cached;
+  }
+  const p = loadSongUncached(mode, opts.onProgress);
+  loadCache.set(mode, p);
+  p.catch(() => loadCache.delete(mode));
+  return p;
+}
+
+async function loadSongUncached(
+  mode: ChartMode,
+  onProgress?: (msg: string) => void,
 ): Promise<LoadSongResult> {
   const manifest = await loadManifest();
-  const song = pickTodaySong(manifest);
+  const strategy = manifest.pickStrategy ?? "daily";
 
-  // GitHub Releases (and our local /public) serve immutable bytes per URL,
-  // so an aggressive cache hint cuts retries from ~5 MB/play to ~0.
+  if (strategy === "random" && manifest.pool && manifest.pool.length > 0) {
+    try {
+      return await loadRandomFromPool(manifest, mode, onProgress);
+    } catch (err) {
+      // All mirrors failed — fall through to local fallback below.
+      console.warn("[syncle] remote pool failed, falling back to local:", err);
+      onProgress?.("Mirrors unreachable, using local song…");
+    }
+  }
+
+  return loadLocal(manifest, mode);
+}
+
+/* ---- daily / local path -------------------------------------------------- */
+
+async function loadLocal(
+  manifest: Manifest,
+  mode: ChartMode,
+): Promise<LoadSongResult> {
+  const song = pickTodaySong(manifest);
   const res = await fetch(song.chartUrl, { cache: "force-cache" });
   if (!res.ok) {
     throw new Error(
@@ -211,31 +289,179 @@ export async function loadSong(
       `chart for "${song.id}" is not a valid 4K mania beatmap (${song.chartUrl})`,
     );
   }
-
-  let notes = parsed.notes;
-  if (mode === "easy") {
-    notes = quantizeToGrid(notes, parsed.bpm, parsed.offset, 1);
-  } else if (mode === "normal") {
-    notes = quantizeToGrid(notes, parsed.bpm, parsed.offset, 2);
-  }
-
-  const meta: SongMeta = {
-    id: song.id,
-    title: song.title,
-    artist: song.artist,
-    year: song.year,
+  return finalize({
+    rawNotes: parsed.notes,
     bpm: parsed.bpm,
     offset: parsed.offset,
     duration: parsed.duration,
-    audioUrl: song.audioUrl,
-    difficulty: mode,
-  };
+    mode,
+    meta: {
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      year: song.year,
+      audioUrl: song.audioUrl,
+    },
+    delivery: "local",
+  });
+}
 
+/* ---- random / remote path ------------------------------------------------ */
+
+/** IDs already picked this session, so reload != same song twice in a row. */
+const recentPicks: number[] = [];
+const RECENT_WINDOW = 3;
+
+function pickRandomEntry(pool: PoolEntry[]): PoolEntry {
+  const fresh = pool.filter((e) => !recentPicks.includes(e.id));
+  const choices = fresh.length > 0 ? fresh : pool;
+  const pick = choices[Math.floor(Math.random() * choices.length)];
+  recentPicks.push(pick.id);
+  if (recentPicks.length > RECENT_WINDOW) recentPicks.shift();
+  return pick;
+}
+
+async function loadRandomFromPool(
+  manifest: Manifest,
+  mode: ChartMode,
+  onProgress?: (msg: string) => void,
+): Promise<LoadSongResult> {
+  const pool = manifest.pool!;
+  // Try a few different entries before declaring full failure — a single bad
+  // beatmapset id (e.g. set was deleted on the mirror) shouldn't break the
+  // whole random mode if other entries work.
+  const tried = new Set<number>();
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < Math.min(3, pool.length); attempt++) {
+    const candidates = pool.filter((e) => !tried.has(e.id));
+    if (candidates.length === 0) break;
+    const entry = pickRandomEntry(candidates);
+    tried.add(entry.id);
+    try {
+      onProgress?.(`Picking beatmapset ${entry.id}…`);
+      const extracted = await fetchAndExtract(entry.id, {
+        diff: entry.diff,
+        onProgress,
+      });
+      return chartFromExtracted(extracted, mode);
+    } catch (err) {
+      console.warn(`[syncle] beatmapset ${entry.id} failed:`, err);
+      lastErr = err;
+    }
+  }
+  throw new Error(
+    `Random pool exhausted after ${tried.size} attempts: ${
+      lastErr instanceof Error ? lastErr.message : String(lastErr)
+    }`,
+  );
+}
+
+function chartFromExtracted(
+  ext: ExtractedSong,
+  mode: ChartMode,
+): LoadSongResult {
+  const parsed = parseOsu(ext.chartText);
+  if (!parsed) {
+    throw new Error(
+      `Beatmapset ${ext.beatmapsetId} chart "${ext.meta.version}" failed to parse as 4K mania`,
+    );
+  }
+  // Stable, URL-safe id for the daily-best key. Unique per (set, diff).
+  const id = `osu-${ext.beatmapsetId}-${slugify(ext.meta.version)}`;
+  const audioKey = `osu:${ext.beatmapsetId}:${ext.meta.version}`;
+  return finalize({
+    rawNotes: parsed.notes,
+    bpm: parsed.bpm,
+    offset: parsed.offset,
+    duration: parsed.duration,
+    mode,
+    meta: {
+      id,
+      title: ext.meta.title,
+      artist: ext.meta.artist,
+      // No standalone audioUrl — bytes will be loaded via loadFromBytes.
+      audioUrl: "",
+    },
+    delivery: "remote",
+    audioBytes: ext.audioBytes,
+    audioKey,
+    mirror: ext.mirror,
+    beatmapsetId: ext.beatmapsetId,
+  });
+}
+
+/* ---- shared finalization ------------------------------------------------- */
+
+interface FinalizeInput {
+  rawNotes: Note[];
+  bpm: number;
+  offset: number;
+  duration: number;
+  mode: ChartMode;
+  meta: {
+    id: string;
+    title: string;
+    artist: string;
+    year?: number;
+    audioUrl: string;
+  };
+  delivery: "local" | "remote";
+  audioBytes?: ArrayBuffer;
+  audioKey?: string;
+  mirror?: string;
+  beatmapsetId?: number;
+}
+
+function finalize(inp: FinalizeInput): LoadSongResult {
+  let notes = inp.rawNotes;
+  if (inp.mode === "easy") {
+    notes = quantizeToGrid(notes, inp.bpm, inp.offset, 1);
+  } else if (inp.mode === "normal") {
+    notes = quantizeToGrid(notes, inp.bpm, inp.offset, 2);
+  }
+  const meta: SongMeta = {
+    id: inp.meta.id,
+    title: inp.meta.title,
+    artist: inp.meta.artist,
+    year: inp.meta.year,
+    bpm: inp.bpm,
+    offset: inp.offset,
+    duration: inp.duration,
+    audioUrl: inp.meta.audioUrl,
+    difficulty: inp.mode,
+  };
   return {
     meta,
     notes,
     source: "osu",
-    rawNoteCount: parsed.notes.length,
-    mode,
+    rawNoteCount: inp.rawNotes.length,
+    mode: inp.mode,
+    delivery: inp.delivery,
+    audioBytes: inp.audioBytes,
+    audioKey: inp.audioKey,
+    mirror: inp.mirror,
+    beatmapsetId: inp.beatmapsetId,
   };
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "x";
+}
+
+/**
+ * Warm the browser HTTP cache for a song's audio bytes without decoding.
+ * Only useful for local-delivery songs (URLs); remote-delivery songs go
+ * through fetchAndExtract which doesn't hit our origin at all.
+ */
+const audioPrefetched = new Set<string>();
+export function prefetchAudio(url: string): void {
+  if (!url || audioPrefetched.has(url)) return;
+  audioPrefetched.add(url);
+  fetch(url, { cache: "force-cache" }).catch(() => {
+    audioPrefetched.delete(url);
+  });
 }

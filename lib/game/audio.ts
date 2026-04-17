@@ -25,6 +25,10 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private buffer: AudioBuffer | null = null;
   private source: AudioBufferSourceNode | null = null;
+  /** URL of the audio currently in `buffer`. Used to skip redundant decodes. */
+  private loadedUrl: string | null = null;
+  /** In-flight load promise so concurrent load() calls de-dupe. */
+  private loading: Promise<void> | null = null;
 
   private master: GainNode | null = null;
   private songGain: GainNode | null = null;
@@ -68,13 +72,69 @@ export class AudioEngine {
     return this.ctx!;
   }
 
+  /**
+   * Fetch + decode an audio URL. Idempotent: calling with the same URL twice
+   * returns immediately on the second call (the decoded AudioBuffer is kept).
+   * Concurrent calls with the same URL share the same in-flight promise so
+   * we never decode the same bytes twice.
+   *
+   * Note: decodeAudioData works on a suspended AudioContext, so this can be
+   * called BEFORE the user gesture that resumes the context — useful for
+   * pre-decoding while the start card is on screen.
+   */
   async load(url: string): Promise<void> {
+    if (this.loadedUrl === url && this.buffer) return;
+    if (this.loading) await this.loading.catch(() => {});
+    if (this.loadedUrl === url && this.buffer) return;
+
+    this.loading = (async () => {
+      // force-cache so repeated loads (same session, retries) are zero-byte.
+      const res = await fetch(url, { cache: "force-cache" });
+      if (!res.ok) throw new Error(`Failed to load audio: ${res.status}`);
+      const arr = await res.arrayBuffer();
+      await this.decodeInto(arr);
+      this.loadedUrl = url;
+    })();
+    try {
+      await this.loading;
+    } finally {
+      this.loading = null;
+    }
+  }
+
+  /**
+   * Decode an in-memory audio buffer (used by the oszFetcher path, where the
+   * bytes come out of an unzipped .osz rather than a URL). The `key` is an
+   * opaque dedup token — pass the same key on subsequent calls to skip the
+   * decode if the buffer is already in place.
+   */
+  async loadFromBytes(buf: ArrayBuffer, key: string): Promise<void> {
+    if (this.loadedUrl === key && this.buffer) return;
+    if (this.loading) await this.loading.catch(() => {});
+    if (this.loadedUrl === key && this.buffer) return;
+
+    this.loading = (async () => {
+      // decodeAudioData detaches its input — slice if you need the bytes
+      // for anything else after this call.
+      await this.decodeInto(buf);
+      this.loadedUrl = key;
+    })();
+    try {
+      await this.loading;
+    } finally {
+      this.loading = null;
+    }
+  }
+
+  private async decodeInto(buf: ArrayBuffer): Promise<void> {
     const ctx = this.ensureContext();
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to load audio: ${res.status}`);
-    const arr = await res.arrayBuffer();
-    this.buffer = await ctx.decodeAudioData(arr);
+    this.buffer = await ctx.decodeAudioData(buf);
     this.duration_ = this.buffer.duration;
+  }
+
+  /** True once an audio buffer is decoded and ready for `start()`. */
+  get isLoaded(): boolean {
+    return this.buffer != null;
   }
 
   /**
