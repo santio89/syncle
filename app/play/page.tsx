@@ -28,8 +28,8 @@ export default function PlayPage() {
           />
           <span>Syncle</span>
         </Link>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-[10px] uppercase tracking-[0.3em] text-bone-50/40">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <span className="hidden font-mono text-[10px] uppercase tracking-[0.3em] text-bone-50/40 sm:inline">
             Single player · v0.2
           </span>
           <ThemeToggle />

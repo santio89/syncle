@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { loadSong } from "@/lib/game/chart";
+import { loadSong, displayMode } from "@/lib/game/chart";
 import { SongMeta } from "@/lib/game/types";
 import { bestKey, RunBest, loadBest } from "@/lib/game/best";
 import { LifetimeStats, loadStats } from "@/lib/game/stats";
@@ -15,14 +15,19 @@ function formatDuration(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** Derive a coarse difficulty label from note density. */
+/**
+ * Coarse song-intensity label derived from the EASY chart's note density.
+ *
+ * Three tiers to match the player-facing difficulty buckets (easy / medium /
+ * hard). This is a song-character hint — it does NOT change when the player
+ * picks a different mode in the selector below.
+ */
 function difficultyLabel(noteCount: number, durationSec: number): string {
   if (durationSec <= 0) return "—";
   const nps = noteCount / durationSec;
   if (nps < 1.5) return "EASY";
   if (nps < 3) return "MEDIUM";
-  if (nps < 5) return "HARD";
-  return "EXPERT";
+  return "HARD";
 }
 
 type LoadState =
@@ -305,7 +310,7 @@ export default function HomePage() {
                 }
                 hint={
                   stats.bestEver
-                    ? `${stats.bestEver.songTitle} · ${stats.bestEver.mode}`
+                    ? `${stats.bestEver.songTitle} · ${displayMode(stats.bestEver.mode)}`
                     : undefined
                 }
               />

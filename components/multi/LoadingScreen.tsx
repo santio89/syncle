@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 
 import type { ChartMode } from "@/lib/game/chart";
+import { displayMode } from "@/lib/game/chart";
 import type { RoomSnapshot } from "@/lib/multi/protocol";
 
 export function LoadingScreen({
@@ -55,7 +56,7 @@ export function LoadingScreen({
             {song.artist}
             {mode && (
               <span className="ml-2 font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
-                · {mode}
+                · {displayMode(mode)}
               </span>
             )}
           </p>

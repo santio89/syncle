@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
-import { probeSongModes } from "@/lib/game/chart";
+import { displayMode, probeSongModes } from "@/lib/game/chart";
 import type {
   CatalogItem,
   RoomSnapshot,
@@ -414,7 +414,7 @@ function HostPane({
                       : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
               }`}
             >
-              {showSpinner && isActive ? "…" : m === "easy" ? "easy ★" : m === "normal" ? "normal ★★" : "hard ★★★"}
+              {showSpinner && isActive ? "…" : m === "easy" ? "easy ★" : m === "normal" ? "medium ★★" : "hard ★★★"}
             </button>
           );
         })}
@@ -460,9 +460,9 @@ function firstAvailableMode(modes: ModeAvailability): ChartMode {
 
 function availableModesLabel(modes: ModeAvailability): string {
   const tags: string[] = [];
-  if (modes.available.easy) tags.push("easy");
-  if (modes.available.normal) tags.push("normal");
-  if (modes.available.hard) tags.push("hard");
+  if (modes.available.easy) tags.push(displayMode("easy"));
+  if (modes.available.normal) tags.push(displayMode("normal"));
+  if (modes.available.hard) tags.push(displayMode("hard"));
   return `has: ${tags.join(" / ")}`;
 }
 

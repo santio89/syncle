@@ -25,7 +25,18 @@
   --fg:        245 245 240;    /* primary text / borders on dark */
   --fg-2:      236 234 224;
   --accent:    61 169 255;     /* brand blue */
-  --shadow:    0 0 0;          /* brutalist drop-shadow color */
+  /* Brutalist drop shadow.
+   * Mirrors light mode: there the shadow color matches the page text
+   * (--fg, near-black) so it reads as a hard ink offset against cream.
+   * In dark mode the inverse holds — bone-white shadow against the
+   * black page bg — giving cards the same brutalist depth in either
+   * theme. Pure black (the previous value) was invisible against the
+   * equally-black bg, so cards looked flat. */
+  --shadow:    245 245 240;
+  /* Accent-tinted shadow for the play CTAs. A deeper-than-accent navy
+   * so the brand-blue buttons feel like they sit on their own colored
+   * ink instead of a stark white block — keeps the palette unified. */
+  --shadow-accent: 25 80 155;
   /* Translucent surface fill for brut-card. Stays distinct from --bg-2 so
    * we can re-tint per theme (dark glass vs frosted white). */
   --surface:   4 5 8;
@@ -48,6 +59,9 @@
   /* Slightly deeper blue so it still pops on a cream background. */
   --accent:    14 108 186;
   --shadow:    12 14 18;       /* dark shadow, mirrors --fg */
+  /* Same idea as dark mode but tuned for cream bg — a deep navy that
+   * reads as "ink shadow of the accent" rather than plain black. */
+  --shadow-accent: 8 60 110;
   --surface:   245 245 240;
   --surface-a: 0.7;
   --cta-halo:  14 108 186;
@@ -202,7 +216,10 @@ body {
   background: rgb(var(--accent));
   color: rgb(var(--bg));
   border: 2px solid rgb(var(--accent));
-  box-shadow: 5px 5px 0 0 rgb(var(--shadow));
+  /* Accent-tinted shadow — see --shadow-accent. Keeps the play/start
+   * buttons reading as a single blue color block rather than blue-on-
+   * white (dark mode) or blue-on-black (light mode). */
+  box-shadow: 5px 5px 0 0 rgb(var(--shadow-accent));
 }
 
 /* Big play CTA on the home page. Square on >=sm, full-width banner below. */
@@ -214,30 +231,30 @@ body {
   /* Smaller offset shadow on mobile so the CTA + halo never push past the
    * viewport edge and trigger horizontal scroll. Bumped up at >=sm where the
    * CTA becomes a square sitting in its own column. */
-  box-shadow: 6px 6px 0 0 rgb(var(--shadow));
+  box-shadow: 6px 6px 0 0 rgb(var(--shadow-accent));
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
 @media (min-width: 640px) {
-  .brut-play-cta { box-shadow: 10px 10px 0 0 rgb(var(--shadow)); }
+  .brut-play-cta { box-shadow: 10px 10px 0 0 rgb(var(--shadow-accent)); }
 }
 .brut-play-cta:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 8px 8px 0 0 rgb(var(--shadow));
+  box-shadow: 8px 8px 0 0 rgb(var(--shadow-accent));
 }
 @media (min-width: 640px) {
   .brut-play-cta:hover {
     transform: translate(-3px, -3px);
-    box-shadow: 13px 13px 0 0 rgb(var(--shadow));
+    box-shadow: 13px 13px 0 0 rgb(var(--shadow-accent));
   }
 }
 .brut-play-cta:active {
   transform: translate(3px, 3px);
-  box-shadow: 2px 2px 0 0 rgb(var(--shadow));
+  box-shadow: 2px 2px 0 0 rgb(var(--shadow-accent));
 }
 @media (min-width: 640px) {
   .brut-play-cta:active {
     transform: translate(4px, 4px);
-    box-shadow: 4px 4px 0 0 rgb(var(--shadow));
+    box-shadow: 4px 4px 0 0 rgb(var(--shadow-accent));
   }
 }
 .brut-play-cta::before {

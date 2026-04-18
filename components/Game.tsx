@@ -5,6 +5,7 @@ import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
 import {
   ChartMode,
+  displayMode,
   loadSong,
   ModeAvailability,
   PLACEHOLDER_META,
@@ -128,10 +129,10 @@ export default function Game() {
   const [volume, setVolume] = useState<number>(0.85);
   /** Rolling average frame rate, sampled every ~250ms for HUD readout. */
   const [fps, setFps] = useState<number>(0);
-  /** True if the user is on a touch-only device (no physical keyboard). */
+  /** True if the user is on a touch-only device (no physical keyboard).
+   *  Drives the on-screen <TouchLanes> overlay and swaps the "press D F J K"
+   *  hints in the StartCard for tap-friendly copy. */
   const [touchOnly, setTouchOnly] = useState<boolean>(false);
-  /** Acknowledged the "no keyboard" warning and wants to try anyway. */
-  const [touchAck, setTouchAck] = useState<boolean>(false);
 
   // ---- Live theme → canvas wiring ---------------------------------------
   // The renderer reads `theme` off renderOptsRef every frame to look up its
@@ -473,6 +474,68 @@ export default function Game() {
   }, [phase, pause]);
 
   // ---- Input handling ---------------------------------------------------
+  // Both the keyboard listener and the on-screen touch lane buttons go
+  // through the same pressLane / releaseLane helpers so the engine sees a
+  // single, consistent event stream regardless of input source. The helpers
+  // are stable (useCallback) and read `phase` via a ref so we don't have
+  // to re-bind every state change — that matters for touch, where the
+  // <TouchLanes> overlay re-renders along with the rest of the canvas
+  // container and we don't want to drop pointer captures.
+  const phaseRef = useRef<Phase>(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  const pressLane = useCallback((lane: number) => {
+    const p = phaseRef.current;
+    if (p === "paused") return;
+    // Always remember the lane is held — the renderer reads heldRef to
+    // light the gate even during countdown, so the pre-roll feels alive.
+    heldRef.current[lane] = true;
+    if (p !== "playing") return;
+
+    const audio = audioRef.current;
+    const state = stateRef.current;
+    if (!audio || !state) return;
+
+    const songTime = audio.songTime();
+    const evt = state.hit(lane, songTime);
+    if (evt) {
+      renderStateRef.current.laneFlash[lane] = 1;
+      renderStateRef.current.pendingHits.push({
+        lane,
+        judgment: evt.judgment,
+      });
+      audio.playHit(lane, evt.judgment);
+    } else {
+      renderStateRef.current.laneFlash[lane] = 0.45;
+      audio.playMiss(true);
+    }
+  }, []);
+
+  const releaseLane = useCallback((lane: number) => {
+    const p = phaseRef.current;
+    if (p === "paused") return;
+    heldRef.current[lane] = false;
+    if (p !== "playing") return;
+
+    const audio = audioRef.current;
+    const state = stateRef.current;
+    if (!audio || !state) return;
+
+    // If a hold was active in this lane, judge the tail on release.
+    const tailEvt = state.release(lane, audio.songTime());
+    if (tailEvt) {
+      renderStateRef.current.laneFlash[lane] = 0.6;
+      renderStateRef.current.pendingHits.push({
+        lane,
+        judgment: tailEvt.judgment,
+        tail: true,
+      });
+      audio.playRelease(lane, tailEvt.judgment);
+    }
+  }, []);
+
   useEffect(() => {
     if (phase !== "playing" && phase !== "countdown" && phase !== "paused")
       return;
@@ -498,26 +561,7 @@ export default function Game() {
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
       e.preventDefault();
-      heldRef.current[lane] = true;
-
-      if (phase !== "playing") return;
-      const audio = audioRef.current;
-      const state = stateRef.current;
-      if (!audio || !state) return;
-
-      const songTime = audio.songTime();
-      const evt = state.hit(lane, songTime);
-      if (evt) {
-        renderStateRef.current.laneFlash[lane] = 1;
-        renderStateRef.current.pendingHits.push({
-          lane,
-          judgment: evt.judgment,
-        });
-        audio.playHit(lane, evt.judgment);
-      } else {
-        renderStateRef.current.laneFlash[lane] = 0.45;
-        audio.playMiss(true);
-      }
+      pressLane(lane);
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
@@ -525,24 +569,7 @@ export default function Game() {
       if (phase === "paused") return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
-      heldRef.current[lane] = false;
-
-      if (phase !== "playing") return;
-      const audio = audioRef.current;
-      const state = stateRef.current;
-      if (!audio || !state) return;
-
-      // If a hold was active in this lane, judge the tail on release.
-      const tailEvt = state.release(lane, audio.songTime());
-      if (tailEvt) {
-        renderStateRef.current.laneFlash[lane] = 0.6;
-        renderStateRef.current.pendingHits.push({
-          lane,
-          judgment: tailEvt.judgment,
-          tail: true,
-        });
-        audio.playRelease(lane, tailEvt.judgment);
-      }
+      releaseLane(lane);
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -551,7 +578,7 @@ export default function Game() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [phase, pause, resume]);
+  }, [phase, pause, resume, pressLane, releaseLane]);
 
   // ---- Render loop ------------------------------------------------------
   useEffect(() => {
@@ -789,32 +816,36 @@ export default function Game() {
           />
         )}
 
+      {/* On-screen lane buttons for touch devices. Hidden when a fine
+          pointer is detected so the keyboard player never sees them. */}
+      {touchOnly &&
+        (phase === "playing" || phase === "countdown") && (
+          <TouchLanes onPress={pressLane} onRelease={releaseLane} />
+        )}
+
       {(phase === "idle" || phase === "loading") && (
         <Overlay>
-          {touchOnly && !touchAck ? (
-            <TouchWarning onContinue={() => setTouchAck(true)} />
-          ) : (
-            <StartCard
-              meta={displayMeta}
-              onStart={start}
-              loading={phase === "loading"}
-              error={error ?? previewError}
-              metronome={metronome}
-              onToggleMetronome={() => setMetronome((m) => !m)}
-              songSource={songSource}
-              chartMode={chartMode}
-              onChangeMode={setChartMode}
-              modeAvailability={modeAvailability}
-              chartLength={chartLength}
-              rawNoteCount={rawNoteCount}
-              best={best}
-              volume={volume}
-              onVolume={setVolume}
-              progressMsg={progressMsg}
-              mirror={mirror}
-              beatmapsetId={beatmapsetId}
-            />
-          )}
+          <StartCard
+            meta={displayMeta}
+            onStart={start}
+            loading={phase === "loading"}
+            error={error ?? previewError}
+            metronome={metronome}
+            onToggleMetronome={() => setMetronome((m) => !m)}
+            songSource={songSource}
+            chartMode={chartMode}
+            onChangeMode={setChartMode}
+            modeAvailability={modeAvailability}
+            chartLength={chartLength}
+            rawNoteCount={rawNoteCount}
+            best={best}
+            volume={volume}
+            onVolume={setVolume}
+            progressMsg={progressMsg}
+            mirror={mirror}
+            beatmapsetId={beatmapsetId}
+            touchOnly={touchOnly}
+          />
         </Overlay>
       )}
 
@@ -834,7 +865,9 @@ export default function Game() {
               {countdown}
             </p>
             <p className="mt-2 font-mono text-xs uppercase tracking-widest text-bone-50/60">
-              D F J K · or ← ↓ ↑ → · M = metronome · ESC = pause · hold for sustains
+              {touchOnly
+                ? "tap the four lanes · hold for sustains"
+                : "D F J K · or ← ↓ ↑ → · M = metronome · ESC = pause · hold for sustains"}
             </p>
           </div>
         </Overlay>
@@ -916,6 +949,7 @@ function StartCard({
   progressMsg,
   mirror,
   beatmapsetId,
+  touchOnly,
 }: {
   meta: SongMeta | null;
   onStart: () => void;
@@ -935,6 +969,9 @@ function StartCard({
   progressMsg: string | null;
   mirror: string | null;
   beatmapsetId: number | null;
+  /** Coarse-pointer device — swap "press D F J K" copy for tap copy and
+   *  let the player know the on-screen lanes will appear during play. */
+  touchOnly: boolean;
 }) {
   const ready = meta !== null;
   const nps =
@@ -1007,8 +1044,15 @@ function StartCard({
         <KeyCap primary="K" direction="right" color="#3da9ff" />
       </div>
       <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
-        D F J K or arrow keys · hold for long notes
+        {touchOnly
+          ? "tap the four lanes when notes hit the line · hold for sustains"
+          : "D F J K or arrow keys · hold for long notes"}
       </p>
+      {touchOnly && (
+        <p className="mt-1 hidden text-center font-mono text-[10px] uppercase tracking-widest text-accent/70 portrait:block">
+          ↻ rotate to landscape for more room
+        </p>
+      )}
 
       <div className="mt-5 border-2 border-bone-50/20 px-3 py-2">
         <div className="flex items-baseline justify-between gap-3">
@@ -1035,7 +1079,7 @@ function StartCard({
                   enabled
                     ? undefined
                     : "This song's chart is too sparse for a distinct " +
-                      m +
+                      displayMode(m) +
                       " mode — try a denser difficulty."
                 }
                 className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
@@ -1046,7 +1090,7 @@ function StartCard({
                       : "border-bone-50/10 text-bone-50/25 cursor-not-allowed line-through decoration-1"
                 }`}
               >
-                {m === "easy" ? "easy ★" : m === "normal" ? "normal ★★" : "hard ★★★"}
+                {m === "easy" ? "easy ★" : m === "normal" ? "medium ★★" : "hard ★★★"}
               </button>
             );
           })}
@@ -1220,70 +1264,74 @@ function HUD({
   const accuracy = computeAccuracy(stats);
   const total = stats.totalNotes;
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-6xl items-start justify-between gap-3 p-3 sm:p-5">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-6xl items-start justify-between gap-2 p-2 sm:gap-3 sm:p-5">
       {/* Combined SCORE + COMBO panel. Same accented chrome as before, but
           combo sits inside the same frame with a dividing rule, so the
           left HUD reads as one cohesive "performance" block instead of
-          two competing cards. */}
-      <div className="brut-card-accent flex items-stretch gap-4 px-4 py-3">
-        <div className="min-w-[150px]">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+          two competing cards. Internal min-widths shrink at <sm so the
+          panel fits 4-lane phones in landscape without crowding the
+          rock-meter card on the right. */}
+      <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-3">
+        <div className="min-w-[88px] sm:min-w-[150px]">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
             Score
           </p>
-          <p className="font-display text-2xl sm:text-3xl font-bold leading-none">
+          <p className="font-display text-xl font-bold leading-none sm:text-3xl">
             {stats.score.toLocaleString()}
           </p>
-          <p className="mt-1 font-mono text-[10px] text-bone-50/60">
+          <p className="mt-1 font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
             {accuracy.toFixed(1)}% · {stats.notesPlayed}/{total}
           </p>
           {best && (
-            <p className="mt-1 font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
+            <p className="mt-1 hidden font-mono text-[9px] uppercase tracking-widest text-bone-50/50 sm:block">
               track best {best.score.toLocaleString()}
             </p>
           )}
         </div>
         <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-        <div className="flex min-w-[80px] flex-col items-center justify-center">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+        <div className="flex min-w-[56px] flex-col items-center justify-center sm:min-w-[80px]">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
             Combo
           </p>
           <p
-            className={`font-display text-3xl sm:text-4xl font-bold leading-none tabular-nums ${
+            className={`font-display text-2xl font-bold leading-none tabular-nums sm:text-4xl ${
               stats.combo > 0 ? "text-accent" : "text-bone-50/40"
             }`}
           >
             {stats.combo}
           </p>
-          <p className="mt-1 font-mono text-xs font-bold text-accent">
+          <p className="mt-1 font-mono text-[10px] font-bold text-accent sm:text-xs">
             ×{stats.multiplier}
           </p>
         </div>
       </div>
 
-      <div className="brut-card flex w-[200px] flex-col gap-1 px-4 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+      <div className="brut-card flex w-[140px] flex-col gap-1 px-2.5 py-2 sm:w-[200px] sm:px-4 sm:py-3">
+        <div className="flex items-center justify-between gap-1 sm:gap-2">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
             Rock meter
           </p>
           <div className="flex gap-1">
             <button
               onClick={onToggleMetronome}
-              className={`pointer-events-auto font-mono text-[9px] uppercase tracking-widest border px-1.5 py-0.5 transition-colors ${
+              className={`pointer-events-auto font-mono text-[9px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
                 metronome
                   ? "border-accent text-accent"
                   : "border-bone-50/30 text-bone-50/40"
               }`}
               title="Toggle metronome (M)"
+              aria-label="Toggle metronome"
             >
-              ♩ {metronome ? "ON" : "OFF"}
+              ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
             </button>
             <button
               onClick={onPause}
               disabled={paused}
-              className="pointer-events-auto font-mono text-[9px] uppercase tracking-widest border border-bone-50/40 px-1.5 py-0.5 text-bone-50/80 transition-colors hover:border-accent hover:text-accent disabled:opacity-40"
+              className="pointer-events-auto font-mono text-[9px] uppercase tracking-widest border border-bone-50/40 px-1 py-0.5 text-bone-50/80 transition-colors hover:border-accent hover:text-accent disabled:opacity-40 sm:px-1.5"
               title="Pause (ESC)"
+              aria-label="Pause"
             >
-              ❚❚ ESC
+              ❚❚<span className="hidden sm:inline"> ESC</span>
             </button>
           </div>
         </div>
@@ -1301,11 +1349,11 @@ function HUD({
             }}
           />
         </div>
-        <p className="font-mono text-[10px] text-bone-50/60">
+        <p className="font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
           P{stats.hits.perfect} · G{stats.hits.great} · g{stats.hits.good} · M
           {stats.hits.miss}
         </p>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex items-center gap-1.5 sm:gap-2">
           <span className="font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
             vol
           </span>
@@ -1319,11 +1367,11 @@ function HUD({
             className="pointer-events-auto h-1 flex-1 cursor-pointer accent-accent"
             aria-label="Music volume"
           />
-          <span className="font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">
+          <span className="hidden sm:inline font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">
             {Math.round(volume * 100)}
           </span>
         </div>
-        <div className="flex items-center justify-end">
+        <div className="hidden items-center justify-end sm:flex">
           <span
             className={`font-mono text-[9px] tabular-nums tracking-widest ${
               fps >= 55
@@ -1375,38 +1423,99 @@ function PauseCard({
   );
 }
 
-function TouchWarning({ onContinue }: { onContinue: () => void }) {
+/**
+ * On-screen lane buttons for touch devices.
+ *
+ * Four full-bleed columns sit over the bottom two-thirds of the canvas,
+ * directly under the lane gates. Each one fires `onPress(lane)` on
+ * pointerdown and `onRelease(lane)` on pointerup/cancel — the same
+ * functions the keyboard handler uses, so hold notes work identically to
+ * keyboard play (touchstart → keydown analogue, touchend → keyup analogue).
+ *
+ * Implementation notes:
+ *   - We use Pointer Events (covers mouse + touch + pen) and call
+ *     `setPointerCapture` so the matching pointerup is guaranteed to fire
+ *     on the same element even if the finger drifts off the column.
+ *   - `touchAction: "none"` prevents the browser from claiming a finger
+ *     for scroll/zoom gestures during play.
+ *   - The container is `pointer-events-none` so empty space above the
+ *     buttons doesn't trap clicks meant for HUD controls; the buttons
+ *     themselves re-enable pointer events.
+ *   - Visuals are intentionally minimal — the canvas already paints the
+ *     lane gates in vivid colour. The buttons add a faint top border and
+ *     a brief tint while pressed so the player gets a finger-shadow cue
+ *     without visually competing with the highway.
+ */
+function TouchLanes({
+  onPress,
+  onRelease,
+}: {
+  onPress: (lane: number) => void;
+  onRelease: (lane: number) => void;
+}) {
+  const colors = ["#ff3b6b", "#ffd23f", "#3dff8a", "#3da9ff"];
   return (
-    <div className="brut-card w-full max-w-md p-6 sm:p-8 text-center">
-      <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
-        Heads up
-      </p>
-      <h2 className="mt-2 font-display text-2xl font-bold leading-tight">
-        Syncle needs a keyboard.
-      </h2>
-      <p className="mt-3 text-sm text-bone-50/70">
-        Touch input isn&rsquo;t supported yet. For the best feel, open this on
-        a laptop or desktop and use the <span className="text-accent font-bold">D&nbsp;F&nbsp;J&nbsp;K</span> keys
-        (or arrow keys).
-      </p>
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <a href="/" className="brut-btn group inline-flex items-center justify-center gap-2 px-4 py-3 text-center">
-          <ArrowIcon
-            direction="left"
-            size={14}
-            strokeWidth={2.75}
-            className="transition-transform duration-200 group-hover:-translate-x-0.5"
-          />
-          <span>Back</span>
-        </a>
-        <button onClick={onContinue} className="brut-btn-accent px-4 py-3">
-          Continue anyway
-        </button>
-      </div>
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-0 top-1/3 z-10 grid grid-cols-4 select-none"
+      aria-hidden
+    >
+      {[0, 1, 2, 3].map((lane) => (
+        <button
+          key={lane}
+          type="button"
+          aria-label={`Lane ${lane + 1}`}
+          className="pointer-events-auto relative h-full w-full border-t-2 border-bone-50/10 bg-transparent transition-colors duration-75 active:bg-white/10"
+          style={{
+            touchAction: "none",
+            WebkitTapHighlightColor: "transparent",
+            borderTopColor: `${colors[lane]}33`,
+          }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLButtonElement).setPointerCapture(
+              e.pointerId,
+            );
+            onPress(lane);
+          }}
+          onPointerUp={(e) => {
+            e.preventDefault();
+            const el = e.currentTarget as HTMLButtonElement;
+            if (el.hasPointerCapture(e.pointerId)) {
+              el.releasePointerCapture(e.pointerId);
+            }
+            onRelease(lane);
+          }}
+          onPointerCancel={(e) => {
+            const el = e.currentTarget as HTMLButtonElement;
+            if (el.hasPointerCapture(e.pointerId)) {
+              el.releasePointerCapture(e.pointerId);
+            }
+            onRelease(lane);
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        />
+      ))}
     </div>
   );
 }
 
+/**
+ * Full-bleed dim layer used to host modal cards (StartCard, PauseCard,
+ * ResultsCard, countdown). Two responsive concerns it has to balance:
+ *
+ *   1. When the card fits, it should be perfectly centered.
+ *   2. When the card is taller than the available area (mid-laptop heights,
+ *      DevTools open, mobile landscape), `items-center` would push the top
+ *      of the card past the parent's top edge — and because <main> uses
+ *      overflow-hidden the overflow doesn't scroll, it just *clips* and
+ *      visually crosses over the header. Bug we hit on ~720px tall viewports.
+ *
+ * Pattern below: outer scroll container + inner `min-h-full` flex centerer.
+ *   - Short card → flex centers it, no scrollbar.
+ *   - Tall card → inner min-h-full forces the column to be at least the
+ *     overlay height, content extends downward, scrollbar appears, top of
+ *     the card stays anchored at the top with breathing-room padding.
+ */
 function Overlay({
   children,
   translucent,
@@ -1416,13 +1525,15 @@ function Overlay({
 }) {
   return (
     <div
-      className={`absolute inset-0 z-20 flex items-center justify-center px-4 sm:px-6 ${
+      className={`absolute inset-0 z-20 overflow-y-auto overscroll-contain ${
         translucent
           ? "bg-ink-900/40 backdrop-blur-sm"
           : "bg-ink-900/80 backdrop-blur"
       }`}
     >
-      {children}
+      <div className="flex min-h-full items-center justify-center px-4 py-6 sm:px-6 sm:py-8">
+        {children}
+      </div>
     </div>
   );
 }

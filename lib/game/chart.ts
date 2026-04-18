@@ -51,6 +51,19 @@ export type ChartMode = "easy" | "normal" | "hard";
 const DEFAULT_MODE: ChartMode = "easy";
 
 /**
+ * Map an internal {@link ChartMode} to the label we actually show users.
+ *
+ * The `"normal"` value is kept internally (localStorage best keys, the
+ * multiplayer protocol, and persisted run history all reference it by that
+ * name — renaming the type would invalidate saved scores and break in-flight
+ * multiplayer rooms during a deploy). For display we surface `"medium"`
+ * instead so the three buckets read as easy / medium / hard end-to-end.
+ */
+export function displayMode(mode: ChartMode): "easy" | "medium" | "hard" {
+  return mode === "normal" ? "medium" : mode;
+}
+
+/**
  * Quantize TAP notes to a beat grid and keep at most one note per grid cell.
  * Hold notes are kept unconditionally so sustains aren't lost on easy/normal —
  * their head time is just snapped to the nearest grid cell.

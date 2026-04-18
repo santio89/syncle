@@ -33,6 +33,7 @@ import type { RoomActions } from "@/hooks/useRoomSocket";
 import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
 import type { LoadSongResult, ChartMode } from "@/lib/game/chart";
+import { displayMode } from "@/lib/game/chart";
 import { loadVolume, saveVolume } from "@/lib/game/settings";
 import {
   createRenderState,
@@ -303,6 +304,53 @@ function CanvasPane({
   }, [snapshot.phase, snapshot.startsAt]);
 
   /* -------- input -------- */
+  // Same single-source-of-truth pattern as single-player Game.tsx:
+  // pressLane / releaseLane are stable callbacks consumed by both the
+  // keyboard listener and the on-screen <TouchLanes> overlay, so hold
+  // notes work identically across input devices.
+  const phaseRef = useRef(snapshot.phase);
+  useEffect(() => {
+    phaseRef.current = snapshot.phase;
+  }, [snapshot.phase]);
+
+  const pressLane = useCallback((lane: number) => {
+    if (phaseRef.current === "results") return;
+    heldRef.current[lane] = true;
+    if (phaseRef.current !== "playing") return;
+    const audio = audioRef.current;
+    const state = stateRef.current;
+    if (!audio || !state) return;
+    const songTime = audio.songTime();
+    const evt = state.hit(lane, songTime);
+    if (evt) {
+      renderStateRef.current.laneFlash[lane] = 1;
+      renderStateRef.current.pendingHits.push({ lane, judgment: evt.judgment });
+      audio.playHit(lane, evt.judgment);
+    } else {
+      renderStateRef.current.laneFlash[lane] = 0.45;
+      audio.playMiss(true);
+    }
+  }, []);
+
+  const releaseLane = useCallback((lane: number) => {
+    if (phaseRef.current === "results") return;
+    heldRef.current[lane] = false;
+    if (phaseRef.current !== "playing") return;
+    const audio = audioRef.current;
+    const state = stateRef.current;
+    if (!audio || !state) return;
+    const tailEvt = state.release(lane, audio.songTime());
+    if (tailEvt) {
+      renderStateRef.current.laneFlash[lane] = 0.6;
+      renderStateRef.current.pendingHits.push({
+        lane,
+        judgment: tailEvt.judgment,
+        tail: true,
+      });
+      audio.playRelease(lane, tailEvt.judgment);
+    }
+  }, []);
+
   useEffect(() => {
     if (snapshot.phase !== "playing" && snapshot.phase !== "countdown") return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -313,41 +361,13 @@ function CanvasPane({
       if (lane === undefined) return;
       if (e.repeat) return;
       e.preventDefault();
-      heldRef.current[lane] = true;
-      if (snapshot.phase !== "playing") return;
-      const audio = audioRef.current;
-      const state = stateRef.current;
-      if (!audio || !state) return;
-      const songTime = audio.songTime();
-      const evt = state.hit(lane, songTime);
-      if (evt) {
-        renderStateRef.current.laneFlash[lane] = 1;
-        renderStateRef.current.pendingHits.push({ lane, judgment: evt.judgment });
-        audio.playHit(lane, evt.judgment);
-      } else {
-        renderStateRef.current.laneFlash[lane] = 0.45;
-        audio.playMiss(true);
-      }
+      pressLane(lane);
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
-      heldRef.current[lane] = false;
-      if (snapshot.phase !== "playing") return;
-      const audio = audioRef.current;
-      const state = stateRef.current;
-      if (!audio || !state) return;
-      const tailEvt = state.release(lane, audio.songTime());
-      if (tailEvt) {
-        renderStateRef.current.laneFlash[lane] = 0.6;
-        renderStateRef.current.pendingHits.push({
-          lane,
-          judgment: tailEvt.judgment,
-          tail: true,
-        });
-        audio.playRelease(lane, tailEvt.judgment);
-      }
+      releaseLane(lane);
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -355,7 +375,16 @@ function CanvasPane({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [snapshot.phase]);
+  }, [snapshot.phase, pressLane, releaseLane]);
+
+  /* -------- coarse-pointer detection (drives the <TouchLanes> overlay) ---- */
+  const [touchOnly, setTouchOnly] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    const noFine = !window.matchMedia("(any-pointer: fine)").matches;
+    setTouchOnly(coarse && noFine);
+  }, []);
 
   /* -------- render loop -------- */
   useEffect(() => {
@@ -585,7 +614,7 @@ function CanvasPane({
               {countdownLabel}
             </p>
             <p className="mt-2 font-mono text-xs uppercase tracking-widest text-bone-50/60">
-              D F J K · or ← ↓ ↑ → · {mode} mode · scoreboard updates live
+              {touchOnly ? "tap the lanes" : "D F J K · or ← ↓ ↑ →"} · {displayMode(mode)} mode · scoreboard updates live
             </p>
           </div>
         </Overlay>
@@ -617,6 +646,72 @@ function CanvasPane({
           </div>
         </Overlay>
       )}
+
+      {/* Touch lane buttons — same component shape as single-player. Only
+          shown for coarse pointers, only during countdown/playing. */}
+      {touchOnly &&
+        (snapshot.phase === "countdown" || snapshot.phase === "playing") && (
+          <TouchLanes onPress={pressLane} onRelease={releaseLane} />
+        )}
+    </div>
+  );
+}
+
+/**
+ * On-screen lane buttons for touch devices — see Game.tsx::TouchLanes for
+ * the full rationale (pointer capture, touch-action, multi-touch holds).
+ * Duplicated here rather than imported to avoid coupling the multiplayer
+ * canvas pane to the single-player module.
+ */
+function TouchLanes({
+  onPress,
+  onRelease,
+}: {
+  onPress: (lane: number) => void;
+  onRelease: (lane: number) => void;
+}) {
+  const colors = ["#ff3b6b", "#ffd23f", "#3dff8a", "#3da9ff"];
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-0 top-1/3 z-10 grid grid-cols-4 select-none"
+      aria-hidden
+    >
+      {[0, 1, 2, 3].map((lane) => (
+        <button
+          key={lane}
+          type="button"
+          aria-label={`Lane ${lane + 1}`}
+          className="pointer-events-auto relative h-full w-full border-t-2 border-bone-50/10 bg-transparent transition-colors duration-75 active:bg-white/10"
+          style={{
+            touchAction: "none",
+            WebkitTapHighlightColor: "transparent",
+            borderTopColor: `${colors[lane]}33`,
+          }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLButtonElement).setPointerCapture(
+              e.pointerId,
+            );
+            onPress(lane);
+          }}
+          onPointerUp={(e) => {
+            e.preventDefault();
+            const el = e.currentTarget as HTMLButtonElement;
+            if (el.hasPointerCapture(e.pointerId)) {
+              el.releasePointerCapture(e.pointerId);
+            }
+            onRelease(lane);
+          }}
+          onPointerCancel={(e) => {
+            const el = e.currentTarget as HTMLButtonElement;
+            if (el.hasPointerCapture(e.pointerId)) {
+              el.releasePointerCapture(e.pointerId);
+            }
+            onRelease(lane);
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        />
+      ))}
     </div>
   );
 }
@@ -769,31 +864,31 @@ function ScoreboardSidebar({
 function PerformancePanel({ stats }: { stats: PlayerStats }) {
   const accuracy = computeAccuracy(stats);
   return (
-    <div className="brut-card-accent flex items-stretch gap-4 px-4 py-3">
-      <div className="min-w-[150px]">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+    <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-3">
+      <div className="min-w-[88px] sm:min-w-[150px]">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
           Score
         </p>
-        <p className="font-display text-2xl sm:text-3xl font-bold leading-none">
+        <p className="font-display text-xl font-bold leading-none sm:text-3xl">
           {stats.score.toLocaleString()}
         </p>
-        <p className="mt-1 font-mono text-[10px] text-bone-50/60">
+        <p className="mt-1 font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
           {accuracy.toFixed(1)}% · {stats.notesPlayed}/{stats.totalNotes}
         </p>
       </div>
       <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-      <div className="flex min-w-[80px] flex-col items-center justify-center">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+      <div className="flex min-w-[56px] flex-col items-center justify-center sm:min-w-[80px]">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
           Combo
         </p>
         <p
-          className={`font-display text-3xl sm:text-4xl font-bold leading-none tabular-nums ${
+          className={`font-display text-2xl font-bold leading-none tabular-nums sm:text-4xl ${
             stats.combo > 0 ? "text-accent" : "text-bone-50/40"
           }`}
         >
           {stats.combo}
         </p>
-        <p className="mt-1 font-mono text-xs font-bold text-accent">
+        <p className="mt-1 font-mono text-[10px] font-bold text-accent sm:text-xs">
           ×{stats.multiplier}
         </p>
       </div>
@@ -830,21 +925,22 @@ function HealthPanel({
         ? "#ffd23f"
         : "#ff3b6b";
   return (
-    <div className="brut-card flex w-full flex-col gap-1 px-4 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+    <div className="brut-card flex w-full flex-col gap-1 px-2.5 py-2 sm:px-4 sm:py-3">
+      <div className="flex items-center justify-between gap-1 sm:gap-2">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
           Rock meter
         </p>
         <button
           onClick={onToggleMetronome}
-          className={`pointer-events-auto font-mono text-[9px] uppercase tracking-widest border px-1.5 py-0.5 transition-colors ${
+          className={`pointer-events-auto font-mono text-[9px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
             metronome
               ? "border-accent text-accent"
               : "border-bone-50/30 text-bone-50/40"
           }`}
           title="Toggle metronome (local only)"
+          aria-label="Toggle metronome"
         >
-          ♩ {metronome ? "ON" : "OFF"}
+          ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
         </button>
       </div>
       <div className="relative h-3 w-full border-2 border-bone-50/40">
@@ -856,11 +952,11 @@ function HealthPanel({
           }}
         />
       </div>
-      <p className="font-mono text-[10px] text-bone-50/60">
+      <p className="font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
         P{stats.hits.perfect} · G{stats.hits.great} · g{stats.hits.good} · M
         {stats.hits.miss}
       </p>
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-1 flex items-center gap-1.5 sm:gap-2">
         <span className="font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
           vol
         </span>
@@ -874,11 +970,11 @@ function HealthPanel({
           className="pointer-events-auto h-1 flex-1 cursor-pointer accent-accent"
           aria-label="Music volume"
         />
-        <span className="font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">
+        <span className="hidden sm:inline font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">
           {Math.round(volume * 100)}
         </span>
       </div>
-      <div className="flex items-center justify-end">
+      <div className="hidden items-center justify-end sm:flex">
         <span
           className={`font-mono text-[9px] tabular-nums tracking-widest ${
             fps >= 55
@@ -895,6 +991,11 @@ function HealthPanel({
   );
 }
 
+/**
+ * Same scrollable-overlay pattern as the single-player Game's Overlay —
+ * see that component for the rationale. Multiplayer hits the same bug
+ * on tall LoadingScreen content + short viewports, so the same fix.
+ */
 function Overlay({
   children,
   translucent,
@@ -904,11 +1005,13 @@ function Overlay({
 }) {
   return (
     <div
-      className={`absolute inset-0 z-20 flex items-center justify-center px-4 ${
+      className={`absolute inset-0 z-20 overflow-y-auto overscroll-contain ${
         translucent ? "bg-ink-900/40 backdrop-blur-sm" : "bg-ink-900/80 backdrop-blur"
       }`}
     >
-      {children}
+      <div className="flex min-h-full items-center justify-center px-4 py-6 sm:px-6 sm:py-8">
+        {children}
+      </div>
     </div>
   );
 }
