@@ -54,7 +54,7 @@ export function LoadingScreen({
         {song ? (
           <h2
             className="truncate font-display text-[1.97rem] font-bold sm:text-[2.36rem]"
-            title={`${song.artist} — ${song.title}`}
+            data-tooltip={`${song.artist} — ${song.title}`}
           >
             {song.title}
           </h2>
@@ -62,7 +62,7 @@ export function LoadingScreen({
           <h2 className="font-display text-[1.97rem] font-bold sm:text-[2.36rem]">—</h2>
         )}
         {song && (
-          <p className="-mt-2 truncate text-bone-50/70" title={song.artist}>
+          <p className="-mt-2 truncate text-bone-50/70" data-tooltip={song.artist}>
             {song.artist}
             {mode && (
               <span className="ml-2 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
@@ -83,7 +83,7 @@ export function LoadingScreen({
           ) : progress ? (
             <p className="mt-0.5 flex items-center gap-2 font-mono text-[0.92rem] text-bone-50/85">
               <Spinner />
-              <span className="truncate" title={progress}>
+              <span className="truncate" data-tooltip={progress}>
                 {progress}
               </span>
             </p>

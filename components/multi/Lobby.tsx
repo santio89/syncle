@@ -48,7 +48,11 @@ import type {
   RoomSnapshot,
   SongRef,
 } from "@/lib/multi/protocol";
-import { MAX_PLAYERS_PER_ROOM, NAME_MAX_LEN } from "@/lib/multi/protocol";
+import {
+  MAX_PLAYERS_PER_ROOM,
+  NAME_MAX_LEN,
+  ROOM_NAME_MAX_LEN,
+} from "@/lib/multi/protocol";
 
 import { ChatPanel } from "./ChatPanel";
 
@@ -183,18 +187,22 @@ function PlayerRoster({
 
       {/* "You" controls strip: ready toggle + rename. The ready button
           is the BIG ACTION here — uppercase, accent-filled when on,
-          dashed-outline when off, with a clear label so a new player
-          knows what it does without hovering. */}
+          and a DIMMED version of the same look when off. Sharing the
+          shape across both states (solid accent border + accent
+          shadow, just attenuated) keeps the hover/click feedback feel
+          consistent and makes the on/off toggle read as "saturate /
+          desaturate the same control" rather than "swap between two
+          totally different buttons". */}
       <div className="mt-4 space-y-3 border-t-2 border-bone-50/10 pt-3">
         {me && (
           <button
             onClick={() => actions.setReady(!me.lobbyReady)}
-            className={`w-full px-4 py-3 font-mono text-[0.86rem] uppercase tracking-[0.3em] transition-colors ${
+            className={`w-full border-2 px-4 py-3 font-mono text-[0.86rem] uppercase tracking-[0.3em] transition-colors ${
               me.lobbyReady
-                ? "border-2 border-accent bg-accent text-ink-900 shadow-[6px_6px_0_rgb(var(--shadow-accent))]"
-                : "border-2 border-dashed border-bone-50/40 text-bone-50/80 hover:border-accent hover:text-accent"
+                ? "border-accent bg-accent text-ink-900 shadow-[6px_6px_0_rgb(var(--shadow-accent))]"
+                : "border-accent/40 bg-accent/5 text-accent/75 shadow-[6px_6px_0_rgb(var(--shadow-accent)/0.35)] hover:border-accent hover:bg-accent/10 hover:text-accent"
             }`}
-            title={
+            data-tooltip={
               me.lobbyReady
                 ? "Click to un-ready"
                 : "Mark yourself ready so the host knows you're set"
@@ -232,7 +240,7 @@ function PlayerRoster({
             }}
             className="inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 hover:text-accent"
           >
-            <span>rename</span>
+            <span>rename player</span>
           </button>
         )}
       </div>
@@ -299,7 +307,7 @@ function RosterRow({
     <li className="group flex items-center gap-2 border-2 border-bone-50/10 px-3 py-2">
       <span
         className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`}
-        title={
+        data-tooltip={
           !player.online
             ? "Disconnected"
             : player.lobbyReady
@@ -325,7 +333,7 @@ function RosterRow({
         {player.muted && (
           <span
             className="border border-rose-500/60 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-rose-400"
-            title="Chat muted by host"
+            data-tooltip="Chat muted by host"
           >
             muted
           </span>
@@ -333,7 +341,7 @@ function RosterRow({
         {player.lobbyReady && (
           <span
             className="border border-accent/70 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-accent"
-            title="Ready to play"
+            data-tooltip="Ready to play"
           >
             ready
           </span>
@@ -341,7 +349,7 @@ function RosterRow({
         {player.isHost && (
           <span
             className="font-mono text-[9.5px] uppercase tracking-widest text-accent"
-            title="Room host"
+            data-tooltip="Room host"
           >
             ★ host
           </span>
@@ -384,7 +392,7 @@ function HostIconButton({
     <button
       type="button"
       onClick={onClick}
-      title={label}
+      data-tooltip={label}
       aria-label={label}
       className={`inline-flex h-7 w-7 items-center justify-center border-2 transition-colors ${
         danger
@@ -547,20 +555,25 @@ function HostPane({
           </p>
           {/* Room name + visibility badge sits where the H3 used to be —
               still tells the host what they're managing, but now also
-              communicates whether other people can find this room. */}
-          <div className="mt-1 flex flex-wrap items-baseline gap-2">
-            <h3 className="font-display text-[1.31rem] font-bold leading-tight">
-              {snapshot.name || "Room"}
-            </h3>
-            <VisibilityBadge visibility={snapshot.visibility} />
-          </div>
+              communicates whether other people can find this room. The
+              host gets a small "edit" affordance so they can rebrand
+              the room or flip it between public/private without
+              leaving + recreating it (the changes propagate to every
+              client + the public browser via the authoritative
+              snapshot broadcast). */}
+          <RoomTitleEditor
+            name={snapshot.name}
+            visibility={snapshot.visibility}
+            onRename={actions.setRoomName}
+            onVisibility={actions.setRoomVisibility}
+          />
         </div>
         <div className="relative">
           <CopyToast visible={copied} />
           <button
             onClick={() => copy(code)}
             className="brut-btn inline-flex items-center gap-2 px-3 py-2 font-mono text-[0.86rem] uppercase tracking-wider"
-            title="Copy room code"
+            data-tooltip="Copy room code"
           >
             <span>{code}</span>
             <span aria-hidden className="text-[0.92rem] leading-none">
@@ -585,7 +598,7 @@ function HostPane({
         {selected ? (
           <p
             className="mt-0.5 truncate font-mono text-[0.92rem] text-bone-50/90"
-            title={`${selected.artist} — ${selected.title}`}
+            data-tooltip={`${selected.artist} — ${selected.title}`}
           >
             <span className="text-bone-50/60">{selected.artist}</span> —{" "}
             <span className="text-bone-50">{selected.title}</span>
@@ -609,7 +622,7 @@ function HostPane({
           onClick={() => fetchCatalog(true)}
           disabled={loading}
           className="brut-btn px-3 py-2 text-[0.79rem] disabled:opacity-50"
-          title="Refresh the candidate pool"
+          data-tooltip="Refresh the candidate pool"
         >
           {loading ? "…" : "↻"}
         </button>
@@ -723,6 +736,172 @@ function HostPane({
   );
 }
 
+/**
+ * Host-only room editor. Display mode shows the title + visibility
+ * pill + an "edit" affordance; edit mode swaps in a compact form with
+ * a name input and a public/private toggle so both knobs land in one
+ * dialog (was: rename-only, which made flipping visibility require
+ * leaving + recreating the room).
+ *
+ * Save semantics mirror the server-side validators exactly: a blank
+ * name keeps the previous name (we just don't emit) and the visibility
+ * enum is locked to the two literal strings, so a stale client can't
+ * smuggle a junk value through. We also fire the two events
+ * conditionally — only when the value actually changed — to avoid
+ * pointless snapshot churn for "open editor / press save without
+ * touching anything".
+ */
+function RoomTitleEditor({
+  name,
+  visibility,
+  onRename,
+  onVisibility,
+}: {
+  name: string;
+  visibility: "public" | "private";
+  onRename: (next: string) => void;
+  onVisibility: (next: "public" | "private") => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [visDraft, setVisDraft] = useState<"public" | "private">(visibility);
+
+  const beginEdit = useCallback(() => {
+    setNameDraft(name);
+    setVisDraft(visibility);
+    setEditing(true);
+  }, [name, visibility]);
+
+  const commit = useCallback(() => {
+    const trimmed = nameDraft.trim();
+    if (trimmed && trimmed !== name) onRename(trimmed);
+    if (visDraft !== visibility) onVisibility(visDraft);
+    setEditing(false);
+  }, [nameDraft, visDraft, name, visibility, onRename, onVisibility]);
+
+  if (editing) {
+    return (
+      <div className="mt-1 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            autoFocus
+            value={nameDraft}
+            onChange={(e) =>
+              setNameDraft(e.target.value.slice(0, ROOM_NAME_MAX_LEN))
+            }
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            maxLength={ROOM_NAME_MAX_LEN}
+            spellCheck={false}
+            autoComplete="off"
+            className="min-w-0 flex-1 border-2 border-bone-50/20 bg-transparent px-2 py-1 font-display text-[1.05rem] font-bold text-bone-50 outline-none focus:border-accent"
+            aria-label="Room name"
+          />
+          <button
+            onClick={commit}
+            className="brut-btn-accent px-3 py-1 text-[0.79rem]"
+          >
+            save
+          </button>
+          <button
+            onClick={() => setEditing(false)}
+            className="font-mono text-[0.72rem] uppercase tracking-widest text-bone-50/55 hover:text-bone-50"
+            data-tooltip="Discard changes"
+          >
+            cancel
+          </button>
+        </div>
+        <VisibilityToggle value={visDraft} onChange={setVisDraft} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <h3 className="font-display text-[1.31rem] font-bold leading-tight">
+        {name || "Room"}
+      </h3>
+      <VisibilityBadge visibility={visibility} />
+      <button
+        onClick={beginEdit}
+        className="font-mono text-[0.72rem] uppercase tracking-widest text-bone-50/55 hover:text-accent"
+        data-tooltip="Rename this room or change its visibility"
+      >
+        edit
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Compact two-pill segmented control for the visibility choice. Lives
+ * next to the room-name input in the editor so both knobs are visible
+ * at once. Styling intentionally matches the create-pane visibility
+ * picker so the two flows feel like the same control.
+ */
+function VisibilityToggle({
+  value,
+  onChange,
+}: {
+  value: "public" | "private";
+  onChange: (next: "public" | "private") => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Room visibility"
+      className="inline-flex w-full overflow-hidden border-2 border-bone-50/20"
+    >
+      <VisibilityToggleOption
+        value="private"
+        label="○ private"
+        active={value === "private"}
+        onSelect={onChange}
+        title="Only people with the code can join"
+      />
+      <VisibilityToggleOption
+        value="public"
+        label="● public"
+        active={value === "public"}
+        onSelect={onChange}
+        title="Anyone can find and join from the public browser"
+      />
+    </div>
+  );
+}
+
+function VisibilityToggleOption({
+  value,
+  label,
+  active,
+  onSelect,
+  title,
+}: {
+  value: "public" | "private";
+  label: string;
+  active: boolean;
+  onSelect: (next: "public" | "private") => void;
+  title: string;
+}) {
+  return (
+    <button
+      role="radio"
+      aria-checked={active}
+      onClick={() => onSelect(value)}
+      data-tooltip={title}
+      className={`flex-1 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-widest transition-colors ${
+        active
+          ? "bg-accent/15 text-accent"
+          : "text-bone-50/60 hover:text-bone-50"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 function VisibilityBadge({
   visibility,
 }: {
@@ -736,7 +915,7 @@ function VisibilityBadge({
           ? "border-accent/70 text-accent"
           : "border-bone-50/30 text-bone-50/55"
       }`}
-      title={
+      data-tooltip={
         isPublic
           ? "Public — appears in the room browser"
           : "Private — only people with the code can join"
@@ -784,7 +963,7 @@ function HostModeButton({
     <button
       onClick={() => enabled && onPick(mode)}
       disabled={disabled}
-      title={
+      data-tooltip={
         reason ?? `${displayMode(mode).toUpperCase()} · ${stars} / 5 intensity`
       }
       className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
@@ -821,7 +1000,7 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Waiting for host
         </p>
-        <div className="mt-1 flex flex-wrap items-baseline gap-2">
+        <div className="mt-1 flex flex-wrap items-center gap-2">
           <h3 className="font-display text-[1.31rem] font-bold">
             {snapshot.name || "Room"}
           </h3>
@@ -842,7 +1021,7 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
         {selected ? (
           <p
             className="mt-0.5 truncate font-mono text-[0.92rem] text-bone-50/90"
-            title={`${selected.artist} — ${selected.title}`}
+            data-tooltip={`${selected.artist} — ${selected.title}`}
           >
             <ArrowIcon
               direction="right"

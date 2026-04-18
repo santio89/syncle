@@ -104,6 +104,127 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Themed text caret + selection + form accents
+ *
+ * Pulls every native browser detail into the brutalist palette so the app
+ * never looks half-themed. Anything that has a default OS color (text
+ * caret, selected text background, native checkbox / progress accent,
+ * text decoration when underlining links, focus outline color) gets the
+ * accent token here. Inputs also get a transparent appearance so the
+ * autofill yellow / bevels don't punch through our flat aesthetic.
+ * ------------------------------------------------------------------------- */
+:root {
+  caret-color: rgb(var(--accent));
+  accent-color: rgb(var(--accent));
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.35);
+  color: rgb(var(--fg));
+  /* Selection is a "swatch" the user is actively painting onto text;
+   * a sharp accent-tinted rectangle reads more intentional than the
+   * default sky-blue OS overlay. */
+  text-shadow: none;
+}
+::-moz-selection {
+  background: rgb(var(--accent) / 0.35);
+  color: rgb(var(--fg));
+  text-shadow: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  caret-color: rgb(var(--accent));
+}
+
+/* Suppress Chromium's yellow autofill flash. Re-tinting via inset
+ * box-shadow is the well-known trick — actual fill stays the form's
+ * own background, and the text color sticks to our token. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill {
+  -webkit-text-fill-color: rgb(var(--fg));
+  -webkit-box-shadow: 0 0 0 1000px rgb(var(--bg)) inset;
+  caret-color: rgb(var(--accent));
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Native focus rings are inconsistent across browsers and rarely match
+ * the brand. Replace with a hard accent outline only for keyboard
+ * users — pointer focus stays clean. Components that own a custom
+ * focus look (.icon-btn, .brut-btn) keep priority via specificity. */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Brutalist scrollbar
+ *
+ * Thin, square, accent-tinted on hover. Track is a faint version of
+ * the page bg so it never competes with content. WebKit + Firefox
+ * both ship custom scrollbar APIs but with different shapes, so the
+ * rules are duplicated below. The body / html elements get a slightly
+ * heftier track because the page-level bar reads as a chrome element.
+ * ------------------------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--fg) / 0.28) transparent;
+}
+*:hover {
+  scrollbar-color: rgb(var(--accent) / 0.7) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--fg) / 0.28);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  /* Square corners, brutalist. No border-radius. */
+  transition: background-color 120ms ease;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--accent) / 0.7);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:active {
+  background: rgb(var(--accent));
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* The page-level scrollbar gets a touch more presence so it reads as
+ * chrome (a real OS scrollbar replacement) instead of an in-card
+ * accessory. */
+html::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+html::-webkit-scrollbar-thumb {
+  background: rgb(var(--fg) / 0.35);
+  background-clip: padding-box;
+}
+html::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--accent) / 0.8);
+  background-clip: padding-box;
+}
+
+/* ---------------------------------------------------------------------------
  * Theme transition
  *
  * Animate only the props that actually change with theme — never `all`,
@@ -380,6 +501,86 @@ body {
 .icon-btn:focus-visible {
   outline: 2px solid rgb(var(--accent));
   outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Brutalist tooltip
+ *
+ * Custom replacement for the native `title` attribute. Same visual
+ * language as `<CopyToast />` so the two feel like one system: accent
+ * border, mono uppercase tracking, square corners, hard-offset shadow.
+ * Position + show/hide are driven by `<TooltipLayer />` (single mount
+ * in the root layout, document-level event delegation). The element
+ * itself is just the styled bubble — it never carries layout state.
+ *
+ * `::after` paints a tiny brutalist arrow nub pointing back at the
+ * trigger; offset and rotation flip via `data-placement` so the same
+ * markup works for top / bottom alignment.
+ * ------------------------------------------------------------------------- */
+.brut-tooltip {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  border: 2px solid rgb(var(--accent));
+  background: rgb(var(--bg));
+  color: rgb(var(--accent));
+  padding: 0.32rem 0.55rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 9.5px;
+  line-height: 1.35;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  /* `pre-line` honors `\n` from the source (call sites format multi-field
+     tooltips like `Song: ...\nArtist: ...`) while still soft-wrapping
+     long single lines. `normal` collapsed the newlines into spaces, which
+     mashed song/artist/mapper onto one row. */
+  white-space: pre-line;
+  /* Without an explicit width, fixed-positioned boxes use shrink-to-fit,
+     which lets the available viewport space (small near the right edge,
+     where the header buttons live) compress the tooltip and wrap on
+     every space — e.g. "SWITCH / TO / LIGHT / MODE" instead of two
+     clean rows. `max-content` forces the box to be as wide as its
+     widest line first, and `max-width` still clamps very long single
+     lines so they soft-wrap inside a sane width. */
+  width: max-content;
+  max-width: 18rem;
+  text-align: center;
+  box-shadow: 3px 3px 0 0 rgb(var(--shadow));
+  animation: tooltipIn 140ms ease-out both;
+}
+.brut-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  background: rgb(var(--bg));
+  border-right: 2px solid rgb(var(--accent));
+  border-bottom: 2px solid rgb(var(--accent));
+  transform: translateX(-50%) rotate(45deg);
+}
+.brut-tooltip[data-placement="top"]::after {
+  bottom: -5px;
+}
+.brut-tooltip[data-placement="bottom"]::after {
+  top: -5px;
+  /* Flip so the visible borders point back at the trigger above. */
+  border-right: none;
+  border-bottom: none;
+  border-left: 2px solid rgb(var(--accent));
+  border-top: 2px solid rgb(var(--accent));
+}
+@keyframes tooltipIn {
+  /* Animate opacity ONLY — transform is owned by the inline style for
+   * centering (translate(-50%, ...)), and adding it to the keyframe
+   * would clobber that mid-animation. */
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brut-tooltip {
+    animation: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------

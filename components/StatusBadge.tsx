@@ -40,7 +40,7 @@ export function StatusBadge({
   return (
     <span
       className={`border-2 font-mono uppercase tracking-widest ${palette} ${sizing}`}
-      title={`Beatmapset moderation status: ${s}`}
+      data-tooltip={`Beatmapset moderation status: ${s}`}
     >
       {s}
     </span>

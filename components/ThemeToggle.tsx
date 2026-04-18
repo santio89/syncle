@@ -21,7 +21,11 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
       onClick={toggle}
       className={`icon-btn theme-toggle ${className}`}
       aria-label={`Switch to ${next} mode`}
-      title={`Switch to ${next} mode`}
+      // Two-line tooltip via `\n` (the custom .brut-tooltip uses
+      // `white-space: pre-line`): "Switch to" stacks above "Dark mode" /
+      // "Light mode" so the action verb and the target state read as
+      // distinct beats instead of mashing onto one row.
+      data-tooltip={`Switch to\n${next} mode`}
     >
       {/* Sun — visible when theme === light (i.e. clicking switches AWAY from sun → dark) */}
       <span className="theme-toggle__icon theme-toggle__icon--sun" aria-hidden="true">

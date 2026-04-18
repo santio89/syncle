@@ -34,7 +34,7 @@ export function HomeButton({
       onClick={onNavigate}
       className={`icon-btn ${className}`}
       aria-label="Main menu"
-      title="Main menu"
+      data-tooltip="Main menu"
     >
       <HomeIcon />
     </Link>

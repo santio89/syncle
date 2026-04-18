@@ -135,7 +135,7 @@ export function ResultsScreen({
               onClick={handleBackToRoom}
               disabled={returning}
               className="brut-btn-accent group flex items-center justify-center gap-2 px-4 py-3 disabled:opacity-70"
-              title={
+              data-tooltip={
                 returning
                   ? "Waiting on the server to flip the phase…"
                   : "Pull everyone back to the lobby"

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { TooltipLayer } from "@/components/TooltipLayer";
 import { themeNoFlashScript } from "@/components/theme-no-flash-script";
 
 const display = Space_Grotesk({
@@ -49,6 +50,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeProvider>{children}</ThemeProvider>
+        {/* Single-mount, document-level event delegation. Replaces the
+            native `title` tooltip everywhere with the brutalist bubble
+            in components/TooltipLayer.tsx. Placed AFTER children so it
+            renders into a portal at the end of <body> and naturally
+            stacks above app content. */}
+        <TooltipLayer />
       </body>
     </html>
   );

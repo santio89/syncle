@@ -872,7 +872,7 @@ function ScoreboardSidebar({
               </span>
               <span
                 className="min-w-0 flex-1 truncate text-[0.77rem]"
-                title={e.name}
+                data-tooltip={e.name}
               >
                 {e.name}
                 {isMe && (
@@ -893,7 +893,7 @@ function ScoreboardSidebar({
                         ? "text-bone-50/70"
                         : "text-bone-50/40"
                   }`}
-                  title={`Combo ×${e.combo}`}
+                  data-tooltip={`Combo ×${e.combo}`}
                 >
                   ×{e.combo}
                 </span>
@@ -904,7 +904,7 @@ function ScoreboardSidebar({
               {e.finished && (
                 <span
                   className="shrink-0 text-[9.2px] uppercase tracking-widest text-accent"
-                  title="Finished"
+                  data-tooltip="Finished"
                 >
                   ✓
                 </span>
@@ -912,7 +912,7 @@ function ScoreboardSidebar({
               {!e.online && (
                 <span
                   className="shrink-0 text-[9.2px] uppercase tracking-widest text-bone-50/30"
-                  title="Disconnected"
+                  data-tooltip="Disconnected"
                 >
                   ⌀
                 </span>
@@ -1049,21 +1049,21 @@ function HealthPanel({
                 cares; the lobby picker still shows the full ★ ramp. */}
             <span
               className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
-              title={`Difficulty: ${displayMode(chartMode)} (${tierStars} / 5 intensity)`}
+              data-tooltip={`Difficulty: ${displayMode(chartMode)} (${tierStars} / 5 intensity)`}
             >
               {displayMode(chartMode)}
             </span>
           </div>
           <p
             className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
-            title={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
+            data-tooltip={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
           >
             {songTitle}
           </p>
           {songArtist && (
             <p
               className="truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
-              title={songArtist}
+              data-tooltip={songArtist}
             >
               {songArtist}
             </p>
@@ -1112,7 +1112,7 @@ function HealthPanel({
               ? "border-accent text-accent"
               : "border-bone-50/30 text-bone-50/40"
           }`}
-          title="Toggle metronome (local only)"
+          data-tooltip="Toggle metronome (local only)"
           aria-label="Toggle metronome"
         >
           ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
@@ -1165,7 +1165,7 @@ function HealthPanel({
               ? "border-bone-50/30 text-bone-50/50 hover:border-bone-50/60 hover:text-bone-50/80"
               : "border-accent text-accent"
           }`}
-          title={
+          data-tooltip={
             fpsLock == null
               ? "FPS lock off — click to cap at 30 FPS"
               : `Render frame-rate capped at ${fpsLock} FPS — click to ${

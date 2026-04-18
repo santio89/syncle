@@ -82,6 +82,12 @@ export interface RoomActions {
   ): Promise<{ ok: true; code: string } | { ok: false; message: string }>;
   leave(): void;
   setName(name: string): void;
+  /** Host: rename the room. Empty / whitespace input is ignored
+   * server-side, so the previous title sticks if validation fails. */
+  setRoomName(name: string): void;
+  /** Host: flip room discoverability. Server validates the enum and
+   * no-ops when the value already matches the current setting. */
+  setRoomVisibility(visibility: RoomVisibility): void;
   /** Host: ask server to (re)fetch the catalog. */
   requestCatalog(refresh?: boolean): Promise<CatalogItem[]>;
   selectSong(song: SongRef): void;
@@ -418,6 +424,14 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
     socketRef.current?.emit("room:setName", { name });
   }, []);
 
+  const setRoomName = useCallback((name: string) => {
+    socketRef.current?.emit("host:setRoomName", { name });
+  }, []);
+
+  const setRoomVisibility = useCallback((visibility: RoomVisibility) => {
+    socketRef.current?.emit("host:setVisibility", { visibility });
+  }, []);
+
   const requestCatalog = useCallback(
     async (refresh = false) => {
       const res = await callWithAck<{ items: CatalogItem[] }>(
@@ -526,6 +540,8 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       join,
       leave,
       setName,
+      setRoomName,
+      setRoomVisibility,
       requestCatalog,
       selectSong,
       setMode,

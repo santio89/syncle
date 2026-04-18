@@ -483,6 +483,40 @@ class RoomRegistry {
     this.emitSnapshot(code);
   }
 
+  /**
+   * Host-only room rename. Mirrors the create-time sanitization rules
+   * (same `sanitizeRoomName` helper, same length cap) so a renamed room
+   * can never end up with a title the create form wouldn't accept.
+   * Empty input is rejected silently — a misclick shouldn't be able to
+   * wipe a room's identity in the public browser.
+   */
+  setRoomName(code: string, sessionId: string, raw: unknown): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) return;
+    const name = sanitizeRoomName(raw);
+    if (!name || name === room.name) return;
+    room.name = name;
+    this.emitSnapshot(code);
+  }
+
+  /**
+   * Host-only visibility toggle. Strict whitelist on the wire string
+   * so a stale client can't smuggle a bogus value into the room state
+   * (the listing helper would crash on `room.visibility !== "public"`
+   * comparisons being unexpectedly truthy / falsy with garbage). No-op
+   * when the value already matches.
+   */
+  setRoomVisibility(code: string, sessionId: string, raw: unknown): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) return;
+    if (raw !== "public" && raw !== "private") return;
+    if (room.visibility === raw) return;
+    room.visibility = raw;
+    this.emitSnapshot(code);
+  }
+
   setSong(code: string, sessionId: string, song: unknown): void {
     const room = this.rooms.get(code);
     if (!room) throw new RoomError("ROOM_NOT_FOUND", "Room not found");
@@ -1064,6 +1098,18 @@ export function wireSocketServer(io: IO): void {
       const ref = reg.refOf(socket.id);
       if (!ref) return;
       reg.setName(ref.code, ref.sessionId, payload?.name);
+    });
+
+    socket.on("host:setRoomName", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      reg.setRoomName(ref.code, ref.sessionId, payload?.name);
+    });
+
+    socket.on("host:setVisibility", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      reg.setRoomVisibility(ref.code, ref.sessionId, payload?.visibility);
     });
 
     /* ---- catalog ---- */

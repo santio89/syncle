@@ -143,12 +143,21 @@ export default function MultiEntryPage() {
             className="group flex w-full items-center justify-between gap-3 font-mono text-[10.5px] uppercase tracking-[0.35em] text-bone-50/45 transition-colors hover:text-bone-50/80"
           >
             <span>░ How it works</span>
+            {/* Same brutalist ArrowIcon used by the Join / Start CTAs
+                (size 12, strokeWidth 2.75) so the chevron weight reads
+                as part of the same icon family. Composing rotate-180
+                (open/closed) with a small hover translate gives the
+                accordion the same "lean toward direction" micro-motion
+                the action buttons use — open arrow nudges up on hover,
+                closed arrow nudges down. */}
             <ArrowIcon
               direction="down"
-              size={11}
-              strokeWidth={2.5}
+              size={12}
+              strokeWidth={2.75}
               className={`transition-transform duration-300 ease-out ${
-                howOpen ? "rotate-180" : "rotate-0"
+                howOpen
+                  ? "rotate-180 group-hover:-translate-y-0.5"
+                  : "rotate-0 group-hover:translate-y-0.5"
               }`}
             />
           </button>

@@ -150,7 +150,7 @@ export function InGameChatWidget({
               onClick={() => setOpen(false)}
               className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/55 hover:text-accent transition-colors"
               aria-label="Close chat"
-              title="Close (Esc)"
+              data-tooltip="Close (Esc)"
             >
               ✕ close
             </button>
@@ -182,7 +182,7 @@ export function InGameChatWidget({
           aria-label={
             unread > 0 ? `Open chat (${unread} unread)` : "Open chat"
           }
-          title="Open chat (T)"
+          data-tooltip="Open chat (T)"
         >
           <ChatBubbleIcon />
           <span>Chat</span>

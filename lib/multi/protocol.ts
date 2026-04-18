@@ -242,6 +242,26 @@ export interface ClientToServerEvents {
    */
   "chat:send": (payload: { text: string }) => void;
 
+  /**
+   * Host-only: rename the room. Same sanitization + length cap as the
+   * initial create flow. Empty / whitespace-only payloads are silently
+   * ignored (the server keeps the previous name) so a misclick can't
+   * blank out the title in the public browser. Broadcasts a fresh
+   * snapshot so every client's lobby header updates in lockstep.
+   */
+  "host:setRoomName": (payload: { name: string }) => void;
+
+  /**
+   * Host-only: flip the room between public (appears in the browser)
+   * and private (only joinable via code). Rejected silently if the
+   * payload is malformed or the room is already in the requested state
+   * (no snapshot churn for a no-op). Broadcasts a fresh snapshot so
+   * remote clients see their visibility pill update in real time AND
+   * so the public browser refresh-poll picks up the change on its next
+   * tick.
+   */
+  "host:setVisibility": (payload: { visibility: RoomVisibility }) => void;
+
   /** Host-only: kick a player out of the room. Cannot kick yourself. */
   "host:kick": (payload: { sessionId: string }) => void;
 

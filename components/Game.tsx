@@ -1131,7 +1131,7 @@ function StartCard({
         {ready && songSource && (
           <span
             className="font-mono text-[9.5px] uppercase tracking-widest text-accent/70"
-            title={
+            data-tooltip={
               mirror
                 ? `Pulled from ${mirror} at runtime${meta!.creator ? ` · mapped by ${meta!.creator}` : ""}`
                 : "Loaded from a real osu!mania 4K beatmap"
@@ -1184,7 +1184,7 @@ function StartCard({
                 // baseline like a unicode `↗` would. `align-middle` on
                 // the icon nudges it up to optical center.
                 className="ml-2 inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40 transition-colors hover:text-accent"
-                title="Open on osu.ppy.sh"
+                data-tooltip="Open on osu.ppy.sh"
               >
                 <span>#{beatmapsetId}</span>
                 <ArrowIcon
@@ -1405,7 +1405,7 @@ function ModeButton({
     <button
       onClick={() => enabled && onPick(mode)}
       disabled={!enabled}
-      title={
+      data-tooltip={
         enabled
           ? `${displayMode(mode).toUpperCase()} · ${stars} / 5 intensity`
           : `Couldn't fit a ${displayMode(mode)} chart for this song's density profile.`
@@ -1471,7 +1471,7 @@ function DifficultyTag({ mode }: { mode: ChartMode }) {
   return (
     <span
       className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
-      title={`Difficulty: ${displayMode(mode)} (${stars} / 5 intensity)`}
+      data-tooltip={`Difficulty: ${displayMode(mode)} (${stars} / 5 intensity)`}
     >
       {displayMode(mode)}
     </span>
@@ -1652,14 +1652,14 @@ function HUD({
             </div>
             <p
               className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
-              title={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
+              data-tooltip={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
             >
               {songTitle}
             </p>
             {songArtist && (
               <p
                 className="truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
-                title={songArtist}
+                data-tooltip={songArtist}
               >
                 {songArtist}
               </p>
@@ -1709,7 +1709,7 @@ function HUD({
                   ? "border-accent text-accent"
                   : "border-bone-50/30 text-bone-50/40"
               }`}
-              title="Toggle metronome (M)"
+              data-tooltip="Toggle metronome (M)"
               aria-label="Toggle metronome"
             >
               ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
@@ -1718,7 +1718,7 @@ function HUD({
               onClick={onPause}
               disabled={paused}
               className="pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border border-bone-50/40 px-1 py-0.5 text-bone-50/80 transition-colors hover:border-accent hover:text-accent disabled:opacity-40 sm:px-1.5"
-              title="Pause (ESC)"
+              data-tooltip="Pause (ESC)"
               aria-label="Pause"
             >
               ❚❚<span className="hidden sm:inline"> ESC</span>
@@ -1779,7 +1779,7 @@ function HUD({
                 ? "border-bone-50/30 text-bone-50/50 hover:border-bone-50/60 hover:text-bone-50/80"
                 : "border-accent text-accent"
             }`}
-            title={
+            data-tooltip={
               fpsLock == null
                 ? "FPS lock off — click to cap at 30 FPS"
                 : `Render frame-rate capped at ${fpsLock} FPS — click to ${
@@ -1798,7 +1798,7 @@ function HUD({
                 ? "text-yellow-400/70"
                 : "text-rose-400/80"
             }`}
-            title="Render frames per second"
+            data-tooltip="Render frames per second"
           >
             {fps || "—"} FPS
           </span>

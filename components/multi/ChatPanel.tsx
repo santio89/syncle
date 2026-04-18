@@ -203,7 +203,7 @@ export function ChatPanel({
           type="submit"
           disabled={meIsMuted || !draft.trim()}
           className="brut-btn-accent shrink-0 px-3 py-1.5 font-mono text-[0.79rem] uppercase tracking-widest disabled:opacity-40"
-          title="Send (Enter)"
+          data-tooltip="Send (Enter)"
         >
           Send
         </button>
@@ -271,7 +271,7 @@ function RelativeTime({ at }: { at: number }) {
   return (
     <span
       className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/35"
-      title={new Date(at).toLocaleString()}
+      data-tooltip={new Date(at).toLocaleString()}
     >
       {label}
     </span>

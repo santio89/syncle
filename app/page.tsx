@@ -162,10 +162,11 @@ export default function HomePage() {
           <Link
             href="/play"
             aria-label="Play this track"
-            // Native tooltip showing the full title + artist when the
-            // ellipsized text doesn't tell the whole story. Browsers render
-            // \n as a line break inside title attributes.
-            title={
+            // Custom tooltip (TooltipLayer) showing full title + artist
+            // when the ellipsized text doesn't tell the whole story.
+            // `\n` is honored by `.brut-tooltip { white-space: pre-line }`,
+            // so each field renders on its own row.
+            data-tooltip={
               load.status === "ready"
                 ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}`
                 : undefined
@@ -250,7 +251,7 @@ export default function HomePage() {
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
               <div
                 className="min-w-0 flex-1"
-                title={
+                data-tooltip={
                   load.status === "ready"
                     ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}${
                         load.meta.year ? `\nYear: ${load.meta.year}` : ""
@@ -438,7 +439,7 @@ export default function HomePage() {
         <Link
           href="/multi"
           className="group inline-flex items-center gap-2 text-bone-50/60 hover:text-accent transition-colors"
-          title="Multiplayer"
+          data-tooltip="Multiplayer"
         >
           {/* MultiIcon bumped from 11→14 (and the trailing arrow from
               12→14 to keep the row balanced) — at 11px the four
@@ -496,7 +497,7 @@ function Stat({
       {hint && (
         <div
           className="mt-0.5 truncate text-right text-[9.5px] uppercase tracking-widest text-bone-50/30"
-          title={hint}
+          data-tooltip={hint}
         >
           {hint}
         </div>

@@ -17,7 +17,7 @@ export function MultiButton({ className = "" }: { className?: string }) {
       href="/multi"
       className={`icon-btn ${className}`}
       aria-label="Multiplayer"
-      title="Multiplayer"
+      data-tooltip="Multiplayer"
     >
       <MultiIcon />
     </Link>

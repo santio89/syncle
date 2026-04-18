@@ -604,7 +604,7 @@ function BrowsePane({
           onClick={refresh}
           disabled={loading || conn !== "connected"}
           className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors disabled:opacity-40"
-          title="Refresh list"
+          data-tooltip="Refresh list"
         >
           {loading ? "…refreshing" : "↻ refresh"}
         </button>
@@ -682,7 +682,7 @@ function PublicRoomRow({
         <div className="flex items-baseline gap-2">
           <p
             className="truncate font-display text-[0.97rem] font-bold text-bone-50"
-            title={room.name}
+            data-tooltip={room.name}
           >
             {room.name}
           </p>
@@ -709,7 +709,7 @@ function PublicRoomRow({
       <button
         onClick={onJoin}
         disabled={joinDisabled}
-        title={reason}
+        data-tooltip={reason}
         className="brut-btn group inline-flex shrink-0 items-center gap-2 px-3 py-2 font-mono text-[10.5px] uppercase tracking-widest disabled:opacity-40"
       >
         <span>Join</span>

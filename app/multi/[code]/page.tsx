@@ -371,7 +371,11 @@ export default function MultiRoomPage() {
           )}
 
           {lastError && (
-            <div className="brut-card-accent flex items-start justify-between gap-3 p-3">
+            // Width-locked to the JoinForm / ConnectingCard above so
+            // the error banner reads as a sibling of that card instead
+            // of a full-bleed strip across the page. Both surfaces use
+            // `mx-auto w-full max-w-md` — keep them in lockstep here.
+            <div className="brut-card-accent mx-auto flex w-full max-w-md items-start justify-between gap-3 p-3">
               <p className="font-mono text-[0.79rem]">
                 <span className="text-rose-400">[{lastError.code}]</span>{" "}
                 {lastError.message}
@@ -514,13 +518,13 @@ function ConnectionPill({ conn }: { conn: string }) {
   return (
     <span
       className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/60"
-      title={text}
+      data-tooltip={text}
     >
       <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
       {/* Hide the verbose label on phones so the room code + back button
           + theme toggle don't fight for space; the colored dot still
-          communicates the state, and the title attribute exposes the
-          full text on hover/long-press for assistive contexts. */}
+          communicates the state, and the data-tooltip exposes the
+          full text on hover for assistive / desktop contexts. */}
       <span className="hidden truncate sm:inline">{text}</span>
     </span>
   );
@@ -590,7 +594,7 @@ function JoinForm({
         <button
           type="button"
           onClick={() => copy(code)}
-          title="Copy room code"
+          data-tooltip="Copy room code"
           className="group inline-flex items-center gap-2 font-display text-[1.58rem] font-bold leading-none text-bone-50 transition-colors hover:text-accent"
         >
           <span>{code}</span>
