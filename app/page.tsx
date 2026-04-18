@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
+import { MultiButton, MultiIcon } from "@/components/MultiButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import {
   loadSong,
   displayMode,
@@ -116,22 +118,28 @@ export default function HomePage() {
             />
             <polygon points="10,7.5 16.5,12 10,16.5" fill="currentColor" />
           </svg>
+          {/* Wordmark mirrors the H1 hero coloring exactly: SYNC pops
+              to the full theme foreground (cream in dark, near-black
+              in light), LE picks up the accent. The outer span's
+              `text-bone-50/70` only dims the surrounding nav copy
+              (e.g. "OSU MANIA · 4K") — overriding SYNC back to a
+              non-alpha `text-bone-50` keeps the brand mark at the
+              same weight it has in the H1, instead of looking like
+              washed-out caption text next to the icon. */}
           <span className="font-mono text-[0.79rem] tracking-[0.3em] text-bone-50/70">
-            SYNCLE
+            <span className="text-bone-50">SYNC</span>
+            <span className="text-accent">LE</span>
           </span>
         </div>
-        <nav className="flex items-center gap-3 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60 sm:gap-6">
+        <nav className="flex items-center gap-3 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
           <span className="hidden sm:inline">osu! mania · 4K</span>
-          <Link
-            href="/multi"
-            className="inline-flex items-center gap-2 border-2 border-bone-50/40 px-3 py-1.5 leading-none text-bone-50 transition-colors hover:border-accent hover:text-accent"
-            title="Up to 50 players per room — same song, parallel runs"
-          >
-            <span aria-hidden className="text-[9.5px] leading-none text-bone-50/60">
-              ░
-            </span>
-            <span>multi</span>
-          </Link>
+          {/* All header chips share `.icon-btn` (38×38 square) so the
+              right side of the header reads as a uniform strip. The
+              old wider "░ multi" pill drifted off-grid; the icon-only
+              MultiButton keeps the rhythm with ThemeToggle. Tooltip
+              still spells out "Multiplayer · up to 50 players per
+              room" so the affordance isn't lost with the label. */}
+          <MultiButton />
           <ThemeToggle />
         </nav>
       </header>
@@ -143,7 +151,7 @@ export default function HomePage() {
               ░ Random song · Endless retries
             </span>
             <h1 className="font-display whitespace-nowrap font-bold leading-[0.85] tracking-tight text-[clamp(2.9rem,15.75vw,9.45rem)]">
-              SYNC<span className="text-accent">LE.</span>
+              SYNC<span className="text-accent">LE</span>
             </h1>
             <p className="max-w-xl text-[0.92rem] text-bone-50/80 sm:text-[1.05rem]">
               A fresh osu!mania track every refresh. Hit the notes, hold the
@@ -409,13 +417,41 @@ export default function HomePage() {
       </section>
 
       <footer className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t-2 border-bone-50/20 px-4 py-3 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40 sm:px-6 sm:text-[11.5px]">
-        <span>Syncle · Random song · Endless retries</span>
+        {/* SYNC + accent LE wordmark mirrors the H1 hero coloring;
+            the trailing "· Random song · Endless retries" caption is
+            bumped to /60 so it sits at the same visual weight as the
+            "MULTIPLAYER ROOMS" link on the right side of the footer.
+            Without the override it inherited the footer parent's /40
+            and looked noticeably dimmer than its right-side
+            counterpart, leaving the row visually unbalanced. */}
+        <span>
+          <span className="text-bone-50">SYNC</span>
+          <span className="text-accent">LE</span>
+          <span className="text-bone-50/60"> · Random song · Endless retries</span>
+        </span>
+        {/* Same MultiIcon + ArrowIcon vocabulary as the header buttons
+            (Back / Join room / Start) — the loose `░` unicode glyph
+            and `→` character were the last holdouts from the early
+            "ascii-art" era and didn't match the sharper SVG icons
+            elsewhere. The arrow gets the same group-hover translate
+            we use everywhere a forward action sits in a row. */}
         <Link
           href="/multi"
-          className="text-bone-50/60 hover:text-accent"
+          className="group inline-flex items-center gap-2 text-bone-50/60 hover:text-accent transition-colors"
           title="Play with up to 50 friends in a room"
         >
-          ░ multiplayer rooms →
+          {/* MultiIcon bumped from 11→14 (and the trailing arrow from
+              12→14 to keep the row balanced) — at 11px the four
+              squares were getting muddy at this footer text size,
+              now they read as four distinct players at a glance. */}
+          <MultiIcon size={14} />
+          <span>multiplayer rooms</span>
+          <ArrowIcon
+            direction="right"
+            size={14}
+            strokeWidth={2.75}
+            className="transition-transform duration-200 group-hover:translate-x-0.5"
+          />
         </Link>
       </footer>
     </main>

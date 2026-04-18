@@ -23,6 +23,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
 import { GradientBg } from "@/components/GradientBg";
+import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 
@@ -69,7 +70,12 @@ export default function MultiEntryPage() {
     <main className="relative min-h-screen overflow-hidden">
       <GradientBg />
 
-      <header className="relative z-10 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-8 sm:py-4">
+      {/* Padding kept in lockstep with the homepage / /play / room
+          headers (px-4 sm:px-6 py-3) so the 38×38 icon-btn row
+          produces the same overall header height on every page —
+          previously this header was ~8px taller than the rest at
+          sm:py-4 and ~16px wider on the sides at sm:px-8. */}
+      <header className="relative z-10 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-6">
         <button
           onClick={() => {
             // Honor browser history so a player who landed here from the
@@ -94,7 +100,10 @@ export default function MultiEntryPage() {
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-bone-50/50">
           Multiplayer
         </p>
-        <ThemeToggle />
+        <div className="flex items-center gap-2 sm:gap-3">
+          <HomeButton />
+          <ThemeToggle />
+        </div>
       </header>
 
       <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-10 pb-16 sm:px-6 sm:pt-16">

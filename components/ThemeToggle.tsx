@@ -19,7 +19,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
     <button
       type="button"
       onClick={toggle}
-      className={`theme-toggle ${className}`}
+      className={`icon-btn theme-toggle ${className}`}
       aria-label={`Switch to ${next} mode`}
       title={`Switch to ${next} mode`}
     >

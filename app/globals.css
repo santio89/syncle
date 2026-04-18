@@ -324,13 +324,15 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
- * Theme toggle (sun/moon morph)
+ * Header icon button base
  *
- * Stacked SVGs with a shared center; CSS handles the crossfade + rotation.
- * Adding `theme-toggle--light` triggers the swap. Both states use the same
- * `--ease-theme` curve so the toggle is in sync with the page-wide swap.
+ * Square 38×38 button used for every "tertiary" header control: theme
+ * toggle, home, multiplayer entry, etc. Centralized here so adding a
+ * new header chip never drifts on size, border weight, hover behavior,
+ * or focus ring. Pages should reach for this class first; only spin a
+ * new variant when the visual language genuinely needs to differ.
  * ------------------------------------------------------------------------- */
-.theme-toggle {
+.icon-btn {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -345,12 +347,23 @@ body {
               color var(--dur-theme) var(--ease-theme),
               transform 120ms ease;
 }
-.theme-toggle:hover { border-color: rgb(var(--accent)); color: rgb(var(--accent)); }
-.theme-toggle:active { transform: translateY(1px); }
-.theme-toggle:focus-visible {
+.icon-btn:hover { border-color: rgb(var(--accent)); color: rgb(var(--accent)); }
+.icon-btn:active { transform: translateY(1px); }
+.icon-btn:focus-visible {
   outline: 2px solid rgb(var(--accent));
   outline-offset: 2px;
 }
+
+/* ---------------------------------------------------------------------------
+ * Theme toggle (sun/moon morph)
+ *
+ * Stacked SVGs with a shared center; CSS handles the crossfade + rotation.
+ * Adding `theme-toggle--light` triggers the swap. Both states use the same
+ * `--ease-theme` curve so the toggle is in sync with the page-wide swap.
+ *
+ * Inherits all base styling (size, border, hover, focus) from `.icon-btn`
+ * — only the rotate/crossfade animation lives here.
+ * ------------------------------------------------------------------------- */
 
 .theme-toggle__icon {
   position: absolute;

@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CopyToast } from "@/components/CopyToast";
 import { GradientBg } from "@/components/GradientBg";
+import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
@@ -186,7 +187,10 @@ export default function MultiRoomPage() {
     <main className="relative flex h-screen w-screen flex-col overflow-hidden">
       <GradientBg />
 
-      <header className="relative z-20 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-8 sm:py-4">
+      {/* Padding kept in lockstep with the homepage / /play / /multi
+          headers (px-4 sm:px-6 py-3) so the 38×38 icon-btn row
+          produces the same overall header height on every page. */}
+      <header className="relative z-20 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-6">
         <button
           onClick={() => {
             actions.leave();
@@ -221,7 +225,13 @@ export default function MultiRoomPage() {
           </code>
           <ConnectionPill conn={conn} />
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Leave the room cleanly before navigating home, otherwise
+              the socket lingers and the player still appears in the
+              roster to other clients for the connection-grace window. */}
+          <HomeButton onNavigate={() => actions.leave()} />
+          <ThemeToggle />
+        </div>
       </header>
 
       <NoticeStack notices={notices} />

@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 
@@ -24,7 +25,12 @@ export default function PlayPage() {
   return (
     <main className="relative flex h-screen w-screen flex-col overflow-hidden bg-ink-900">
       {/* Slim top bar */}
-      <header className="z-30 flex items-center justify-between gap-3 border-b-2 border-bone-50/20 px-4 py-2">
+      {/* Padding kept in lockstep with the homepage and /multi headers
+          (px-4 sm:px-6 py-3) so the 38×38 icon-btn row produces the
+          same overall header height on every page. Diverging here
+          shaved ~8px off the bar and made the gameplay viewport jump
+          when navigating between pages. */}
+      <header className="z-30 flex items-center justify-between gap-3 border-b-2 border-bone-50/20 px-4 py-3 sm:px-6">
         <Link
           href="/"
           className="group inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 transition-colors hover:text-accent"
@@ -41,6 +47,7 @@ export default function PlayPage() {
           <span className="hidden font-mono text-[10.5px] uppercase tracking-[0.3em] text-bone-50/40 sm:inline">
             Single player · v0.2
           </span>
+          <HomeButton />
           <ThemeToggle />
         </div>
       </header>

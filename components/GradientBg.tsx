@@ -63,7 +63,7 @@ const BLOBS: Blob[] = [
     hue: "100, 90, 200",
     alpha: 0.06,
   },
-  // Tiny accent behind the "SYNCLE." tagline (upper-left).
+  // Tiny accent behind the "SYNCLE" wordmark (upper-left).
   {
     cx: 0.22, cy: 0.32,
     ax: 0.015, ay: 0.012,
