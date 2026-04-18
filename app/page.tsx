@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { loadSong } from "@/lib/game/chart";
 import { SongMeta } from "@/lib/game/types";
-import { bestKey, DailyBest, loadBest } from "@/lib/game/best";
+import { bestKey, RunBest, loadBest } from "@/lib/game/best";
+import { LifetimeStats, loadStats } from "@/lib/game/stats";
 
 function formatDuration(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -29,47 +31,37 @@ type LoadState =
   | { status: "error"; message: string };
 
 export default function HomePage() {
-  const todayLong = useMemo(
-    () =>
-      new Date().toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      }),
-    [],
-  );
-  const todayShort = useMemo(
-    () =>
-      new Date().toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      }),
-    [],
-  );
-
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
-  const [yourBest, setYourBest] = useState<DailyBest | null>(null);
+  /** Lifetime best for the random song that just loaded (any mode). */
+  const [trackBest, setTrackBest] = useState<RunBest | null>(null);
+  /** All-time aggregates: tracks played, total runs, best ever. */
+  const [stats, setStats] = useState<LifetimeStats>({
+    totalRuns: 0,
+    tracksPlayed: [],
+    bestEver: null,
+  });
 
   useEffect(() => {
+    setStats(loadStats());
     let cancelled = false;
     loadSong()
       .then((s) => {
         if (cancelled) return;
         setLoad({ status: "ready", meta: s.meta, noteCount: s.notes.length });
-        // Pick the highest score across all difficulties for "your best".
-        let highest: DailyBest | null = null;
+        // Highest score this device has ever set on this song, across all
+        // difficulties — gives the player a target to chase on this refresh.
+        let highest: RunBest | null = null;
         for (const m of ["easy", "normal", "hard"] as const) {
           const b = loadBest(bestKey(s.meta.id, m));
           if (b && (!highest || b.score > highest.score)) highest = b;
         }
-        setYourBest(highest);
+        setTrackBest(highest);
       })
       .catch((err) => {
         if (cancelled) return;
         setLoad({
           status: "error",
-          message: err?.message ?? "Could not load today's chart",
+          message: err?.message ?? "Could not load a chart",
         });
       });
     return () => {
@@ -105,9 +97,17 @@ export default function HomePage() {
             SYNCLE
           </span>
         </div>
-        <nav className="flex items-center gap-6 font-mono text-xs uppercase tracking-widest text-bone-50/60">
-          <span className="sm:hidden">{todayShort}</span>
-          <span className="hidden sm:inline">{todayLong}</span>
+        <nav className="flex items-center gap-3 font-mono text-xs uppercase tracking-widest text-bone-50/60 sm:gap-6">
+          <span className="hidden sm:inline">osu! mania · 4K</span>
+          <Link
+            href="/multi"
+            className="inline-flex items-center gap-1.5 border-2 border-bone-50/40 px-2.5 py-1 leading-none text-bone-50 transition-colors hover:border-accent hover:text-accent"
+            title="Up to 50 players per room — same song, parallel runs"
+          >
+            <span aria-hidden className="text-bone-50/70">░</span>
+            <span>multi</span>
+          </Link>
+          <ThemeToggle />
         </nav>
       </header>
 
@@ -115,32 +115,48 @@ export default function HomePage() {
         <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:gap-12">
           <div className="flex min-w-0 flex-col gap-3">
             <span className="font-mono text-[10px] uppercase tracking-[0.35em] text-accent sm:text-[11px] sm:tracking-[0.4em]">
-              ░ One song · One day · Endless retries
+              ░ Random song · Endless retries
             </span>
             <h1 className="font-display whitespace-nowrap font-bold leading-[0.85] tracking-tight text-[clamp(2.75rem,15vw,9rem)]">
               SYNC<span className="text-accent">LE.</span>
             </h1>
             <p className="max-w-xl text-sm text-bone-50/80 sm:text-base">
-              A new song every day. Hit the notes, hold the long ones, beat
-              your own high score. Tomorrow it&rsquo;s a different track.
+              A fresh osu!mania track every refresh. Hit the notes, hold the
+              long ones, push your best. Refresh for a new one.
             </p>
           </div>
 
           <Link
             href="/play"
-            aria-label="Play today's track"
-            className="brut-play-cta flex h-32 w-full flex-row items-center justify-center gap-4 px-6 sm:aspect-square sm:h-auto sm:w-52 sm:flex-col sm:gap-1 sm:px-0 md:w-56 lg:w-64 xl:w-72 shrink-0 justify-self-center md:justify-self-end"
+            aria-label="Play this track"
+            // Native tooltip showing the full title + artist when the
+            // ellipsized text doesn't tell the whole story. Browsers render
+            // \n as a line break inside title attributes.
+            title={
+              load.status === "ready"
+                ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}`
+                : undefined
+            }
+            className="brut-play-cta flex h-32 w-full flex-row items-center justify-center gap-4 px-6 sm:aspect-square sm:h-auto sm:w-52 sm:flex-col sm:gap-1 sm:px-4 md:w-56 lg:w-64 xl:w-72 shrink-0 justify-self-center md:justify-self-end"
           >
-            <span className="font-display text-6xl leading-none translate-x-[2px] sm:text-7xl sm:-translate-y-1 lg:text-8xl">
+            <span className="font-display text-6xl leading-none translate-x-[2px] sm:text-7xl sm:-translate-y-1 lg:text-8xl shrink-0">
               ▶
             </span>
-            <div className="flex flex-col items-start sm:items-center">
+            {/* min-w-0 + flex-1 (mobile) / w-full (desktop) is what unlocks
+             *  truncation inside this flex parent — without min-w-0 the flex
+             *  child defaults to min-width:auto and refuses to shrink. */}
+            <div className="flex min-w-0 flex-1 flex-col items-start text-left sm:w-full sm:flex-none sm:items-center sm:text-center">
               <span className="font-display text-2xl font-bold tracking-[0.25em] sm:text-2xl lg:text-3xl">
                 PLAY
               </span>
               {load.status === "ready" ? (
-                <span className="font-mono text-[10px] uppercase tracking-widest opacity-70 truncate max-w-[12rem] sm:max-w-[90%]">
-                  {load.meta.title} · {load.meta.artist}
+                <span className="block w-full max-w-full">
+                  <span className="block w-full truncate font-mono text-[11px] font-bold uppercase tracking-widest opacity-90">
+                    {load.meta.title}
+                  </span>
+                  <span className="block w-full truncate font-mono text-[10px] uppercase tracking-wider opacity-60">
+                    {load.meta.artist}
+                  </span>
                 </span>
               ) : load.status === "loading" ? (
                 <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest opacity-70">
@@ -158,10 +174,19 @@ export default function HomePage() {
 
         <div className="grid gap-4 md:grid-cols-3">
           <div className="brut-card-accent relative p-4 sm:p-5 md:col-span-2">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-              <div className="min-w-0">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div
+                className="min-w-0 flex-1"
+                title={
+                  load.status === "ready"
+                    ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}${
+                        load.meta.year ? `\nYear: ${load.meta.year}` : ""
+                      }`
+                    : undefined
+                }
+              >
                 <p className="font-mono text-xs uppercase tracking-widest text-accent">
-                  Today&rsquo;s track
+                  Now playing
                   {load.status === "ready" && (
                     <span className="ml-2 text-bone-50/40">· osu! 4K</span>
                   )}
@@ -169,10 +194,10 @@ export default function HomePage() {
 
                 {load.status === "ready" ? (
                   <>
-                    <h2 className="mt-1 font-display text-2xl font-bold leading-tight truncate sm:text-3xl">
+                    <h2 className="mt-1 block w-full truncate font-display text-2xl font-bold leading-tight sm:text-3xl">
                       {load.meta.title}
                     </h2>
-                    <p className="mt-0.5 text-sm text-bone-50/70 truncate">
+                    <p className="mt-0.5 block w-full truncate text-sm text-bone-50/70">
                       {load.meta.artist}
                       {load.meta.year ? ` · ${load.meta.year}` : ""}
                     </p>
@@ -255,24 +280,55 @@ export default function HomePage() {
           </div>
 
           <div className="brut-card p-4 sm:p-5">
-            <p className="font-mono text-xs uppercase tracking-widest text-bone-50/60">
-              Global · live
-            </p>
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="font-mono text-xs uppercase tracking-widest text-bone-50/60">
+                Your stats
+              </p>
+              <p
+                className="font-mono text-[9px] uppercase tracking-widest text-bone-50/30"
+                title="Synced globally once Firestore lands."
+              >
+                local · soon online
+              </p>
+            </div>
             <div className="mt-3 space-y-2 font-mono text-sm">
-              <Stat label="players today" value="—" />
-              <Stat label="top score" value="—" />
               <Stat
-                label="your best"
-                value={yourBest ? yourBest.score.toLocaleString() : "—"}
+                label="tracks played"
+                value={stats.tracksPlayed.length.toLocaleString()}
               />
-              <Stat label="streak" value="0" />
+              <Stat
+                label="total runs"
+                value={stats.totalRuns.toLocaleString()}
+              />
+              <Stat
+                label="best on this track"
+                value={trackBest ? trackBest.score.toLocaleString() : "—"}
+              />
+              <Stat
+                label="all-time best"
+                value={
+                  stats.bestEver ? stats.bestEver.score.toLocaleString() : "—"
+                }
+                hint={
+                  stats.bestEver
+                    ? `${stats.bestEver.songTitle} · ${stats.bestEver.mode}`
+                    : undefined
+                }
+              />
             </div>
           </div>
         </div>
       </section>
 
-      <footer className="relative z-10 shrink-0 border-t-2 border-bone-50/20 px-4 py-3 font-mono text-[10px] uppercase tracking-widest text-bone-50/40 sm:px-6 sm:text-[11px]">
-        Syncle · Resets at midnight UTC · Online leaderboards & rooms soon
+      <footer className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t-2 border-bone-50/20 px-4 py-3 font-mono text-[10px] uppercase tracking-widest text-bone-50/40 sm:px-6 sm:text-[11px]">
+        <span>Syncle · Random song · Endless retries</span>
+        <Link
+          href="/multi"
+          className="text-bone-50/60 hover:text-accent"
+          title="Play with up to 50 friends in a room"
+        >
+          ░ multiplayer rooms →
+        </Link>
       </footer>
     </main>
   );
@@ -295,13 +351,32 @@ function Spinner({ small, dark }: { small?: boolean; dark?: boolean }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  /** Optional small subline below the row (e.g. song title for all-time best). */
+  hint?: string;
+}) {
   return (
-    <div className="flex items-baseline justify-between border-b border-bone-50/10 pb-2">
-      <span className="text-bone-50/50 uppercase text-[10px] tracking-widest">
-        {label}
-      </span>
-      <span className="text-bone-50">{value}</span>
+    <div className="border-b border-bone-50/10 pb-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-bone-50/50 uppercase text-[10px] tracking-widest">
+          {label}
+        </span>
+        <span className="text-bone-50 tabular-nums">{value}</span>
+      </div>
+      {hint && (
+        <div
+          className="mt-0.5 truncate text-right text-[9px] uppercase tracking-widest text-bone-50/30"
+          title={hint}
+        >
+          {hint}
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { GameState, isHold } from "@/lib/game/engine";
 import {
   ChartMode,
   loadSong,
+  ModeAvailability,
   PLACEHOLDER_META,
   prefetchAudio,
 } from "@/lib/game/chart";
@@ -18,11 +19,13 @@ import { Note, PlayerStats, SongMeta, TOTAL_LANES } from "@/lib/game/types";
 import {
   loadBest,
   saveBestIfHigher,
-  todayUtcKey,
   bestKey,
-  DailyBest,
+  RunBest,
 } from "@/lib/game/best";
+import { recordRun } from "@/lib/game/stats";
 import { loadVolume, saveVolume } from "@/lib/game/settings";
+import { useTheme } from "@/components/ThemeProvider";
+import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
 
 type Phase =
   | "idle"
@@ -34,6 +37,16 @@ type Phase =
   | "results";
 
 const COUNTDOWN_SECONDS = 3;
+
+// Extra silent runway between "1" disappearing and the song actually
+// starting. The countdown overlay covers the highway visually, so without
+// this the player goes straight from "covered screen" → "first note hits"
+// in zero milliseconds for any chart whose first note sits on songTime≈0.
+// Two seconds is enough for the highway to spawn the first wave of notes
+// (leadTime is 1.2s) AND give the player half a second of empty grid to
+// settle before notes start sliding in.
+const LEAD_IN_SECONDS = 2;
+const TOTAL_START_DELAY = COUNTDOWN_SECONDS + LEAD_IN_SECONDS;
 
 // Each lane accepts EITHER its letter key OR the matching arrow key.
 // 4 lanes only — osu!mania 4K layout.
@@ -87,6 +100,13 @@ export default function Game() {
   const [songSource, setSongSource] = useState<"osu" | "fallback" | null>(null);
   const [chartMode, setChartMode] = useState<ChartMode>("easy");
   const [rawNoteCount, setRawNoteCount] = useState<number>(0);
+  // Per-mode availability — drives the disabled state of the difficulty
+  // buttons. Defaults to "all available" while loading so the picker doesn't
+  // flash into a disabled state on first paint.
+  const [modeAvailability, setModeAvailability] = useState<ModeAvailability>({
+    noteCounts: { easy: 0, normal: 0, hard: 0 },
+    available: { easy: true, normal: true, hard: true },
+  });
   /** Real meta once the chart loads — null until then so we can show a spinner. */
   const [displayMeta, setDisplayMeta] = useState<SongMeta | null>(null);
   /** Error string if the chart preview fetch failed. */
@@ -97,8 +117,8 @@ export default function Game() {
   const [mirror, setMirror] = useState<string | null>(null);
   /** Beatmapset id when delivered remotely. */
   const [beatmapsetId, setBeatmapsetId] = useState<number | null>(null);
-  const [best, setBest] = useState<DailyBest | null>(null);
-  /** True if the just-finished run set a new daily best. */
+  const [best, setBest] = useState<RunBest | null>(null);
+  /** True if the just-finished run set a new lifetime best for this track. */
   const [newBest, setNewBest] = useState<boolean>(false);
   /** Master song volume 0..1, persisted across sessions. */
   const [volume, setVolume] = useState<number>(0.85);
@@ -108,6 +128,38 @@ export default function Game() {
   const [touchOnly, setTouchOnly] = useState<boolean>(false);
   /** Acknowledged the "no keyboard" warning and wants to try anyway. */
   const [touchAck, setTouchAck] = useState<boolean>(false);
+
+  // ---- Live theme → canvas wiring ---------------------------------------
+  // The renderer reads `theme` off renderOptsRef every frame to look up its
+  // palette. We mirror the React-side theme into that ref AND invalidate the
+  // gradient cache (highway / vignette gradients are baked per palette), so
+  // the next RAF tick redraws with the new colors. Because the RAF loop runs
+  // continuously, the swap is visually instant (limited only by the same
+  // cubic-bezier the rest of the page uses for theme transitions — the
+  // canvas itself just hard-cuts to the new palette in one frame, which
+  // reads as in-sync with the surrounding 220ms CSS crossfade).
+  const { theme } = useTheme();
+  useEffect(() => {
+    renderOptsRef.current.theme = theme;
+    renderStateRef.current.cache = undefined;
+  }, [theme]);
+
+  // Force-load the JetBrains Mono ExtraBold weight used by the lane-gate
+  // letters drawn on the canvas. next/font only downloads weights that are
+  // actually used on the page, and canvas font requests don't count as
+  // usage — so without this the browser silently falls back to the next
+  // available weight (700) and our "800" letters render thinner than
+  // intended for the first few seconds. document.fonts.load triggers a
+  // real download and resolves once the file is in memory.
+  useEffect(() => {
+    if (typeof document === "undefined" || !document.fonts) return;
+    document.fonts
+      .load("800 26px 'JetBrains Mono'")
+      .catch(() => {
+        // Font load can reject on networks with strict ad-blockers blocking
+        // Google Fonts; we're fine to silently fall back to system mono.
+      });
+  }, []);
 
   // Pre-load chart meta on mount + whenever the difficulty changes.
   //
@@ -143,6 +195,18 @@ export default function Game() {
         setSongSource(loaded.source);
         setChartLength(loaded.notes.length);
         setRawNoteCount(loaded.rawNoteCount);
+        setModeAvailability(loaded.modes);
+        // If the song doesn't actually have a distinct chart for the
+        // current mode, hop to the next available one toward "hard". This
+        // keeps the player on a chart that reflects what they picked
+        // instead of silently rendering the same notes as another mode.
+        const fallback = pickAvailableMode(chartMode, loaded.modes);
+        if (fallback !== chartMode) {
+          setChartMode(fallback);
+          // The setState above will retrigger this effect with the new
+          // mode; we'll fill in the rest of the UI on that pass.
+          return;
+        }
         setBest(loadBest(bestKey(loaded.meta.id, chartMode)));
         setProgressMsg(null);
         if (loaded.delivery === "remote") {
@@ -156,7 +220,7 @@ export default function Game() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setPreviewError(err?.message ?? "Could not load today's chart");
+        setPreviewError(err?.message ?? "Could not load a chart");
         setProgressMsg(null);
       });
     return () => {
@@ -250,6 +314,12 @@ export default function Game() {
       // (still on the loading screen, before any notes scroll), so the very
       // first in-game frame doesn't spend 20–40ms building gradients and
       // hot-compiling drawHighway / drawTapNote.
+      //
+      // Use the LIVE renderOptsRef (which already has the active theme set
+      // by the useTheme effect) instead of DEFAULT_RENDER_OPTIONS — otherwise
+      // a user in light mode would have the dark-palette gradients baked
+      // into the cache for the first frame, then swapped on the next
+      // resize/theme effect. Reading the ref keeps the pre-warm honest.
       if (ctx) {
         try {
           drawFrame(
@@ -257,7 +327,7 @@ export default function Game() {
             new GameState([]),
             -COUNTDOWN_SECONDS,
             0,
-            DEFAULT_RENDER_OPTIONS,
+            renderOptsRef.current,
             renderStateRef.current,
           );
         } catch {
@@ -331,7 +401,11 @@ export default function Game() {
       setPhase("countdown");
       setCountdown(COUNTDOWN_SECONDS);
 
-      audio.start(COUNTDOWN_SECONDS, volume);
+      // Schedule the song to begin AFTER both the countdown and the silent
+      // lead-in. songTime() goes negative during this whole window, so notes
+      // (which all live at positive times) stay above the judgment line —
+      // the highway just slides empty until the first beat actually arrives.
+      audio.start(TOTAL_START_DELAY, volume);
 
       const startedAt = performance.now();
       const tickCountdown = () => {
@@ -597,8 +671,18 @@ export default function Game() {
         score: state.stats.score,
         accuracy,
         maxCombo: state.stats.maxCombo,
-        date: todayUtcKey(),
         at: Date.now(),
+      });
+      // Update lifetime aggregates (tracks played, total runs, all-time best)
+      // so the homepage scoreboard reflects this run on next page load.
+      recordRun({
+        songId: songMeta.id,
+        songTitle: songMeta.title,
+        songArtist: songMeta.artist,
+        mode: chartMode,
+        score: state.stats.score,
+        accuracy,
+        maxCombo: state.stats.maxCombo,
       });
       setBest(result.best);
       setNewBest(result.improved);
@@ -696,6 +780,7 @@ export default function Game() {
               songSource={songSource}
               chartMode={chartMode}
               onChangeMode={setChartMode}
+              modeAvailability={modeAvailability}
               chartLength={chartLength}
               rawNoteCount={rawNoteCount}
               best={best}
@@ -766,6 +851,7 @@ function StartCard({
   songSource,
   chartMode,
   onChangeMode,
+  modeAvailability,
   chartLength,
   rawNoteCount,
   best,
@@ -784,9 +870,10 @@ function StartCard({
   songSource: "osu" | "fallback" | null;
   chartMode: ChartMode;
   onChangeMode: (m: ChartMode) => void;
+  modeAvailability: ModeAvailability;
   chartLength: number;
   rawNoteCount: number;
-  best: DailyBest | null;
+  best: RunBest | null;
   volume: number;
   onVolume: (v: number) => void;
   progressMsg: string | null;
@@ -800,7 +887,7 @@ function StartCard({
     <div className="brut-card w-full max-w-xl p-6 sm:p-8">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
-          {mirror ? "Random pick" : "Today\u2019s track"}
+          {mirror ? "Random pick" : "Now playing"}
         </p>
         {ready && songSource && (
           <span
@@ -858,10 +945,10 @@ function StartCard({
       )}
 
       <div className="mt-6 grid grid-cols-4 gap-2">
-        <KeyCap primary="D" alt="←" color="#ff3b6b" />
-        <KeyCap primary="F" alt="↓" color="#ffd23f" />
-        <KeyCap primary="J" alt="↑" color="#3dff8a" />
-        <KeyCap primary="K" alt="→" color="#3da9ff" />
+        <KeyCap primary="D" direction="left" color="#ff3b6b" />
+        <KeyCap primary="F" direction="down" color="#ffd23f" />
+        <KeyCap primary="J" direction="up" color="#3dff8a" />
+        <KeyCap primary="K" direction="right" color="#3da9ff" />
       </div>
       <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
         D F J K or arrow keys · hold for long notes
@@ -880,34 +967,40 @@ function StartCard({
           </span>
         </div>
         <div className="mt-2 grid grid-cols-3 gap-1">
-          {(["easy", "normal", "hard"] as ChartMode[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => onChangeMode(m)}
-              className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
-                chartMode === m
-                  ? "border-accent bg-accent text-ink-900"
-                  : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
-              }`}
-            >
-              {m === "easy" ? "easy ★" : m === "normal" ? "normal ★★" : "hard ★★★"}
-            </button>
-          ))}
+          {(["easy", "normal", "hard"] as ChartMode[]).map((m) => {
+            const enabled = modeAvailability.available[m];
+            const selected = chartMode === m;
+            return (
+              <button
+                key={m}
+                onClick={() => enabled && onChangeMode(m)}
+                disabled={!enabled}
+                title={
+                  enabled
+                    ? undefined
+                    : "This song's chart is too sparse for a distinct " +
+                      m +
+                      " mode — try a denser difficulty."
+                }
+                className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+                  selected
+                    ? "border-accent bg-accent text-ink-900"
+                    : enabled
+                      ? "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
+                      : "border-bone-50/10 text-bone-50/25 cursor-not-allowed line-through decoration-1"
+                }`}
+              >
+                {m === "easy" ? "easy ★" : m === "normal" ? "normal ★★" : "hard ★★★"}
+              </button>
+            );
+          })}
         </div>
-        <p className="mt-2 font-mono text-[9px] text-bone-50/40">
-          {chartMode === "easy" &&
-            "1 tap per beat. Quantized to the metronome — most playable."}
-          {chartMode === "normal" &&
-            "1 tap per half-beat. Twice as dense, still readable."}
-          {chartMode === "hard" &&
-            "The chart as the original osu! mapper made it. Brutal."}
-        </p>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         <div className="border-2 border-bone-50/20 px-3 py-2">
           <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
-            Today&rsquo;s best
+            Best on this track
           </p>
           {best ? (
             <p className="mt-1 font-display text-2xl font-bold text-accent">
@@ -921,7 +1014,7 @@ function StartCard({
           <p className="font-mono text-[9px] text-bone-50/50">
             {best
               ? `${best.accuracy.toFixed(1)}% · ×${best.maxCombo} combo`
-              : "no run today"}
+              : "no runs yet"}
           </p>
         </div>
         <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/20 px-3 py-2 cursor-pointer">
@@ -1002,22 +1095,46 @@ function Spinner({ small }: { small?: boolean }) {
   );
 }
 
+/**
+ * Given the user's currently selected mode + the song's per-mode availability,
+ * return the mode the picker should actually use. If the requested mode is
+ * available we keep it; otherwise we walk toward "hard" (the only mode that
+ * is always available) so the user lands on a chart that's distinct from the
+ * one they were on. Walking toward hard is intentional: each fallback step
+ * yields the exact same chart the disabled mode would have produced.
+ */
+function pickAvailableMode(
+  requested: ChartMode,
+  modes: ModeAvailability,
+): ChartMode {
+  const order: ChartMode[] = ["easy", "normal", "hard"];
+  let i = order.indexOf(requested);
+  if (i < 0) i = 0;
+  while (i < order.length && !modes.available[order[i]]) i++;
+  return order[Math.min(i, order.length - 1)];
+}
+
 function KeyCap({
   primary,
-  alt,
+  direction,
   color,
 }: {
   primary: string;
-  alt: string;
+  direction: ArrowDirection;
   color: string;
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center gap-0.5 border-2 py-3"
+      className="flex flex-col items-center justify-center gap-1 border-2 py-3"
       style={{ borderColor: color, color }}
     >
       <span className="font-mono text-xl font-bold leading-none">{primary}</span>
-      <span className="font-mono text-[11px] opacity-70 leading-none">{alt}</span>
+      <ArrowIcon
+        direction={direction}
+        size={14}
+        strokeWidth={2.75}
+        style={{ opacity: 0.75 }}
+      />
     </div>
   );
 }
@@ -1037,7 +1154,7 @@ function HUD({
   stats: PlayerStats;
   metronome: boolean;
   onToggleMetronome: () => void;
-  best: DailyBest | null;
+  best: RunBest | null;
   volume: number;
   onVolume: (v: number) => void;
   onPause: () => void;
@@ -1060,7 +1177,7 @@ function HUD({
         </p>
         {best && (
           <p className="mt-1 font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
-            best today {best.score.toLocaleString()}
+            track best {best.score.toLocaleString()}
           </p>
         )}
       </div>
@@ -1211,8 +1328,14 @@ function TouchWarning({ onContinue }: { onContinue: () => void }) {
         (or arrow keys).
       </p>
       <div className="mt-5 grid grid-cols-2 gap-3">
-        <a href="/" className="brut-btn px-4 py-3 text-center">
-          ← Back
+        <a href="/" className="brut-btn group inline-flex items-center justify-center gap-2 px-4 py-3 text-center">
+          <ArrowIcon
+            direction="left"
+            size={14}
+            strokeWidth={2.75}
+            className="transition-transform duration-200 group-hover:-translate-x-0.5"
+          />
+          <span>Back</span>
         </a>
         <button onClick={onContinue} className="brut-btn-accent px-4 py-3">
           Continue anyway
@@ -1251,7 +1374,7 @@ function ResultsCard({
 }: {
   meta: SongMeta;
   stats: PlayerStats;
-  best: DailyBest | null;
+  best: RunBest | null;
   newBest: boolean;
   onRetry: () => void;
 }) {
@@ -1272,7 +1395,7 @@ function ResultsCard({
   return (
     <div className="brut-card-accent w-full max-w-lg p-6 sm:p-8">
       <p className="font-mono text-xs uppercase tracking-[0.4em] text-accent">
-        {newBest ? "★ New daily best" : "Run complete"}
+        {newBest ? "★ New track best" : "Run complete"}
       </p>
       <div className="mt-2 flex items-baseline justify-between">
         <h2 className="font-display text-3xl sm:text-4xl font-bold">
@@ -1306,7 +1429,7 @@ function ResultsCard({
         <div className="mt-4 border-2 border-bone-50/20 px-3 py-2">
           <div className="flex items-baseline justify-between gap-3">
             <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
-              Today&rsquo;s best
+              Best on this track
             </span>
             <span className="font-mono text-sm text-accent">
               {best.score.toLocaleString()}

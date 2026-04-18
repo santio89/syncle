@@ -1,0 +1,46 @@
+# Render blueprint for Syncle's MULTIPLAYER server only.
+#
+# Architecture:
+#   - Vercel hosts the Next.js app  (single player + UI shell)
+#   - Render hosts THIS service     (Socket.IO realtime backend, no Next.js)
+#
+# The browser opens a websocket to this Render URL via the Vercel-side env
+# var `NEXT_PUBLIC_SOCKET_URL`. CORS_ORIGINS below must include your Vercel
+# production + preview domains so cross-origin handshakes succeed.
+#
+# Why split:
+#   - Vercel = instant cold starts + global edge for static / SSR.
+#   - Render = persistent Node process required for long-lived websockets.
+#   - On the free Render tier this service spins down after 15 min of
+#     inactivity (~30s wake on first connect after sleep). Bump to "starter"
+#     ($7/mo) for always-on multiplayer; single-player is unaffected either
+#     way because it runs entirely on Vercel.
+#
+# Connect this repo in Render → "Blueprints" → "New from render.yaml", then
+# copy the deployed URL into Vercel as NEXT_PUBLIC_SOCKET_URL.
+
+services:
+  - type: web
+    name: syncle-socket
+    env: node
+    plan: free                   # bump to "starter" for always-on multiplayer
+    region: oregon               # closest US west colo; change as needed
+    branch: main
+    autoDeploy: true
+    # No `next build` needed — this service doesn't ship the Next.js app.
+    buildCommand: npm install
+    startCommand: npm run socket:start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        # Render injects PORT automatically; this entry just documents intent.
+        sync: false
+      - key: CORS_ORIGINS
+        # Comma-separated allow-list. Set this in the Render dashboard to your
+        # Vercel production URL plus any preview pattern, e.g.:
+        #   https://syncle.vercel.app,https://*.syncle.vercel.app
+        # Leave unset / blank to allow any origin (fine for first-deploy
+        # smoke testing, NOT recommended once you have a real domain).
+        sync: false

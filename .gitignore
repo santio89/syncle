@@ -6,7 +6,3 @@ out/
 *.log
 .DS_Store
 .vscode/
-
-# Generated at build time by scripts/build-manifest.mjs from songs.config.json.
-# Do not edit by hand and do not commit — runtime fetches it from /public.
-public/songs/manifest.json

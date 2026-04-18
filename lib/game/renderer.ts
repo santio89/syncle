@@ -1,13 +1,25 @@
 import { GameState, JudgmentEvent, isHold } from "./engine";
 import {
   Judgment,
-  LANE_ALT_LABEL,
   LANE_COLORS,
   LANE_LABEL,
   MAIN_LANE_COUNT,
   Note,
   TOTAL_LANES,
 } from "./types";
+
+// Arrow direction painted under each lane letter. Mirrors LANE_ALT_LABEL
+// in `types.ts` (0=←, 1=↓, 2=↑, 3=→) but as a structured enum so we can
+// draw the arrow as canvas paths instead of relying on a font glyph.
+type ArrowDir = "left" | "right" | "up" | "down";
+const LANE_ARROW_DIR: Record<number, ArrowDir> = {
+  0: "left",
+  1: "down",
+  2: "up",
+  3: "right",
+};
+
+export type ThemeName = "dark" | "light";
 
 export interface RenderOptions {
   /** Seconds of look-ahead — note travels from top to judgment line in this time. */
@@ -20,6 +32,106 @@ export interface RenderOptions {
   bpm: number;
   /** Song offset (seconds) for beat-line alignment. */
   offset: number;
+  /** Active UI theme — drives the canvas color palette. */
+  theme: ThemeName;
+}
+
+/**
+ * All canvas colors that change with the active theme. Resolved once per
+ * frame from `opts.theme` and threaded into every draw helper. Anything
+ * NOT in here (lane colors, judgment popup grades) is intentionally
+ * theme-agnostic — those use a fixed brand palette so a perfect-tap
+ * always reads as "blue green great" regardless of UI mode.
+ */
+export interface ThemePalette {
+  /** Stable id used to invalidate the gradient cache on theme swap. */
+  id: ThemeName;
+  /** Solid background painted before the vignette and highway. */
+  pageBg: string;
+  /** Outer color stop of the radial vignette (inner stop is always transparent). */
+  vignetteOuter: string;
+  /** Three vertical gradient stops of the highway floor (top → mid → bottom). */
+  highwayStops: [string, string, string];
+  /** 1px verticals between lanes. */
+  laneSeparator: string;
+  /** Horizontal beat lines (off-beat). */
+  beatLine: string;
+  /** Horizontal measure lines (every 4th beat — slightly stronger). */
+  measureLine: string;
+  /** Base RGB for the judgment line (alpha is computed per-frame from the beat pulse). */
+  judgeRgb: RGB;
+  /** Base alpha at rest for the judgment line. Pulse adds on top. */
+  judgeBaseAlpha: number;
+  /** Brand accent (rails, judgment-line glow, perfect-tap halo). Theme-shifted for contrast. */
+  accentRgb: RGB;
+  /** Fill inside a tap-note ring. Same tone as the page bg so the colored ring reads. */
+  noteInner: string;
+  /** Tiny center dot inside a tap note. Inverted vs noteInner for contrast. */
+  noteCore: string;
+  /** Inside of a lane gate (the dark/light "hole" inside the colored ring). */
+  gateInner: string;
+  /** Lane label color when the gate is being held / sustained — sits on a colored fill. */
+  gateLabelOnFill: string;
+  /** Beat dot in the top-right corner on non-downbeats. Downbeats use the accent. */
+  beatDotIdle: string;
+}
+
+const DARK_PALETTE: ThemePalette = {
+  id: "dark",
+  pageBg: "#050608",
+  vignetteOuter: "rgba(0,0,0,0.85)",
+  highwayStops: ["#0a0c10", "#10131a", "#181c25"],
+  laneSeparator: "rgba(255,255,255,0.06)",
+  beatLine: "rgba(255,255,255,0.07)",
+  measureLine: "rgba(255,255,255,0.22)",
+  judgeRgb: { r: 245, g: 245, b: 240 },
+  judgeBaseAlpha: 0.85,
+  accentRgb: { r: 61, g: 169, b: 255 },
+  noteInner: "#0a0c10",
+  noteCore: "#f5f5f0",
+  gateInner: "#0a0c10",
+  gateLabelOnFill: "#0a0c10",
+  beatDotIdle: "#f5f5f0",
+};
+
+const LIGHT_PALETTE: ThemePalette = {
+  id: "light",
+  // Tracks --bg in light mode (245 245 240). Slight warmth, not pure white,
+  // matching the brutalist "bone" surface the rest of the app uses.
+  pageBg: "#f5f5f0",
+  // Light-mode vignette is a soft darken-to-edges (instead of darken-to-black)
+  // so the highway sits in a pool of attention without bruising the bg.
+  vignetteOuter: "rgba(20,18,14,0.18)",
+  // Highway gradient flips: brightest at the top (where notes spawn) fading
+  // to a slightly tanned shadow near the judgment line. Keeps the depth cue
+  // working ("notes come out of the light, land in the cooler foreground").
+  highwayStops: ["#ffffff", "#ebe9e0", "#d8d4c4"],
+  // Black-on-cream separators read better than white at low alpha.
+  laneSeparator: "rgba(12,14,18,0.10)",
+  beatLine: "rgba(12,14,18,0.12)",
+  measureLine: "rgba(12,14,18,0.32)",
+  judgeRgb: { r: 18, g: 20, b: 24 },
+  judgeBaseAlpha: 0.85,
+  // Matches --accent in light mode (deeper blue for cream-bg contrast).
+  accentRgb: { r: 14, g: 108, b: 186 },
+  // Light fill inside notes/gates so the colored ring + outer glow still
+  // pop, just inverted relative to the dark theme.
+  noteInner: "#f5f5f0",
+  noteCore: "#0a0c10",
+  gateInner: "#f5f5f0",
+  // When a lane is being held, the gate fills with its lane color and the
+  // label needs to ride on top — light text on saturated color reads well.
+  gateLabelOnFill: "#f5f5f0",
+  beatDotIdle: "#0c0e12",
+};
+
+const PALETTES: Record<ThemeName, ThemePalette> = {
+  dark: DARK_PALETTE,
+  light: LIGHT_PALETTE,
+};
+
+export function getPalette(theme: ThemeName): ThemePalette {
+  return PALETTES[theme] ?? DARK_PALETTE;
 }
 
 export interface Particle {
@@ -59,6 +171,8 @@ export interface RenderState {
 interface RenderCache {
   W: number;
   H: number;
+  /** Theme the cached gradients were baked for — invalidates the cache on swap. */
+  paletteId: ThemeName;
   vignette: CanvasGradient;
   highway: CanvasGradient;
   cx: number;
@@ -100,6 +214,7 @@ export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
   judgeLineY: 0.78,
   bpm: 161,
   offset: 0.18,
+  theme: "dark",
 };
 
 interface Highway {
@@ -134,9 +249,10 @@ export function drawFrame(
 ): void {
   const W = ctx.canvas.clientWidth;
   const H = ctx.canvas.clientHeight;
-  const cache = ensureCache(ctx, rs, W, H);
+  const palette = getPalette(opts.theme);
+  const cache = ensureCache(ctx, rs, W, H, palette);
 
-  ctx.fillStyle = "#050608";
+  ctx.fillStyle = palette.pageBg;
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = cache.vignette;
   ctx.fillRect(0, 0, W, H);
@@ -161,19 +277,17 @@ export function drawFrame(
   const isDownbeat =
     Math.round((songTime - opts.offset) / beatLen) % 4 === 0;
 
-  // Drain pendingHits → spawn particles at the matching lane gate.
   drainHits(rs, cache);
 
   drawHighway(
     ctx, hw, state, songTime, opts, rs,
-    firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache,
+    firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette,
   );
 
-  // Update + draw particles AFTER notes/gates so they pop on top.
   updateAndDrawParticles(ctx, rs, dt);
 
   drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache);
-  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat);
+  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette);
 }
 
 // ---------------------------------------------------------------------------
@@ -182,8 +296,16 @@ function ensureCache(
   rs: RenderState,
   W: number,
   H: number,
+  palette: ThemePalette,
 ): RenderCache {
-  if (rs.cache && rs.cache.W === W && rs.cache.H === H) return rs.cache;
+  if (
+    rs.cache &&
+    rs.cache.W === W &&
+    rs.cache.H === H &&
+    rs.cache.paletteId === palette.id
+  ) {
+    return rs.cache;
+  }
 
   const judgeY = H * DEFAULT_RENDER_OPTIONS.judgeLineY;
   const topY = H * 0.05;
@@ -202,12 +324,12 @@ function ensureCache(
     W / 2, H * 0.5, Math.max(W, H) * 0.85,
   );
   vignette.addColorStop(0, "rgba(0,0,0,0)");
-  vignette.addColorStop(1, "rgba(0,0,0,0.85)");
+  vignette.addColorStop(1, palette.vignetteOuter);
 
   const highway = ctx.createLinearGradient(0, topY, 0, judgeY);
-  highway.addColorStop(0, "#0a0c10");
-  highway.addColorStop(0.7, "#10131a");
-  highway.addColorStop(1, "#181c25");
+  highway.addColorStop(0, palette.highwayStops[0]);
+  highway.addColorStop(0.7, palette.highwayStops[1]);
+  highway.addColorStop(1, palette.highwayStops[2]);
 
   const laneX: number[] = [];
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
@@ -217,6 +339,7 @@ function ensureCache(
 
   rs.cache = {
     W, H,
+    paletteId: palette.id,
     vignette, highway,
     cx, bottomLeftX, bottomRightX, topLeftX, topRightX,
     topY, judgeY, laneX,
@@ -238,6 +361,7 @@ function drawHighway(
   beatPulse: number,
   isDownbeat: boolean,
   cache: RenderCache,
+  palette: ThemePalette,
 ) {
   // Trapezoid floor
   ctx.beginPath();
@@ -253,8 +377,8 @@ function drawHighway(
   const railBlur = 10 + beatPulse * (isDownbeat ? 22 : 12);
   ctx.save();
   ctx.lineWidth = 3;
-  ctx.strokeStyle = `rgba(61,169,255,${railAlpha})`;
-  ctx.shadowColor = "rgba(61,169,255,0.85)";
+  ctx.strokeStyle = rgba(palette.accentRgb, railAlpha);
+  ctx.shadowColor = rgba(palette.accentRgb, 0.85);
   ctx.shadowBlur = railBlur;
   ctx.beginPath();
   ctx.moveTo(hw.topLeftX, hw.topY);
@@ -264,7 +388,7 @@ function drawHighway(
   ctx.stroke();
   ctx.restore();
 
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
+  ctx.strokeStyle = palette.laneSeparator;
   ctx.lineWidth = 1;
   for (let i = 1; i < MAIN_LANE_COUNT; i++) {
     const f = i / MAIN_LANE_COUNT;
@@ -284,9 +408,7 @@ function drawHighway(
     const xL = lerp(hw.topLeftX, hw.bottomLeftX, 1 - progress);
     const xR = lerp(hw.topRightX, hw.bottomRightX, 1 - progress);
     const isMeasure = Math.round((t - opts.offset) / beatLen) % 4 === 0;
-    ctx.strokeStyle = isMeasure
-      ? "rgba(255,255,255,0.22)"
-      : "rgba(255,255,255,0.07)";
+    ctx.strokeStyle = isMeasure ? palette.measureLine : palette.beatLine;
     ctx.lineWidth = isMeasure ? 2 : 1;
     ctx.beginPath();
     ctx.moveTo(xL, y);
@@ -305,7 +427,7 @@ function drawHighway(
       continue;
     }
     if (tailLook < -0.2) continue;
-    drawHoldTrail(ctx, n, songTime, opts, hw);
+    drawHoldTrail(ctx, n, songTime, opts, hw, palette);
   }
   for (const n of state.notes) {
     if (n.judged) continue;
@@ -315,14 +437,14 @@ function drawHighway(
       continue;
     }
     if (lookahead < -0.2) continue;
-    drawTapNote(ctx, n, lookahead, opts, hw);
+    drawTapNote(ctx, n, lookahead, opts, hw, palette);
   }
 
   // Judgment line — subtle pulse on the beat too.
   ctx.save();
-  ctx.strokeStyle = `rgba(245,245,240,${0.85 + beatPulse * 0.15})`;
+  ctx.strokeStyle = rgba(palette.judgeRgb, palette.judgeBaseAlpha + beatPulse * 0.15);
   ctx.lineWidth = 2;
-  ctx.shadowColor = "rgba(61,169,255,0.85)";
+  ctx.shadowColor = rgba(palette.accentRgb, 0.85);
   ctx.shadowBlur = 14 + beatPulse * 14;
   ctx.beginPath();
   ctx.moveTo(hw.bottomLeftX + 4, hw.judgeY);
@@ -341,6 +463,7 @@ function drawHighway(
       opts.laneHeld[i] ?? false,
       rs.laneFlash[i] ?? 0,
       state.isHolding(i),
+      palette,
     );
   }
 }
@@ -352,6 +475,7 @@ function drawTapNote(
   lookahead: number,
   opts: RenderOptions,
   hw: Highway,
+  palette: ThemePalette,
 ) {
   const progress = lookahead / opts.leadTime;
   const y = hw.topY + (hw.judgeY - hw.topY) * (1 - progress);
@@ -372,11 +496,11 @@ function drawTapNote(
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fill();
   ctx.shadowBlur = 0;
-  ctx.fillStyle = "#0a0c10";
+  ctx.fillStyle = palette.noteInner;
   ctx.beginPath();
   ctx.arc(x, y, radius * 0.6, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#f5f5f0";
+  ctx.fillStyle = palette.noteCore;
   ctx.beginPath();
   ctx.arc(x, y, radius * 0.28, 0, Math.PI * 2);
   ctx.fill();
@@ -395,6 +519,7 @@ function drawHoldTrail(
   songTime: number,
   opts: RenderOptions,
   hw: Highway,
+  palette: ThemePalette,
 ) {
   const headLook = n.t - songTime;
   const tailLook = (n.endT as number) - songTime;
@@ -455,7 +580,7 @@ function drawHoldTrail(
   // Tail cap (so the player can clearly see when to release).
   if (visTail > 0 && visTail < 1) {
     ctx.save();
-    ctx.fillStyle = "#0a0c10";
+    ctx.fillStyle = palette.noteInner;
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.shadowColor = color;
@@ -478,8 +603,15 @@ function drawLaneGate(
   held: boolean,
   flash: number,
   holding: boolean,
+  palette: ThemePalette,
 ) {
-  const r = 30;
+  // Gate geometry. Tuned so the letter+arrow stack reads as a single,
+  // centered glyph block — see LETTER_DY / ARROW_DY below for the exact
+  // offsets that compensate for canvas text metrics.
+  const r = 36;            // outer ring radius
+  const innerRingR = r - 5;  // held-color disk (sits inside the ring)
+  const innerCoreR = r - 11; // page-color core (where the label lives)
+
   const color = LANE_COLORS[lane];
   const colorRgb = LANE_RGB[lane];
 
@@ -487,7 +619,7 @@ function drawLaneGate(
   ctx.lineWidth = 4;
   ctx.strokeStyle = color;
   ctx.shadowColor = color;
-  ctx.shadowBlur = held || holding ? 24 : 8 + flash * 22;
+  ctx.shadowBlur = held || holding ? 26 : 8 + flash * 22;
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.stroke();
@@ -500,25 +632,109 @@ function drawLaneGate(
   if (fillAlpha > 0) {
     ctx.fillStyle = rgba(colorRgb, fillAlpha);
     ctx.beginPath();
-    ctx.arc(x, y, r - 4, 0, Math.PI * 2);
+    ctx.arc(x, y, innerRingR, 0, Math.PI * 2);
     ctx.fill();
   }
 
   ctx.shadowBlur = 0;
-  ctx.fillStyle = "#0a0c10";
+  ctx.fillStyle = palette.gateInner;
   ctx.beginPath();
-  ctx.arc(x, y, r - 10, 0, Math.PI * 2);
+  ctx.arc(x, y, innerCoreR, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = held || holding ? "#0a0c10" : color;
-  ctx.font = "800 18px var(--font-mono), ui-monospace, monospace";
+  // When the lane is held the inside is filled with the lane color, so the
+  // label needs to ride on that fill (gateLabelOnFill); otherwise the
+  // label sits over the empty gate interior and uses the lane color itself.
+  // LETTER_DY / ARROW_DY position the pair so its visual midpoint lands on
+  // (x, y) — the circle center. With "middle" baseline a 26px ExtraBold cap
+  // is ~18px tall, the arrow is 11px tall, with a 4px gap between them:
+  //   stack height ≈ 18 + 4 + 11 = 33
+  //   letter center → y - 7.5, arrow center → y + 10  → rounded below.
+  const LETTER_DY = -8;
+  const ARROW_DY = 10;
+  const ARROW_SIZE = 11;
+
+  ctx.fillStyle = held || holding ? palette.gateLabelOnFill : color;
+  // 800 (ExtraBold) is the heaviest weight loaded for JetBrains Mono — see
+  // app/layout.tsx. Asking for 900 here would silently fall back to 700
+  // (the next loaded weight) and make the letter look the same as
+  // font-bold. The size bump to 26 gives the glyph the visual mass we
+  // want vs the chevron sitting under it.
+  ctx.font = "800 26px var(--font-mono), ui-monospace, monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(LANE_LABEL[lane], x, y - 4);
+  ctx.fillText(LANE_LABEL[lane], x, y + LETTER_DY);
 
-  ctx.font = "600 11px var(--font-mono), ui-monospace, monospace";
-  ctx.fillStyle = held || holding ? "rgba(10,12,16,0.7)" : rgba(colorRgb, 0.7);
-  ctx.fillText(LANE_ALT_LABEL[lane] ?? "", x, y + 12);
+  // Brutalist arrow indicator under the letter — drawn as a real canvas
+  // path (not a font glyph) so it's pixel-identical to the SVG arrows used
+  // in the rest of the UI and respects the active theme palette. Slightly
+  // dimmer than the letter so the lane identity reads "letter-first".
+  const arrowColor = held || holding
+    ? withAlphaCss(palette.gateLabelOnFill, 0.78)
+    : rgba(colorRgb, 0.78);
+  drawArrow(
+    ctx,
+    LANE_ARROW_DIR[lane] ?? "down",
+    x,
+    y + ARROW_DY,
+    ARROW_SIZE,
+    arrowColor,
+  );
+  ctx.restore();
+}
+
+// Draws a brutalist arrow centered at (cx, cy) using straight strokes with
+// square caps + miter joins. `size` is the total bounding box (the shaft
+// runs the full size; the chevron sits inside one ~third of it).
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  dir: ArrowDir,
+  cx: number,
+  cy: number,
+  size: number,
+  strokeStyle: string,
+) {
+  const half = size / 2;
+  const head = Math.max(3, Math.round(size * 0.42));
+
+  ctx.save();
+  ctx.strokeStyle = strokeStyle;
+  // 0.21 ratio keeps the chevron visually weighted to match a 900-weight
+  // letter sitting above it (smaller than 0.21 looks flimsy, larger than
+  // 0.24 turns the chevron into a solid blob at small sizes).
+  ctx.lineWidth = Math.max(2, size * 0.21);
+  ctx.lineCap = "square";
+  ctx.lineJoin = "miter";
+  ctx.miterLimit = 4;
+  ctx.shadowBlur = 0;
+
+  ctx.beginPath();
+  if (dir === "left") {
+    ctx.moveTo(cx + half, cy);
+    ctx.lineTo(cx - half, cy);
+    ctx.moveTo(cx - half + head, cy - head);
+    ctx.lineTo(cx - half, cy);
+    ctx.lineTo(cx - half + head, cy + head);
+  } else if (dir === "right") {
+    ctx.moveTo(cx - half, cy);
+    ctx.lineTo(cx + half, cy);
+    ctx.moveTo(cx + half - head, cy - head);
+    ctx.lineTo(cx + half, cy);
+    ctx.lineTo(cx + half - head, cy + head);
+  } else if (dir === "up") {
+    ctx.moveTo(cx, cy + half);
+    ctx.lineTo(cx, cy - half);
+    ctx.moveTo(cx - head, cy - half + head);
+    ctx.lineTo(cx, cy - half);
+    ctx.lineTo(cx + head, cy - half + head);
+  } else {
+    ctx.moveTo(cx, cy - half);
+    ctx.lineTo(cx, cy + half);
+    ctx.moveTo(cx - head, cy + half - head);
+    ctx.lineTo(cx, cy + half);
+    ctx.lineTo(cx + head, cy + half - head);
+  }
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -565,13 +781,17 @@ function drawBeatDot(
   y: number,
   pulse: number,
   isDownbeat: boolean,
+  palette: ThemePalette,
 ) {
   ctx.save();
-  const color = isDownbeat ? "#3da9ff" : "#f5f5f0";
+  // Downbeats use the brand accent (theme-shifted), off-beats use the
+  // theme's idle dot color so the marker stays visible on either bg.
+  const colorRgb = isDownbeat ? palette.accentRgb : hexToRgb(palette.beatDotIdle);
+  const colorCss = `rgb(${colorRgb.r},${colorRgb.g},${colorRgb.b})`;
   const r = 5 + pulse * 5;
-  ctx.shadowColor = color;
+  ctx.shadowColor = colorCss;
   ctx.shadowBlur = 8 + pulse * 16;
-  ctx.fillStyle = withAlpha(color, 0.35 + pulse * 0.65);
+  ctx.fillStyle = rgba(colorRgb, 0.35 + pulse * 0.65);
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
@@ -682,4 +902,17 @@ function withAlpha(hex: string, a: number) {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r},${g},${b},${a})`;
+}
+
+/**
+ * Same as withAlpha but accepts either "#rrggbb" OR "rgb(...)"-shaped CSS
+ * strings — used for palette colors that may be either form depending on
+ * how they were authored. Falls back to a parseable hex when it can.
+ */
+function withAlphaCss(css: string, a: number): string {
+  if (css.startsWith("#")) return withAlpha(css, a);
+  // rgb(r,g,b) → rgba(r,g,b,a). Tolerates whitespace.
+  const m = css.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (m) return `rgba(${m[1]},${m[2]},${m[3]},${a})`;
+  return css;
 }

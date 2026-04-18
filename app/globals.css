@@ -2,20 +2,80 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --ink-900: #000000;
-  --ink-800: #040506;
-  --ink-700: #08090b;
-  --ink-600: #101216;
-  --bone-50: #f5f5f0;
-  --accent: #3da9ff;
+/* ---------------------------------------------------------------------------
+ * Theme tokens
+ *
+ * All themeable colors live here as space-separated RGB triplets so Tailwind
+ * can do `rgb(var(--fg) / <alpha-value>)` and existing classes like
+ * `text-bone-50/70` keep working. Switching themes only changes these vars —
+ * no JS needs to touch a single class name.
+ *
+ * Cubic-bezier `--ease-theme` is the curve used everywhere a property is
+ * animated for the theme transition. (0.65, 0, 0.35, 1) is a tightened
+ * ease-in-out: similar shape, slightly snappier middle, smoother edges.
+ * It's close to Material's "emphasized" curve and reads as more deliberate
+ * than the default `ease-in-out` without ever feeling jerky.
+ * ------------------------------------------------------------------------- */
+
+:root,
+[data-theme="dark"] {
+  --bg:        0 0 0;          /* page background */
+  --bg-2:      4 5 8;
+  --bg-3:      10 12 16;
+  --fg:        245 245 240;    /* primary text / borders on dark */
+  --fg-2:      236 234 224;
+  --accent:    61 169 255;     /* brand blue */
+  --shadow:    0 0 0;          /* brutalist drop-shadow color */
+  /* Translucent surface fill for brut-card. Stays distinct from --bg-2 so
+   * we can re-tint per theme (dark glass vs frosted white). */
+  --surface:   4 5 8;
+  --surface-a: 0.6;
+  /* Halo around the play CTA — semitransparent accent in dark mode. */
+  --cta-halo:  61 169 255;
+  --cta-halo-a: 0.55;
   color-scheme: dark;
+}
+
+[data-theme="light"] {
+  /* Off-white paper, not pure white — keeps the brutalist warmth, easier
+   * on the eyes, and lets the same blue accent stay readable without a
+   * harsh contrast jump. */
+  --bg:        245 245 240;
+  --bg-2:      236 234 224;
+  --bg-3:      216 212 196;
+  --fg:        12 14 18;       /* near-black ink */
+  --fg-2:      28 32 40;
+  /* Slightly deeper blue so it still pops on a cream background. */
+  --accent:    14 108 186;
+  --shadow:    12 14 18;       /* dark shadow, mirrors --fg */
+  --surface:   245 245 240;
+  --surface-a: 0.7;
+  --cta-halo:  14 108 186;
+  --cta-halo-a: 0.45;
+  color-scheme: light;
+}
+
+:root {
+  /* Near-linear easing so background and text feel perfectly in lockstep.
+   *
+   * The previous tightened ease-in-out (0.65, 0, 0.35, 1) is mathematically
+   * symmetric, so both bg and text arrive at the same instant — but the
+   * curve has a slow start AND slow end, which makes the bg feel like it
+   * "settles" before the text "appears" (because the text crosses through
+   * a gray low-contrast midpoint while the bg doesn't). A near-linear
+   * curve removes that asymmetric perception: rate of color change is
+   * constant, so the eye reads both transitions as one synchronized event.
+   *
+   * Slight ease-in/out at the very edges keeps the start/end from feeling
+   * like a hard cut. */
+  --ease-theme: cubic-bezier(0.4, 0.1, 0.4, 1);
+  --dur-theme: 220ms;
 }
 
 html,
 body {
-  background: var(--ink-900);
-  color: var(--bone-50);
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
   font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -29,26 +89,102 @@ body {
   min-height: 100vh;
 }
 
-/* Brutalist utility classes */
+/* ---------------------------------------------------------------------------
+ * Theme transition
+ *
+ * Animate only the props that actually change with theme — never `all`,
+ * which would also animate hover transforms and add jank. Scoped to a
+ * narrow allowlist so a button's micro-interactions (translate/scale)
+ * keep their own faster curves.
+ *
+ * The .theme-transitioning class is added by the ThemeProvider for one
+ * frame around the toggle so we don't pay the transition cost on every
+ * single hover/focus.
+ * ------------------------------------------------------------------------- */
+/* Non-inherited properties stay on the universal selector — they don't
+ * suffer the "double animation" issue because each element either has an
+ * explicit value or doesn't, and the browser starts exactly one transition. */
+.theme-transitioning,
+.theme-transitioning *,
+.theme-transitioning *::before,
+.theme-transitioning *::after {
+  transition-property: background-color, border-color, fill, stroke,
+    box-shadow, opacity;
+  transition-duration: var(--dur-theme);
+  transition-timing-function: var(--ease-theme);
+}
+
+/* `color` is inherited, so applying its transition via the universal `*`
+ * selector causes a visible flicker on text that doesn't set its own color
+ * (e.g. the SYNCLE <h1>, the song title <h2> inside .brut-card-accent).
+ * Each frame the inherited value changes — and each frame the descendant
+ * restarts its own color transition from the current intermediate value,
+ * fighting the parent's animation.
+ *
+ * Fix: only elements that DIRECTLY own a themed `color` value get `color`
+ * in their transition list. Containers whose `color` comes purely from
+ * inheritance (cards, layout boxes) must NOT animate `color` — otherwise
+ * their inherited value triggers a second transition that fights the
+ * body's, causing flicker on every text descendant.
+ *
+ * IMPORTANT: each selector list has higher specificity than the universal
+ * `* ` rule above, so we must repeat the relevant transition properties —
+ * otherwise the universal rule's background/border/etc transitions get
+ * dropped on these specific elements (body in particular, which would lose
+ * its background-color crossfade). */
+
+/* (a) Owners of a themed `color` value — these are safe to animate color
+ *     because the value really does change on the element itself, so the
+ *     transition doesn't double-fire via inheritance. */
+.theme-transitioning,
+.theme-transitioning html,
+.theme-transitioning body,
+.theme-transitioning .text-accent,
+.theme-transitioning .brut-btn,
+.theme-transitioning .brut-btn--primary,
+.theme-transitioning .brut-btn--ghost,
+.theme-transitioning .brut-btn-accent,
+.theme-transitioning .brut-play-cta {
+  transition-property: background-color, color, border-color, fill, stroke,
+    box-shadow, opacity;
+  transition-duration: var(--dur-theme);
+  transition-timing-function: var(--ease-theme);
+}
+
+/* (b) Card-style containers that own ONLY background/border/shadow. They
+ *     inherit `color` from <body>, so they must NOT include `color` here —
+ *     otherwise themed text inside them (h2 song title, paragraphs) flickers
+ *     during the swap. */
+.theme-transitioning .brut-card,
+.theme-transitioning .brut-card-accent {
+  transition-property: background-color, border-color, fill, stroke,
+    box-shadow, opacity;
+  transition-duration: var(--dur-theme);
+  transition-timing-function: var(--ease-theme);
+}
+
+/* ---------------------------------------------------------------------------
+ * Brutalist utility classes
+ * ------------------------------------------------------------------------- */
 .brut-card {
-  background: rgba(4, 5, 8, 0.6);
+  background: rgb(var(--surface) / var(--surface-a));
   backdrop-filter: blur(22px) saturate(120%);
   -webkit-backdrop-filter: blur(22px) saturate(120%);
-  border: 2px solid var(--bone-50);
-  box-shadow: 6px 6px 0 0 #000;
+  border: 2px solid rgb(var(--fg));
+  box-shadow: 6px 6px 0 0 rgb(var(--shadow));
 }
 .brut-card-accent {
-  background: rgba(4, 5, 8, 0.6);
+  background: rgb(var(--surface) / var(--surface-a));
   backdrop-filter: blur(22px) saturate(120%);
   -webkit-backdrop-filter: blur(22px) saturate(120%);
-  border: 2px solid var(--accent);
-  box-shadow: 6px 6px 0 0 var(--accent);
+  border: 2px solid rgb(var(--accent));
+  box-shadow: 6px 6px 0 0 rgb(var(--accent));
 }
 .brut-btn {
-  background: var(--bone-50);
-  color: var(--ink-900);
-  border: 2px solid var(--bone-50);
-  box-shadow: 5px 5px 0 0 #000;
+  background: rgb(var(--fg));
+  color: rgb(var(--bg));
+  border: 2px solid rgb(var(--fg));
+  box-shadow: 5px 5px 0 0 rgb(var(--shadow));
   transition: transform 80ms ease, box-shadow 80ms ease;
   font-weight: 800;
   letter-spacing: 0.03em;
@@ -56,59 +192,59 @@ body {
 }
 .brut-btn:hover {
   transform: translate(-1px, -1px);
-  box-shadow: 6px 6px 0 0 #000;
+  box-shadow: 6px 6px 0 0 rgb(var(--shadow));
 }
 .brut-btn:active {
   transform: translate(3px, 3px);
-  box-shadow: 1px 1px 0 0 #000;
+  box-shadow: 1px 1px 0 0 rgb(var(--shadow));
 }
 .brut-btn-accent {
-  background: var(--accent);
-  color: var(--ink-900);
-  border: 2px solid var(--accent);
-  box-shadow: 5px 5px 0 0 #000;
+  background: rgb(var(--accent));
+  color: rgb(var(--bg));
+  border: 2px solid rgb(var(--accent));
+  box-shadow: 5px 5px 0 0 rgb(var(--shadow));
 }
 
 /* Big play CTA on the home page. Square on >=sm, full-width banner below. */
 .brut-play-cta {
   position: relative;
-  background: var(--accent);
-  color: var(--ink-900);
-  border: 3px solid var(--accent);
+  background: rgb(var(--accent));
+  color: rgb(var(--bg));
+  border: 3px solid rgb(var(--accent));
   /* Smaller offset shadow on mobile so the CTA + halo never push past the
    * viewport edge and trigger horizontal scroll. Bumped up at >=sm where the
    * CTA becomes a square sitting in its own column. */
-  box-shadow: 6px 6px 0 0 #000;
+  box-shadow: 6px 6px 0 0 rgb(var(--shadow));
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
 @media (min-width: 640px) {
-  .brut-play-cta { box-shadow: 10px 10px 0 0 #000; }
+  .brut-play-cta { box-shadow: 10px 10px 0 0 rgb(var(--shadow)); }
 }
 .brut-play-cta:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 8px 8px 0 0 #000;
+  box-shadow: 8px 8px 0 0 rgb(var(--shadow));
 }
 @media (min-width: 640px) {
   .brut-play-cta:hover {
     transform: translate(-3px, -3px);
-    box-shadow: 13px 13px 0 0 #000;
+    box-shadow: 13px 13px 0 0 rgb(var(--shadow));
   }
 }
 .brut-play-cta:active {
   transform: translate(3px, 3px);
-  box-shadow: 2px 2px 0 0 #000;
+  box-shadow: 2px 2px 0 0 rgb(var(--shadow));
 }
 @media (min-width: 640px) {
   .brut-play-cta:active {
     transform: translate(4px, 4px);
-    box-shadow: 4px 4px 0 0 #000;
+    box-shadow: 4px 4px 0 0 rgb(var(--shadow));
   }
 }
 .brut-play-cta::before {
   content: "";
   position: absolute;
   inset: -4px;
-  border: 2px solid rgba(61, 169, 255, 0.55);
+  border: 2px solid rgb(var(--cta-halo) / var(--cta-halo-a));
   pointer-events: none;
   animation: ctaPulse 2.2s ease-out infinite;
 }
@@ -169,3 +305,47 @@ body {
   animation-timing-function: ease-in-out;
   animation-fill-mode: both;
 }
+
+/* ---------------------------------------------------------------------------
+ * Theme toggle (sun/moon morph)
+ *
+ * Stacked SVGs with a shared center; CSS handles the crossfade + rotation.
+ * Adding `theme-toggle--light` triggers the swap. Both states use the same
+ * `--ease-theme` curve so the toggle is in sync with the page-wide swap.
+ * ------------------------------------------------------------------------- */
+.theme-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 2px solid rgb(var(--fg) / 0.6);
+  background: transparent;
+  color: rgb(var(--fg));
+  cursor: pointer;
+  transition: border-color var(--dur-theme) var(--ease-theme),
+              color var(--dur-theme) var(--ease-theme),
+              transform 120ms ease;
+}
+.theme-toggle:hover { border-color: rgb(var(--accent)); color: rgb(var(--accent)); }
+.theme-toggle:active { transform: translateY(1px); }
+.theme-toggle:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+.theme-toggle__icon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  transition: opacity var(--dur-theme) var(--ease-theme),
+              transform var(--dur-theme) var(--ease-theme);
+}
+/* Hidden state: faded out and rotated 90deg in the direction of "going away". */
+.theme-toggle__icon--sun  { opacity: 0; transform: rotate(90deg)  scale(0.6); }
+.theme-toggle__icon--moon { opacity: 1; transform: rotate(0deg)   scale(1); }
+
+[data-theme="light"] .theme-toggle__icon--sun  { opacity: 1; transform: rotate(0deg)   scale(1); }
+[data-theme="light"] .theme-toggle__icon--moon { opacity: 0; transform: rotate(-90deg) scale(0.6); }

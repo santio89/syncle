@@ -46,6 +46,33 @@ export interface ExtractedSong {
   beatmapsetId: number;
 }
 
+/** A single 4K mania chart extracted from a .osz beatmapset. */
+export interface ExtractedChart {
+  /** Original `.osu` filename inside the zip (for debugging). */
+  name: string;
+  /** Raw chart text — feed straight into `parseOsu()`. */
+  chartText: string;
+  /** Headers parsed from the chart text. */
+  meta: OszMeta;
+}
+
+/**
+ * Full extraction result: every 4K mania chart inside the .osz plus the
+ * shared audio bytes. Used to expose the mapper's hand-crafted difficulty
+ * curve to the player instead of synthesizing it from one chart.
+ */
+export interface ExtractedSongFull {
+  charts: ExtractedChart[];
+  /** Raw audio bytes — feed into AudioEngine.loadFromBytes. */
+  audioBytes: ArrayBuffer;
+  /** Filename of the audio file we extracted from the zip. */
+  audioName: string;
+  /** Which mirror delivered the bytes. */
+  mirror: string;
+  /** Beatmapset id used to fetch. */
+  beatmapsetId: number;
+}
+
 // ---------------------------------------------------------------------------
 // Mirror download
 // ---------------------------------------------------------------------------
@@ -221,6 +248,124 @@ function parseOsuMeta(text: string): OszMeta {
 }
 
 // ---------------------------------------------------------------------------
+// Random beatmapset discovery (search APIs, no auth, CORS-enabled)
+// ---------------------------------------------------------------------------
+
+/**
+ * Public search endpoints that list ranked osu!mania beatmapsets without
+ * requiring an osu! API key. Each entry returns a JSON array (or an array
+ * under a known property) of beatmapset objects with `id` + `beatmaps[]`.
+ *
+ * We try them in order. For randomness we hit a random page within a wide
+ * window — page * pageSize ≈ how many ranked-mania sets we'll roll across.
+ */
+const SEARCH_SOURCES: Array<{
+  name: string;
+  /** Build the search URL for a random page. pageSize hints what we expect back. */
+  url: (page: number, pageSize: number) => string;
+  /** Pull the array of sets out of whatever shape the endpoint returns. */
+  extract: (json: unknown) => unknown[];
+}> = [
+  {
+    name: "nerinyan.moe",
+    url: (page, ps) =>
+      `https://api.nerinyan.moe/search?m=3&s=ranked&ps=${ps}&p=${page}`,
+    extract: (j) => (Array.isArray(j) ? j : []),
+  },
+  {
+    name: "osu.direct",
+    url: (page, ps) =>
+      `https://osu.direct/api/v2/search?mode=3&status=1&amount=${ps}&offset=${page * ps}`,
+    extract: (j: any) => (Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : []),
+  },
+];
+
+/**
+ * Roughly how many ranked-mania pages exist on each mirror (50 sets/page).
+ * 30 × 50 = ~1500 sets in the random window. Plenty of variety without
+ * walking off the end of the catalog and getting an empty page.
+ */
+const SEARCH_PAGE_WINDOW = 30;
+const SEARCH_PAGE_SIZE = 50;
+const SEARCH_TIMEOUT_MS = 8_000;
+
+export interface RandomBeatmapPick {
+  beatmapsetId: number;
+  /** Loose hint — actual title comes from the parsed .osu later. */
+  title?: string;
+  artist?: string;
+  source: string;
+}
+
+/**
+ * Pick a random ranked osu!mania 4K beatmapset by hitting a public search
+ * mirror at a random page and choosing a random eligible result. Filters
+ * results to "has at least one 4K mania difficulty" so we don't waste a
+ * 5+ MB download on a beatmapset that fetchAndExtract would reject.
+ *
+ * Throws if all sources are unreachable or none returned a 4K candidate —
+ * caller should fall back to a local song.
+ */
+export async function pickRandomManiaBeatmapsetId(
+  onProgress?: (msg: string) => void,
+): Promise<RandomBeatmapPick> {
+  const errors: string[] = [];
+  // Shuffle source order so a slow mirror doesn't always go first across
+  // sessions — keeps load distribution rough and fairness across mirrors.
+  const sources = [...SEARCH_SOURCES].sort(() => Math.random() - 0.5);
+
+  for (const src of sources) {
+    const page = Math.floor(Math.random() * SEARCH_PAGE_WINDOW);
+    const url = src.url(page, SEARCH_PAGE_SIZE);
+    onProgress?.(`Browsing ${src.name} (page ${page})…`);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), SEARCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        headers: { accept: "application/json" },
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        errors.push(`${src.name}: HTTP ${res.status}`);
+        continue;
+      }
+      const json = await res.json();
+      const sets = src.extract(json);
+      const fourK = sets.filter((s: any) => {
+        if (!s || typeof s.id !== "number") return false;
+        const beats = Array.isArray(s.beatmaps) ? s.beatmaps : [];
+        return beats.some(
+          (b: any) =>
+            (b?.mode_int === 3 || b?.mode === 3 || b?.mode === "mania") &&
+            Math.round(Number(b?.cs)) === 4,
+        );
+      });
+      if (fourK.length === 0) {
+        errors.push(`${src.name}: page ${page} had 0 4K mania results`);
+        continue;
+      }
+      const pick: any = fourK[Math.floor(Math.random() * fourK.length)];
+      return {
+        beatmapsetId: pick.id,
+        title: typeof pick.title === "string" ? pick.title : undefined,
+        artist: typeof pick.artist === "string" ? pick.artist : undefined,
+        source: src.name,
+      };
+    } catch (e: any) {
+      errors.push(
+        `${src.name}: ${e?.name === "AbortError" ? "timeout" : e?.message ?? e}`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error(
+    `No mania beatmapset could be discovered:\n  ${errors.join("\n  ")}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -295,4 +440,57 @@ export async function fetchAndExtract(
     mirror,
     beatmapsetId,
   };
+}
+
+/**
+ * Like `fetchAndExtract` but returns *every* 4K mania chart in the .osz
+ * plus the shared audio. The download is the same single .osz request —
+ * mapper-made difficulties are already inside it, no extra network cost.
+ *
+ * Use this when you want to expose the mapper's actual difficulty curve
+ * to the player (Easy/Normal/Hard/etc.) instead of synthesizing modes
+ * from a single chart.
+ */
+export async function fetchAndExtractAll(
+  beatmapsetId: number,
+  opts: { onProgress?: (msg: string) => void } = {},
+): Promise<ExtractedSongFull> {
+  const { onProgress } = opts;
+  const { bytes, mirror } = await downloadOsz(beatmapsetId, onProgress);
+  onProgress?.(`Got ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB from ${mirror}, unpacking…`);
+
+  const zip = readZip(bytes);
+  const allNames = zip.names();
+  const osuFiles = allNames.filter((n) => n.toLowerCase().endsWith(".osu"));
+  if (osuFiles.length === 0) {
+    throw new Error(`Beatmapset ${beatmapsetId} has no .osu chart files`);
+  }
+
+  const charts: ExtractedChart[] = [];
+  for (const name of osuFiles) {
+    const fileBytes = await zip.read(name);
+    if (!fileBytes) continue;
+    const text = new TextDecoder("utf-8").decode(fileBytes);
+    const meta = parseOsuMeta(text);
+    if (meta.mode !== 3 || meta.cs !== 4) continue;
+    charts.push({ name, chartText: text, meta });
+  }
+  if (charts.length === 0) {
+    throw new Error(`Beatmapset ${beatmapsetId} has no 4K mania difficulties`);
+  }
+
+  // Audio: in a single beatmapset all charts share the same audio file
+  // (rare exceptions exist but they're not worth the complexity here).
+  // We grab it once from the first chart's `AudioFilename` reference.
+  const audioName = charts[0].meta.audio;
+  const audioU8 = await zip.read(audioName);
+  if (!audioU8) {
+    throw new Error(
+      `Audio file "${audioName}" referenced by chart not found inside .osz`,
+    );
+  }
+  // Standalone ArrayBuffer for decodeAudioData (see fetchAndExtract above).
+  const audioBytes = audioU8.slice().buffer;
+
+  return { charts, audioBytes, audioName, mirror, beatmapsetId };
 }

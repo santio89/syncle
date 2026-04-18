@@ -1,15 +1,16 @@
 import { Note, SongMeta } from "./types";
 import { parseOsu } from "./osu";
-import { fetchAndExtract, ExtractedSong } from "./oszFetcher";
+import {
+  fetchAndExtractAll,
+  ExtractedChart,
+  ExtractedSongFull,
+  pickRandomManiaBeatmapsetId,
+} from "./oszFetcher";
 
 /**
  * Empty skeleton meta used as the type-safe initial state before a real
  * chart finishes loading. The UI must check for `meta.title === ""` and
  * show a loading state instead of rendering this placeholder.
- *
- * NOTE: there is intentionally NO usable audioUrl here — there is no
- * "always-works" fallback song shipped with the repo. The only audio
- * that plays is whatever today's manifest entry points to.
  */
 export const PLACEHOLDER_META: SongMeta = {
   id: "",
@@ -23,120 +24,27 @@ export const PLACEHOLDER_META: SongMeta = {
 };
 
 /* ------------------------------------------------------------------------- */
-/* Manifest-driven loading                                                   */
+/* Difficulty quantization                                                   */
 /* ------------------------------------------------------------------------- */
 
 /**
- * Runtime view of an entry in `public/songs/manifest.json`. The manifest is
- * generated at build time by `scripts/build-manifest.mjs` from
- * `songs.config.json` (+ optionally a GitHub Release).
+ * Syncle difficulty modes — three stable buckets (easy/normal/hard).
  *
- *   mode = "remote" → audioUrl/chartUrl point at GitHub Releases CDN
- *   mode = "local"  → they point at /songs/... in /public
+ * Resolution order per mode (best to worst source):
+ *   1. The mapper's actual chart for this bucket, when the .osz contains
+ *      a 4K difficulty whose name classifies into this bucket
+ *      (e.g. "Easy"/"Beginner" → easy, "Normal" → normal, "Hard"/"Insane"
+ *      /"Expert" → hard). This is the authentic, hand-crafted experience.
+ *   2. Quantization fallback from the densest available mapper chart:
+ *        easy   → quantize to whole beats (max 1 note per beat)
+ *        normal → quantize to half-beats   (max 1 note per half-beat)
+ *        hard   → always backed by the densest mapper chart
+ *      Hold notes are preserved (head snapped, duration kept).
  *
- * The runtime doesn't care which — it just fetches by URL.
- */
-interface ManifestSong {
-  id: string;
-  title: string;
-  artist: string;
-  year?: number;
-  audioUrl: string;
-  chartUrl: string;
-}
-
-/** Entry in the remote pool — points at a public mirror beatmapset. */
-export interface PoolEntry {
-  /** osu! beatmapset id (the number in the URL on osu.ppy.sh/beatmapsets/...). */
-  id: number;
-  /** Substring of the difficulty Version to prefer (case-insensitive). */
-  diff?: string;
-  /** Optional human-readable label, used in dev consoles / debug tooltips. */
-  label?: string;
-}
-
-interface Manifest {
-  generatedAt: string;
-  mode: "remote" | "local";
-  modeReason?: string;
-  /**
-   * Strategy the runtime should use to pick a chart on each load:
-   *   - "daily"  → use today's scheduled song (production behaviour)
-   *   - "random" → pick a random entry from `pool`, falling back to
-   *                local songs if all mirrors fail (test/dev behaviour)
-   */
-  pickStrategy?: "daily" | "random";
-  schedule: { date: string; songId: string }[];
-  songs: Record<string, ManifestSong>;
-  /** Beatmapset ids fetched from public mirrors at runtime. */
-  pool?: PoolEntry[];
-}
-
-let manifestPromise: Promise<Manifest> | null = null;
-
-async function loadManifest(): Promise<Manifest> {
-  if (!manifestPromise) {
-    manifestPromise = (async () => {
-      const res = await fetch("/songs/manifest.json", { cache: "no-store" });
-      if (!res.ok) {
-        throw new Error(
-          `manifest fetch failed: HTTP ${res.status} ` +
-            "— did `npm run build:manifest` run?",
-        );
-      }
-      return (await res.json()) as Manifest;
-    })().catch((err) => {
-      // Reset so a later retry can succeed (e.g. after the user fixes config).
-      manifestPromise = null;
-      throw err;
-    });
-  }
-  return manifestPromise;
-}
-
-/** YYYY-MM-DD in the local timezone — matches the format in songs.config.json. */
-function todayKey(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-/**
- * Pick which song the manifest says is "today's". Strategy:
- *   1. exact date match in schedule
- *   2. otherwise the most recent past entry (so the schedule "sticks" when
- *      you forget to add tomorrow's song)
- *   3. otherwise the first song in `songs` (dev fallback)
- */
-function pickTodaySong(m: Manifest): ManifestSong {
-  const today = todayKey();
-  const sorted = [...m.schedule].sort((a, b) => a.date.localeCompare(b.date));
-  const exact = sorted.find((e) => e.date === today);
-  const past = [...sorted].reverse().find((e) => e.date <= today);
-  const fallbackId = Object.keys(m.songs)[0];
-  const songId = exact?.songId ?? past?.songId ?? fallbackId;
-  const song = songId ? m.songs[songId] : undefined;
-  if (!song) throw new Error("manifest has no songs");
-  return song;
-}
-
-/* ------------------------------------------------------------------------- */
-/* Difficulty quantization (unchanged)                                       */
-/* ------------------------------------------------------------------------- */
-
-/**
- * Difficulty modes for osu! charts. Most osu!mania beatmaps are charted for
- * advanced players (OD 8+, constant streams). These options thin the chart
- * down to something we can actually play in a casual rhythm game.
- *
- *   easy   → quantize taps to whole beats, max 1 note per beat
- *   normal → quantize taps to half-beats, max 1 note per half-beat
- *   hard   → use the chart as-charted (true difficulty)
- *
- * Hold notes are always preserved as-is — the head time is snapped to the
- * grid for easy/normal but the duration is kept so sustains still feel real.
+ * If a bucket has no mapper chart AND quantization produces an identical
+ * note count to the next-denser bucket, that mode is marked unavailable
+ * in `ModeAvailability` so the UI can disable it (no point exposing two
+ * buttons that play the same notes).
  */
 export type ChartMode = "easy" | "normal" | "hard";
 
@@ -159,9 +67,7 @@ function quantizeToGrid(
 
   const isHold = (n: Note) => n.endT != null && n.endT > n.t + 0.05;
 
-  // Holds: snap head to grid, preserve duration.
   const holds: Note[] = [];
-  // Taps: bucket by nearest grid cell (one note per cell).
   const buckets = new Map<number, Note>();
 
   for (const n of notes) {
@@ -178,11 +84,7 @@ function quantizeToGrid(
       continue;
     }
     if (!buckets.has(idx)) {
-      buckets.set(idx, {
-        id: 0,
-        t: snapped,
-        lane: n.lane,
-      });
+      buckets.set(idx, { id: 0, t: snapped, lane: n.lane });
     }
   }
 
@@ -196,6 +98,26 @@ function quantizeToGrid(
 /* Public API                                                                */
 /* ------------------------------------------------------------------------- */
 
+/**
+ * Per-mode availability + note counts for the currently loaded song.
+ *
+ * Every osu!mania 4K chart can be re-quantized into easy/normal/hard, but
+ * sparse charts produce identical output across modes (e.g. a 60 BPM chart
+ * with 1 note per beat is already at the easy grid — quantizing further
+ * does nothing). When that happens, exposing the redundant button to the
+ * player is misleading: clicking "easy" gives them exactly the same chart
+ * they were already playing.
+ *
+ * Rule:
+ *   hard   → always available (source chart, never thinned)
+ *   normal → available iff normalCount < hardCount   (quantization removed notes)
+ *   easy   → available iff easyCount  < normalCount  (further quantization removed more)
+ */
+export interface ModeAvailability {
+  noteCounts: Record<ChartMode, number>;
+  available: Record<ChartMode, boolean>;
+}
+
 export interface LoadSongResult {
   meta: SongMeta;
   notes: Note[];
@@ -203,11 +125,13 @@ export interface LoadSongResult {
   /** How many notes the original chart had before easy/normal thinning. */
   rawNoteCount: number;
   mode: ChartMode;
+  /** Per-mode availability for the difficulty picker. */
+  modes: ModeAvailability;
   /**
    * How this song reached the player:
    *   - "local"  → /public asset, fetched from our own origin
-   *   - "remote" → unzipped from a mirror's .osz at runtime
-   * The UI can use this to show "fetched from catboy.best" etc.
+   *   - "remote" → unzipped from a public mirror's .osz at runtime
+   * The UI uses this to show "fetched from catboy.best" / etc.
    */
   delivery: "local" | "remote";
   /** Set when delivery === "remote" — raw audio bytes for AudioEngine.loadFromBytes. */
@@ -220,184 +144,80 @@ export interface LoadSongResult {
   beatmapsetId?: number;
 }
 
-/**
- * Per-mode in-memory cache of the most recent successful loadSong result.
- * Lives for the lifetime of the page. Critical for "random" pickStrategy:
- * the random choice is made ONCE on first call, then frozen for the session
- * (preview + start + retries all see the same song). Refresh = new pick.
- */
-const loadCache = new Map<ChartMode, Promise<LoadSongResult>>();
+/* ------------------------------------------------------------------------- */
+/* Local fallback songs                                                      */
+/* ------------------------------------------------------------------------- */
 
 /**
- * Resolve a chart according to the manifest's pickStrategy:
- *   - "daily"  → today's scheduled local song
- *   - "random" → random entry from the remote pool, with local fallback
+ * Songs shipped in /public/songs/ — used as a fallback when every public
+ * mirror search API is unreachable. Two is enough for "I can still play
+ * something offline / when APIs are down". Add more by dropping a folder
+ * under public/songs/<slug>/ with audio.mp3 + chart.osu and listing it here.
  *
- * Cached per difficulty for the page session. Pass `force: true` to refetch.
+ * The runtime never picks from this list as long as a mirror is reachable —
+ * the whole point of v0.x is "fresh random song every refresh".
+ *
+ * Once we add Firestore-backed daily scheduling, this list is what the
+ * scheduler will hand out on days where its primary source is empty.
  */
-export async function loadSong(
-  mode: ChartMode = DEFAULT_MODE,
-  opts: { force?: boolean; onProgress?: (msg: string) => void } = {},
-): Promise<LoadSongResult> {
-  if (!opts.force) {
-    const cached = loadCache.get(mode);
-    if (cached) return cached;
-  }
-  const p = loadSongUncached(mode, opts.onProgress);
-  loadCache.set(mode, p);
-  p.catch(() => loadCache.delete(mode));
-  return p;
+interface LocalSong {
+  id: string;
+  title: string;
+  artist: string;
+  year?: number;
+  audioUrl: string;
+  chartUrl: string;
 }
 
-async function loadSongUncached(
-  mode: ChartMode,
-  onProgress?: (msg: string) => void,
-): Promise<LoadSongResult> {
-  const manifest = await loadManifest();
-  const strategy = manifest.pickStrategy ?? "daily";
+const LOCAL_FALLBACKS: LocalSong[] = [
+  {
+    id: "credens-justitiam",
+    title: "Credens justitiam",
+    artist: "Kajiura Yuki",
+    year: 2011,
+    audioUrl: "/songs/kajiura-yuki-credens-justitiam-extended-edit/audio.mp3",
+    chartUrl: "/songs/kajiura-yuki-credens-justitiam-extended-edit/chart.osu",
+  },
+  {
+    id: "ten-sen-men-rittai",
+    title: "Ten, Sen, Men, Rittai",
+    artist: "Sound piercer",
+    audioUrl: "/songs/sound-piercer-ten-sen-men-rittai/audio.mp3",
+    chartUrl: "/songs/sound-piercer-ten-sen-men-rittai/chart.osu",
+  },
+];
 
-  if (strategy === "random" && manifest.pool && manifest.pool.length > 0) {
-    try {
-      return await loadRandomFromPool(manifest, mode, onProgress);
-    } catch (err) {
-      // All mirrors failed — fall through to local fallback below.
-      console.warn("[syncle] remote pool failed, falling back to local:", err);
-      onProgress?.("Mirrors unreachable, using local song…");
-    }
-  }
+/* ------------------------------------------------------------------------- */
+/* Session-scoped raw song cache                                             */
+/* ------------------------------------------------------------------------- */
 
-  return loadLocal(manifest, mode);
-}
-
-/* ---- daily / local path -------------------------------------------------- */
-
-async function loadLocal(
-  manifest: Manifest,
-  mode: ChartMode,
-): Promise<LoadSongResult> {
-  const song = pickTodaySong(manifest);
-  const res = await fetch(song.chartUrl, { cache: "force-cache" });
-  if (!res.ok) {
-    throw new Error(
-      `chart fetch failed for "${song.id}": HTTP ${res.status} (${song.chartUrl})`,
-    );
-  }
-  const text = await res.text();
-  const parsed = parseOsu(text);
-  if (!parsed) {
-    throw new Error(
-      `chart for "${song.id}" is not a valid 4K mania beatmap (${song.chartUrl})`,
-    );
-  }
-  return finalize({
-    rawNotes: parsed.notes,
-    bpm: parsed.bpm,
-    offset: parsed.offset,
-    duration: parsed.duration,
-    mode,
-    meta: {
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      year: song.year,
-      audioUrl: song.audioUrl,
-    },
-    delivery: "local",
-  });
-}
-
-/* ---- random / remote path ------------------------------------------------ */
-
-/** IDs already picked this session, so reload != same song twice in a row. */
-const recentPicks: number[] = [];
-const RECENT_WINDOW = 3;
-
-function pickRandomEntry(pool: PoolEntry[]): PoolEntry {
-  const fresh = pool.filter((e) => !recentPicks.includes(e.id));
-  const choices = fresh.length > 0 ? fresh : pool;
-  const pick = choices[Math.floor(Math.random() * choices.length)];
-  recentPicks.push(pick.id);
-  if (recentPicks.length > RECENT_WINDOW) recentPicks.shift();
-  return pick;
-}
-
-async function loadRandomFromPool(
-  manifest: Manifest,
-  mode: ChartMode,
-  onProgress?: (msg: string) => void,
-): Promise<LoadSongResult> {
-  const pool = manifest.pool!;
-  // Try a few different entries before declaring full failure — a single bad
-  // beatmapset id (e.g. set was deleted on the mirror) shouldn't break the
-  // whole random mode if other entries work.
-  const tried = new Set<number>();
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < Math.min(3, pool.length); attempt++) {
-    const candidates = pool.filter((e) => !tried.has(e.id));
-    if (candidates.length === 0) break;
-    const entry = pickRandomEntry(candidates);
-    tried.add(entry.id);
-    try {
-      onProgress?.(`Picking beatmapset ${entry.id}…`);
-      const extracted = await fetchAndExtract(entry.id, {
-        diff: entry.diff,
-        onProgress,
-      });
-      return chartFromExtracted(extracted, mode);
-    } catch (err) {
-      console.warn(`[syncle] beatmapset ${entry.id} failed:`, err);
-      lastErr = err;
-    }
-  }
-  throw new Error(
-    `Random pool exhausted after ${tried.size} attempts: ${
-      lastErr instanceof Error ? lastErr.message : String(lastErr)
-    }`,
-  );
-}
-
-function chartFromExtracted(
-  ext: ExtractedSong,
-  mode: ChartMode,
-): LoadSongResult {
-  const parsed = parseOsu(ext.chartText);
-  if (!parsed) {
-    throw new Error(
-      `Beatmapset ${ext.beatmapsetId} chart "${ext.meta.version}" failed to parse as 4K mania`,
-    );
-  }
-  // Stable, URL-safe id for the daily-best key. Unique per (set, diff).
-  const id = `osu-${ext.beatmapsetId}-${slugify(ext.meta.version)}`;
-  const audioKey = `osu:${ext.beatmapsetId}:${ext.meta.version}`;
-  return finalize({
-    rawNotes: parsed.notes,
-    bpm: parsed.bpm,
-    offset: parsed.offset,
-    duration: parsed.duration,
-    mode,
-    meta: {
-      id,
-      title: ext.meta.title,
-      artist: ext.meta.artist,
-      // No standalone audioUrl — bytes will be loaded via loadFromBytes.
-      audioUrl: "",
-    },
-    delivery: "remote",
-    audioBytes: ext.audioBytes,
-    audioKey,
-    mirror: ext.mirror,
-    beatmapsetId: ext.beatmapsetId,
-  });
-}
-
-/* ---- shared finalization ------------------------------------------------- */
-
-interface FinalizeInput {
+/**
+ * One parsed chart inside a session — either a mapper-provided difficulty
+ * from the .osz, or (for local fallback songs) the single chart that ships.
+ */
+interface RawChart {
   rawNotes: Note[];
   bpm: number;
   offset: number;
   duration: number;
-  mode: ChartMode;
+  /** Mapper's difficulty name (e.g. "[4K Hard]", "Easy"). Empty for local. */
+  version: string;
+  /** Name density (notes/sec). Used as a classification fallback. */
+  nps: number;
+}
+
+/**
+ * Everything we need to materialize a `LoadSongResult` for any difficulty.
+ * Captured ONCE per page session — switching modes never triggers a fresh
+ * API roll; we either use a different mapper chart or re-quantize.
+ *
+ * `bucketCharts` holds at most one mapper chart per bucket (best name match
+ * wins ties); `fallbackBase` is the densest chart we have, used as the
+ * source for quantization when a bucket has no mapper chart.
+ */
+interface RawSession {
+  bucketCharts: Partial<Record<ChartMode, RawChart>>;
+  fallbackBase: RawChart;
   meta: {
     id: string;
     title: string;
@@ -412,44 +232,373 @@ interface FinalizeInput {
   beatmapsetId?: number;
 }
 
-function finalize(inp: FinalizeInput): LoadSongResult {
-  let notes = inp.rawNotes;
-  if (inp.mode === "easy") {
-    notes = quantizeToGrid(notes, inp.bpm, inp.offset, 1);
-  } else if (inp.mode === "normal") {
-    notes = quantizeToGrid(notes, inp.bpm, inp.offset, 2);
+let sessionPromise: Promise<RawSession> | null = null;
+
+/**
+ * Pick + load a chart for the current page session.
+ *
+ *   - First call: rolls a random ranked osu!mania 4K beatmap from a public
+ *     mirror, downloads + extracts it. Falls back to a random local song
+ *     if every mirror fails.
+ *   - Subsequent calls (e.g. switching difficulty): reuse the same raw
+ *     song, only re-running quantization for the new mode.
+ *   - Pass `force: true` to throw away the cache and roll a fresh song.
+ */
+export async function loadSong(
+  mode: ChartMode = DEFAULT_MODE,
+  opts: { force?: boolean; onProgress?: (msg: string) => void } = {},
+): Promise<LoadSongResult> {
+  if (opts.force) sessionPromise = null;
+  if (!sessionPromise) {
+    sessionPromise = pickSession(opts.onProgress).catch((err) => {
+      // Drop the rejected promise so the next call can retry instead of
+      // serving the same error forever (e.g. user fixes their connection).
+      sessionPromise = null;
+      throw err;
+    });
   }
+  const session = await sessionPromise;
+  return finalize(session, mode);
+}
+
+/**
+ * Multiplayer entrypoint: load a *specific* beatmapset (chosen by the host
+ * server-side) at the requested Syncle difficulty bucket. Bypasses the
+ * single-player session cache so two parallel rooms / two refreshes don't
+ * stomp on each other's selection.
+ *
+ * Used by `/multi/[code]` once the server broadcasts `phase:loading`.
+ */
+export async function loadSongById(
+  beatmapsetId: number,
+  mode: ChartMode,
+  opts: { onProgress?: (msg: string) => void } = {},
+): Promise<LoadSongResult> {
+  const ext = await fetchAndExtractAll(beatmapsetId, opts);
+  const session = rawSessionFromExtracted(ext);
+  return finalize(session, mode);
+}
+
+/* ---- session selection --------------------------------------------------- */
+
+async function pickSession(
+  onProgress?: (msg: string) => void,
+): Promise<RawSession> {
+  // 1) Try the random remote pick path. We attempt a few distinct beatmapsets
+  //    in case the first roll lands on something that fails to download or
+  //    has no usable 4K diff after all.
+  try {
+    return await pickRandomRemote(onProgress);
+  } catch (err) {
+    console.warn(
+      "[syncle] random remote pick failed across all mirrors, using local fallback:",
+      err,
+    );
+    onProgress?.("Mirrors unreachable, loading local song…");
+  }
+
+  // 2) Local fallback — random pick across whatever ships in /public/songs/.
+  return pickRandomLocal();
+}
+
+const REMOTE_MAX_ATTEMPTS = 4;
+
+async function pickRandomRemote(
+  onProgress?: (msg: string) => void,
+): Promise<RawSession> {
+  const triedSets = new Set<number>();
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt < REMOTE_MAX_ATTEMPTS; attempt++) {
+    let pick;
+    try {
+      pick = await pickRandomManiaBeatmapsetId(onProgress);
+    } catch (err) {
+      lastErr = err;
+      // No point retrying discovery if we already tried once and got an
+      // error — search APIs either work or they don't, retrying produces
+      // the same failure. Surface immediately so the caller can fall back.
+      throw err;
+    }
+    if (triedSets.has(pick.beatmapsetId)) {
+      // Random search rolled the same id twice in a row — try once more.
+      continue;
+    }
+    triedSets.add(pick.beatmapsetId);
+    try {
+      onProgress?.(
+        `Picked beatmapset ${pick.beatmapsetId}${
+          pick.title ? ` (${pick.artist} — ${pick.title})` : ""
+        }, downloading…`,
+      );
+      const extracted = await fetchAndExtractAll(pick.beatmapsetId, { onProgress });
+      return rawSessionFromExtracted(extracted);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[syncle] beatmapset ${pick.beatmapsetId} failed (attempt ${attempt + 1}/${REMOTE_MAX_ATTEMPTS}):`,
+        msg,
+      );
+      lastErr = err;
+    }
+  }
+
+  throw new Error(
+    `Could not download a usable random beatmap after ${triedSets.size} attempt(s): ${
+      lastErr instanceof Error ? lastErr.message : String(lastErr)
+    }`,
+  );
+}
+
+function rawSessionFromExtracted(ext: ExtractedSongFull): RawSession {
+  // Parse every chart in the .osz; toss any that fail to parse as 4K mania.
+  const parsedCharts: Array<{ chart: ExtractedChart; raw: RawChart }> = [];
+  for (const c of ext.charts) {
+    const p = parseOsu(c.chartText);
+    if (!p) continue;
+    const nps = p.duration > 0 ? p.notes.length / p.duration : 0;
+    parsedCharts.push({
+      chart: c,
+      raw: {
+        rawNotes: p.notes,
+        bpm: p.bpm,
+        offset: p.offset,
+        duration: p.duration,
+        version: c.meta.version,
+        nps,
+      },
+    });
+  }
+  if (parsedCharts.length === 0) {
+    throw new Error(
+      `Beatmapset ${ext.beatmapsetId} has no parseable 4K mania charts`,
+    );
+  }
+
+  // Bucket each chart by its difficulty name; tie-break by note density so
+  // a "Hard" chart that's actually easier than another "Hard" doesn't
+  // displace the bigger one as the canonical hard pick.
+  const bucketCharts: Partial<Record<ChartMode, RawChart>> = {};
+  const bucketNps: Partial<Record<ChartMode, number>> = {};
+  for (const { raw } of parsedCharts) {
+    const bucket = classifyDifficulty(raw.version, raw.nps);
+    const existing = bucketNps[bucket];
+    // For "easy"/"normal" prefer LOWER nps within the bucket (more chill);
+    // for "hard" prefer HIGHER nps (more notes = real challenge).
+    const better =
+      existing === undefined ||
+      (bucket === "hard" ? raw.nps > existing : raw.nps < existing);
+    if (better) {
+      bucketCharts[bucket] = raw;
+      bucketNps[bucket] = raw.nps;
+    }
+  }
+
+  // Densest chart in the set, regardless of bucket — used as the source
+  // when we need to quantize down for an empty bucket.
+  const fallbackBase = parsedCharts.reduce(
+    (best, cur) => (cur.raw.nps > best.nps ? cur.raw : best),
+    parsedCharts[0].raw,
+  );
+
+  // Use the fallback (densest) chart's name for the song id, so the daily
+  // best key is stable across mode switches within the same beatmapset.
+  const id = `osu-${ext.beatmapsetId}-${slugify(fallbackBase.version)}`;
+  const audioKey = `osu:${ext.beatmapsetId}`;
+
+  return {
+    bucketCharts,
+    fallbackBase,
+    meta: {
+      id,
+      title: parsedCharts[0].chart.meta.title,
+      artist: parsedCharts[0].chart.meta.artist,
+      audioUrl: "",
+    },
+    delivery: "remote",
+    audioBytes: ext.audioBytes,
+    audioKey,
+    mirror: ext.mirror,
+    beatmapsetId: ext.beatmapsetId,
+  };
+}
+
+/* ---- difficulty classification ------------------------------------------ */
+
+/**
+ * osu!mania difficulty naming is a wild west — mappers use anything from
+ * "Easy" to "[4K Lunatic]" to "yang's Hyper". We classify by name first
+ * (most reliable), then fall back to note density per second.
+ *
+ * Returns the Syncle bucket the chart should populate.
+ */
+function classifyDifficulty(version: string, nps: number): ChartMode {
+  const v = version.toLowerCase();
+
+  // Strong easy/beginner signals
+  if (/(beginner|easy|novice|gentle|noob|lite|casual|cup|salad)/.test(v)) {
+    return "easy";
+  }
+  // Normal-ish names
+  if (/(normal|basic|medium|\bnm\b|regular|intermediate|platter)/.test(v)) {
+    return "normal";
+  }
+  // Hard / advanced / expert / boss-tier names
+  if (
+    /(hard|advanced|\bhd\b|insane|expert|extra|another|lunatic|master|shd|extreme|overdose|crazy|rain|deathmoon|edge)/.test(
+      v,
+    )
+  ) {
+    return "hard";
+  }
+
+  // Unknown name → bucket by raw note density.
+  if (nps < 2.5) return "easy";
+  if (nps < 4.5) return "normal";
+  return "hard";
+}
+
+/* ---- local fallback ------------------------------------------------------ */
+
+async function pickRandomLocal(): Promise<RawSession> {
+  if (LOCAL_FALLBACKS.length === 0) {
+    throw new Error("No local fallback songs configured");
+  }
+  const song =
+    LOCAL_FALLBACKS[Math.floor(Math.random() * LOCAL_FALLBACKS.length)];
+
+  const res = await fetch(song.chartUrl, { cache: "force-cache" });
+  if (!res.ok) {
+    throw new Error(
+      `Local fallback chart fetch failed for "${song.id}": HTTP ${res.status} (${song.chartUrl})`,
+    );
+  }
+  const text = await res.text();
+  const parsed = parseOsu(text);
+  if (!parsed) {
+    throw new Error(
+      `Local fallback chart "${song.id}" is not a valid 4K mania beatmap`,
+    );
+  }
+  // Local songs ship a single chart — we don't have mapper-made variants,
+  // so all three Syncle modes derive from this one chart via quantization.
+  // The bucketCharts map stays empty; finalize() will use fallbackBase.
+  const nps = parsed.duration > 0 ? parsed.notes.length / parsed.duration : 0;
+  const fallbackBase: RawChart = {
+    rawNotes: parsed.notes,
+    bpm: parsed.bpm,
+    offset: parsed.offset,
+    duration: parsed.duration,
+    version: "",
+    nps,
+  };
+  return {
+    bucketCharts: {},
+    fallbackBase,
+    meta: {
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      year: song.year,
+      audioUrl: song.audioUrl,
+    },
+    delivery: "local",
+  };
+}
+
+/* ---- finalize (per-mode quantization) ------------------------------------ */
+
+/**
+ * For each Syncle mode, resolve to a concrete `{ notes, source }`:
+ *   - If a mapper chart exists for the bucket, use it as-is.
+ *   - Otherwise, quantize from the densest available mapper chart so the
+ *     player still has a softer option to choose.
+ *
+ * Then compute availability:
+ *   - hard always available
+ *   - normal/easy available iff their note count is strictly less than the
+ *     next-denser bucket (otherwise the button would play an identical
+ *     chart, which is misleading).
+ */
+function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
+  const base = session.fallbackBase;
+
+  // Resolve notes for every mode (used for note-count display + availability).
+  const easyResolved =
+    session.bucketCharts.easy?.rawNotes ??
+    quantizeToGrid(base.rawNotes, base.bpm, base.offset, 1);
+  const normalResolved =
+    session.bucketCharts.normal?.rawNotes ??
+    quantizeToGrid(base.rawNotes, base.bpm, base.offset, 2);
+  const hardResolved = session.bucketCharts.hard?.rawNotes ?? base.rawNotes;
+
+  const easyCount = easyResolved.length;
+  const normalCount = normalResolved.length;
+  const hardCount = hardResolved.length;
+
+  // Mapper-provided modes are always considered "available" (the mapper
+  // intentionally made them distinct), even if their note counts happen
+  // to coincide with another bucket. Quantized fallbacks must produce a
+  // strictly thinner chart than the next-denser bucket to be exposed.
+  const easyAvailable =
+    !!session.bucketCharts.easy || easyCount < normalCount;
+  const normalAvailable =
+    !!session.bucketCharts.normal || normalCount < hardCount;
+
+  const notes =
+    mode === "easy" ? easyResolved : mode === "normal" ? normalResolved : hardResolved;
+  const chartForMode =
+    mode === "easy"
+      ? session.bucketCharts.easy ?? base
+      : mode === "normal"
+        ? session.bucketCharts.normal ?? base
+        : session.bucketCharts.hard ?? base;
+
+  const modes: ModeAvailability = {
+    noteCounts: { easy: easyCount, normal: normalCount, hard: hardCount },
+    available: {
+      easy: easyAvailable,
+      normal: normalAvailable,
+      hard: true,
+    },
+  };
+
   const meta: SongMeta = {
-    id: inp.meta.id,
-    title: inp.meta.title,
-    artist: inp.meta.artist,
-    year: inp.meta.year,
-    bpm: inp.bpm,
-    offset: inp.offset,
-    duration: inp.duration,
-    audioUrl: inp.meta.audioUrl,
-    difficulty: inp.mode,
+    id: session.meta.id,
+    title: session.meta.title,
+    artist: session.meta.artist,
+    year: session.meta.year,
+    bpm: chartForMode.bpm,
+    offset: chartForMode.offset,
+    duration: chartForMode.duration,
+    audioUrl: session.meta.audioUrl,
+    difficulty: mode,
   };
   return {
     meta,
     notes,
     source: "osu",
-    rawNoteCount: inp.rawNotes.length,
-    mode: inp.mode,
-    delivery: inp.delivery,
-    audioBytes: inp.audioBytes,
-    audioKey: inp.audioKey,
-    mirror: inp.mirror,
-    beatmapsetId: inp.beatmapsetId,
+    rawNoteCount: base.rawNotes.length,
+    mode,
+    modes,
+    delivery: session.delivery,
+    audioBytes: session.audioBytes,
+    audioKey: session.audioKey,
+    mirror: session.mirror,
+    beatmapsetId: session.beatmapsetId,
   };
 }
 
+/* ---- helpers ------------------------------------------------------------- */
+
 function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "x";
+  return (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "x"
+  );
 }
 
 /**

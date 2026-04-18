@@ -1,8 +1,9 @@
-// Per-day, per-song, per-difficulty high-score tracking.
+// Per-song, per-difficulty lifetime high-score tracking.
 //
-// Syncle is "one song per day, infinite tries — your best score wins".
-// We persist that best in localStorage keyed by UTC date so the score
-// resets at midnight UTC alongside the future daily-rotation logic.
+// Syncle is "random song every refresh, endless retries — push your best".
+// Each (songId, mode) pair persists its own all-time best in localStorage.
+// Once a Firestore-backed leaderboard ships, the same shape will sync up
+// with the cloud copy (`saveBestIfHigher` becomes a `await sync()` call).
 //
 // Data is a tiny JSON blob — no PII, fully local. Readers tolerate any
 // shape; on a parse error we just treat it as "no best yet".
@@ -11,43 +12,29 @@ import { ChartMode } from "./chart";
 
 const STORAGE_PREFIX = "syncle.best.";
 
-export interface DailyBest {
+export interface RunBest {
   songId: string;
   mode: ChartMode;
   score: number;
   accuracy: number;
   maxCombo: number;
-  /** UTC date string (YYYY-MM-DD) at the moment the score was set. */
-  date: string;
   /** Wall-clock timestamp (ms) the score was saved. */
   at: number;
 }
 
-/** UTC YYYY-MM-DD, e.g. "2026-04-16". Used as the daily reset boundary. */
-export function todayUtcKey(): string {
-  const d = new Date();
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** localStorage key for the best of the day for a given song + mode. */
+/** localStorage key for the lifetime best of a given song + mode. */
 export function bestKey(songId: string, mode: ChartMode): string {
-  return `${STORAGE_PREFIX}${todayUtcKey()}.${songId}.${mode}`;
+  return `${STORAGE_PREFIX}${songId}.${mode}`;
 }
 
-/** Load the best for a key, or null if no run today (or storage unavailable). */
-export function loadBest(key: string): DailyBest | null {
+/** Load the best for a key, or null if no run yet (or storage unavailable). */
+export function loadBest(key: string): RunBest | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as DailyBest;
+    const parsed = JSON.parse(raw) as RunBest;
     if (typeof parsed.score !== "number") return null;
-    // Sanity check: only honor entries whose stored UTC date matches today.
-    // (Old entries would already have rotated keys, but belt + suspenders.)
-    if (parsed.date && parsed.date !== todayUtcKey()) return null;
     return parsed;
   } catch {
     return null;
@@ -56,7 +43,7 @@ export function loadBest(key: string): DailyBest | null {
 
 export interface SaveResult {
   /** The best after this save (either the candidate or the prior best). */
-  best: DailyBest;
+  best: RunBest;
   /** True if the candidate beat the previous best (or there was none). */
   improved: boolean;
 }
@@ -67,7 +54,7 @@ export interface SaveResult {
  */
 export function saveBestIfHigher(
   key: string,
-  candidate: DailyBest,
+  candidate: RunBest,
 ): SaveResult {
   const prev = loadBest(key);
   if (prev && prev.score >= candidate.score) {

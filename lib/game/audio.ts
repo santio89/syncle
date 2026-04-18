@@ -328,8 +328,20 @@ export class AudioEngine {
     if (!empty) this.duckSong();
   }
 
-  /** Briefly drops song volume + applies a lowpass for that "unplugged" moment. */
-  duckSong(amountFactor = 0.4, durMs = 240): void {
+  /**
+   * Briefly drops song volume, low-passes it, and pitch-bends the source
+   * down — three independent "off" cues stacked so a miss feels viscerally
+   * wrong without being painful.
+   *
+   *   amountFactor    multiplier on song volume during the dip (0..1)
+   *   durMs           total duration of the dip + recovery
+   *   detuneCents     pitch drop on the source in cents (100 = 1 semitone).
+   *                   ~40 cents ≈ quarter-tone, reads as drunk/warped but
+   *                   recovers fast enough not to feel broken. Bumped up
+   *                   from the previous "no detune at all" so the miss
+   *                   actually sounds untuned, not just muffled.
+   */
+  duckSong(amountFactor = 0.4, durMs = 240, detuneCents = 40): void {
     if (!this.songGain || !this.songFilter || !this.ctx) return;
     const t = this.ctx.currentTime;
     const dur = durMs / 1000;
@@ -346,6 +358,18 @@ export class AudioEngine {
     f.setValueAtTime(f.value, t);
     f.linearRampToValueAtTime(700, t + 0.04);
     f.linearRampToValueAtTime(22000, t + dur);
+
+    // Pitch wobble. Snap down fast (40ms), then ride back to 0 cents over
+    // the rest of the duration — same shape as the volume duck so the ear
+    // hears the three cues as one event, not three.
+    const src = this.source;
+    if (src) {
+      const d = src.detune;
+      d.cancelScheduledValues(t);
+      d.setValueAtTime(d.value, t);
+      d.linearRampToValueAtTime(-detuneCents, t + 0.04);
+      d.linearRampToValueAtTime(0, t + dur);
+    }
   }
 
   /** Schedule a metronome click at a given AudioContext time. */

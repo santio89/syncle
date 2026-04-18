@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 /**
  * Fetch an osu!mania 4K beatmapset from a public mirror, extract the audio
- * + the matching .osu chart, and drop them under public/songs/ so you can
- * wire them up in songs.config.json without leaving the terminal.
+ * + the matching .osu chart, and drop them under public/songs/.
+ *
+ * Use this to add a new LOCAL FALLBACK song. The runtime now picks a fresh
+ * random ranked mania chart from public mirrors on every page load — local
+ * songs only kick in when every mirror is unreachable. After downloading,
+ * register the song by adding an entry to `LOCAL_FALLBACKS` in
+ * `lib/game/chart.ts`.
  *
  * No external deps — uses fetch + a tiny built-in ZIP reader powered by
  * node:zlib. The .osz format is just a renamed ZIP.
@@ -269,7 +274,7 @@ async function cmdInstall(id, diffSubstr) {
   }
 
   // Output: public/songs/<artist>-<title>/{audio.<ext>,chart.osu}
-  // Predictable filenames keep songs.config.json clean and URL-safe.
+  // Predictable filenames keep the LOCAL_FALLBACKS entries clean + URL-safe.
   const slug = slugify(`${pick.meta.artist}-${pick.meta.title}`);
   const outDir = join(SONGS_DIR, slug);
   mkdirSync(outDir, { recursive: true });
@@ -286,27 +291,28 @@ async function cmdInstall(id, diffSubstr) {
   console.log(`  ${audioOut}  (${(audioBytes.length / 1024 / 1024).toFixed(1)} MB)`);
   console.log(`  ${chartOut}  (${pick.text.length} bytes)\n`);
 
-  console.log("Add this to songs.config.json under \"songs\":\n");
+  console.log(
+    "Register it as a fallback by adding this to LOCAL_FALLBACKS in " +
+      "lib/game/chart.ts:\n",
+  );
   console.log(
     "  " +
       JSON.stringify(
         {
-          [slug]: {
-            title: pick.meta.title,
-            artist: pick.meta.artist,
-            audio: `${slug}/${audioOut}`,
-            chart: `${slug}/${chartOut}`,
-          },
+          id: slug,
+          title: pick.meta.title,
+          artist: pick.meta.artist,
+          audioUrl: `/songs/${slug}/${audioOut}`,
+          chartUrl: `/songs/${slug}/${chartOut}`,
         },
         null,
         2,
       ).replace(/\n/g, "\n  "),
   );
   console.log(
-    `\nAnd schedule it for a date under "schedule":` +
-      `\n  { "date": "YYYY-MM-DD", "songId": "${slug}" }\n`,
+    "\nReminder: random remote picks are the default — local fallbacks only " +
+      "kick in when every public mirror is unreachable.\n",
   );
-  console.log("Then `npm run build:manifest` (or just restart `npm run dev`).");
 }
 
 // ---------------------------------------------------------------------------

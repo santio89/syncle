@@ -22,7 +22,12 @@ type Blob = {
   phase: number;
   /** Radius as a fraction of max(width, height). */
   r: number;
-  hue: string;
+  /**
+   * Either an explicit "r,g,b" string or a CSS-var name (without `var()`).
+   * Var names are resolved against `document.documentElement` each frame so
+   * the gradient retints when the theme changes — no remount required.
+   */
+  hue: string | { var: string };
   alpha: number;
 };
 
@@ -36,7 +41,7 @@ const BLOBS: Blob[] = [
     ax: 0.025, ay: 0.02,
     freq: 0.35, phase: 0.0,
     r: 0.28,
-    hue: "61, 169, 255",
+    hue: { var: "--accent" },
     alpha: 0.16,
   },
   // Today's track card (lower-left).
@@ -45,10 +50,11 @@ const BLOBS: Blob[] = [
     ax: 0.03, ay: 0.018,
     freq: 0.27, phase: 1.4,
     r: 0.22,
-    hue: "61, 169, 255",
+    hue: { var: "--accent" },
     alpha: 0.10,
   },
-  // Stats card (lower-right).
+  // Stats card (lower-right). Static violet — intentional cool/cold split
+  // from the accent so the lower-right corner has its own color identity.
   {
     cx: 0.78, cy: 0.84,
     ax: 0.02, ay: 0.022,
@@ -63,10 +69,25 @@ const BLOBS: Blob[] = [
     ax: 0.015, ay: 0.012,
     freq: 0.22, phase: 0.7,
     r: 0.18,
-    hue: "61, 169, 255",
+    hue: { var: "--accent" },
     alpha: 0.05,
   },
 ];
+
+/**
+ * Read an `--xxx` CSS variable from `<html>` and return its space-separated
+ * RGB triplet rewritten with commas so it can be used inside `rgba(...)`.
+ * Returns null if the var isn't defined (e.g. SSR / pre-hydration).
+ */
+function readRgbVar(name: string): string | null {
+  if (typeof window === "undefined") return null;
+  const raw = window
+    .getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  if (!raw) return null;
+  return raw.replace(/\s+/g, ", ");
+}
 
 export function GradientBg() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -105,6 +126,30 @@ export function GradientBg() {
     const FRAME_MS = 1000 / TARGET_FPS;
     let lastDraw = 0;
 
+    /**
+     * Cache resolved CSS-var hues across draws — getComputedStyle isn't
+     * cheap, and the value only changes when the theme flips. We refresh
+     * the cache once per second; that's plenty given the toggle's ~400ms
+     * transition and the gradient's heavy 48px CSS blur smoothing it out.
+     */
+    const hueCache = new Map<string, string>();
+    let lastHueRefresh = 0;
+    const HUE_REFRESH_MS = 1000;
+
+    const resolveHue = (h: Blob["hue"], now: number): string => {
+      if (typeof h === "string") return h;
+      if (now - lastHueRefresh > HUE_REFRESH_MS) {
+        hueCache.clear();
+        lastHueRefresh = now;
+      }
+      let v = hueCache.get(h.var);
+      if (!v) {
+        v = readRgbVar(h.var) ?? "61, 169, 255"; // accent fallback
+        hueCache.set(h.var, v);
+      }
+      return v;
+    };
+
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
       if (now - lastDraw < FRAME_MS) return;
@@ -119,10 +164,11 @@ export function GradientBg() {
         const cx = (b.cx + offX) * width;
         const cy = (b.cy + offY) * height;
         const radius = b.r * Math.max(width, height);
+        const hue = resolveHue(b.hue, now);
 
         const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-        grad.addColorStop(0, `rgba(${b.hue}, ${b.alpha})`);
-        grad.addColorStop(1, `rgba(${b.hue}, 0)`);
+        grad.addColorStop(0, `rgba(${hue}, ${b.alpha})`);
+        grad.addColorStop(1, `rgba(${hue}, 0)`);
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, width, height);
       }
