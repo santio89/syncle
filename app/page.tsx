@@ -9,7 +9,6 @@ import {
   displayMode,
   MODE_ORDER,
   prefetchAudio,
-  type ChartMode,
   type ModeAvailability,
 } from "@/lib/game/chart";
 import { SongMeta } from "@/lib/game/types";
@@ -20,39 +19,6 @@ function formatDuration(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-/**
- * Pick the difficulty name to put on the "Now playing" card.
- *
- * Rule: the **lowest enabled tier in the picker** — i.e. the leftmost
- * button you'd see lit up after opening the song. This keeps the card
- * and the picker in lockstep:
- *
- *   - card says EASY  → EASY is enabled in the picker
- *   - card says HARD  → easy + medium are disabled, HARD is the
- *                       leftmost button you can click
- *   - card says EXPERT→ everything below expert is disabled (brutal
- *                       song, no mercy)
- *
- * We deliberately use `available` (which counts our quantization
- * fallbacks) rather than `mapperProvided`. Showing HARD on a song where
- * the picker still offered EASY as a clickable button — just because
- * our easy chart was quantized rather than mapper-shipped — is more
- * confusing than honest.
- *
- * Returns the *display* string ("medium" not "normal") so the badge can
- * render it directly without remapping.
- */
-function lowestAvailableDifficulty(
-  modes: ModeAvailability,
-): "easy" | "medium" | "hard" | "insane" | "expert" | "—" {
-  for (const m of MODE_ORDER) {
-    if (modes.available[m]) return displayMode(m);
-  }
-  // Defensive: hard is guaranteed available in finalize() (densest
-  // fallback never fails), so this only fires if `modes` arrives empty.
-  return "—";
 }
 
 type LoadState =
@@ -279,27 +245,19 @@ export default function HomePage() {
                   </>
                 )}
               </div>
-              {load.status === "ready" &&
-                (() => {
-                  // Card label = the leftmost tier you'd see enabled
-                  // in the picker after opening the song. So the card
-                  // and the picker are always in lockstep — no more
-                  // "card says HARD but EASY is clickable" surprise.
-                  const tier = lowestAvailableDifficulty(load.modes);
-                  return (
-                    <div className="flex shrink-0 flex-row gap-2 font-mono text-xs sm:flex-col sm:items-end sm:gap-1">
-                      <span className="border-2 border-bone-50 px-2 py-0.5">
-                        {formatDuration(load.meta.duration)}
-                      </span>
-                      <span
-                        className="border-2 border-accent px-2 py-0.5 uppercase leading-none text-accent"
-                        title={`Easiest tier available on this song: ${tier}`}
-                      >
-                        {tier}
-                      </span>
-                    </div>
-                  );
-                })()}
+              {load.status === "ready" && (
+                // Card no longer carries a difficulty badge: with adaptive
+                // quantization every song exposes Easy through some path
+                // (mapper-shipped or synthesized from the densest source),
+                // so a single label can't summarize the song's range. The
+                // full picker on /play is the source of truth for which
+                // tiers are actually available.
+                <div className="flex shrink-0 flex-row gap-2 font-mono text-xs sm:flex-col sm:items-end sm:gap-1">
+                  <span className="border-2 border-bone-50 px-2 py-0.5">
+                    {formatDuration(load.meta.duration)}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="mt-4 flex items-end gap-3 sm:mt-5">

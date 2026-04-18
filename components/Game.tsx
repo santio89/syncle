@@ -1264,24 +1264,29 @@ function Spinner({ small }: { small?: boolean }) {
 
 /**
  * Given the user's currently selected mode + the song's per-mode availability,
- * return the mode the picker should actually use. If the requested mode is
- * available we keep it; otherwise we walk toward "hard" (the only mode that
- * is always available) so the user lands on a chart that's distinct from the
- * one they were on. Walking toward hard is intentional: each fallback step
- * yields the exact same chart the disabled mode would have produced.
+ * return the mode the picker should actually use.
+ *
+ * Strategy: keep `requested` if it's available, else walk UP the ladder
+ * (toward harder tiers) first because falling forward usually yields a
+ * meaningfully distinct chart; if everything above is also disabled
+ * (sparse song shipping only an Easy chart, for example) walk DOWN as
+ * a last resort. At least one tier is always available because
+ * `parsedCharts.length > 0` means at least one bucket is mapper-filled.
  */
 function pickAvailableMode(
   requested: ChartMode,
   modes: ModeAvailability,
 ): ChartMode {
-  // Walk UP the difficulty ladder from the requested tier until we find
-  // an available one. `hard` is guaranteed available (densest fallback)
-  // so we always terminate; insane/expert get skipped if the song has no
-  // mapper chart for them.
+  if (modes.available[requested]) return requested;
   let i = MODE_ORDER.indexOf(requested);
   if (i < 0) i = 0;
-  while (i < MODE_ORDER.length && !modes.available[MODE_ORDER[i]]) i++;
-  return MODE_ORDER[Math.min(i, MODE_ORDER.length - 1)];
+  for (let j = i + 1; j < MODE_ORDER.length; j++) {
+    if (modes.available[MODE_ORDER[j]]) return MODE_ORDER[j];
+  }
+  for (let j = i - 1; j >= 0; j--) {
+    if (modes.available[MODE_ORDER[j]]) return MODE_ORDER[j];
+  }
+  return requested;
 }
 
 function KeyCap({

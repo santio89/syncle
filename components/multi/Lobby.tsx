@@ -453,17 +453,18 @@ function HostPane({
 }
 
 /**
- * Pick the first available mode in difficulty order. Falls back to "hard"
- * because finalize() guarantees hard is always present (it's just the raw
- * chart with no thinning).
+ * Pick the first available mode in difficulty order. At least one tier
+ * is always available because finalize() guarantees mapper-shipped
+ * charts always count as available; the `"easy"` terminator is purely
+ * defensive — if the loop below ever exits we'd be looking at a song
+ * with zero parseable charts, which `rawSessionFromExtracted` already
+ * rejects upstream.
  */
 function firstAvailableMode(modes: ModeAvailability): ChartMode {
   for (const m of MODE_ORDER) {
     if (modes.available[m]) return m;
   }
-  // `hard` is always available in finalize() (densest fallback never
-  // fails) so this is just a defensive last-resort terminator.
-  return "hard";
+  return "easy";
 }
 
 /**
