@@ -8,6 +8,7 @@ import {
   loadSong,
   displayMode,
   MODE_ORDER,
+  prefetchAudio,
   type ChartMode,
   type ModeAvailability,
 } from "@/lib/game/chart";
@@ -73,6 +74,24 @@ export default function HomePage() {
   useEffect(() => {
     setStats(loadStats());
     let cancelled = false;
+    // EAGER PREFETCH on homepage mount:
+    //
+    //   1. `loadSong()` downloads + extracts + parses the random .osz
+    //      and runs `finalize()` for the default mode. The result is
+    //      cached at module level (`sessionPromise` in chart.ts), so
+    //      when the user later clicks Play and /play calls `loadSong()`
+    //      again, the network + parse phase is skipped and only the
+    //      ~ms-cheap quantization re-runs for whichever mode they
+    //      picked. This means the picker on /play sees real per-tier
+    //      availability on first paint instead of the all-disabled
+    //      placeholder.
+    //
+    //   2. For LOCAL fallback songs (rare — only when every osu mirror
+    //      fails), the audio lives at a separate URL and isn't bundled
+    //      with the chart. We `prefetchAudio()` it so the browser HTTP
+    //      cache is warm by the time the player hits Play. Remote .osz
+    //      songs already have their decoded audio bytes sitting in the
+    //      cached session, so no extra fetch is needed.
     loadSong()
       .then((s) => {
         if (cancelled) return;
@@ -82,6 +101,9 @@ export default function HomePage() {
           noteCount: s.notes.length,
           modes: s.modes,
         });
+        if (s.meta.audioUrl && !s.audioBytes) {
+          prefetchAudio(s.meta.audioUrl);
+        }
         // Highest score this device has ever set on this song, across all
         // difficulties — gives the player a target to chase on this refresh.
         let highest: RunBest | null = null;

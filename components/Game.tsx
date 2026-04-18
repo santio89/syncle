@@ -110,16 +110,18 @@ export default function Game() {
   // buttons. Defaults to "all available" while loading so the picker doesn't
   // flash into a disabled state on first paint.
   const [modeAvailability, setModeAvailability] = useState<ModeAvailability>({
-    // Initial placeholder until the real chart resolves. We start with
-    // every tier disabled (except hard, which is always backed by the
-    // densest chart so it can't fail availability) so the picker looks
-    // correct on first paint and only "lights up" tiers the song
-    // actually ships once finalize() returns.
+    // Initial placeholder: EVERY tier disabled until the real chart
+    // resolves and quantization completes for all 5 buckets. Showing
+    // hard (or any other tier) as enabled too early would let the
+    // player click a button whose density we haven't actually computed
+    // yet, then re-render with a different availability map a frame
+    // later — visually jumpy and racy. All-disabled-until-ready keeps
+    // the picker honest on first paint.
     noteCounts: { easy: 0, normal: 0, hard: 0, insane: 0, expert: 0 },
     available: {
       easy: false,
       normal: false,
-      hard: true,
+      hard: false,
       insane: false,
       expert: false,
     },
@@ -1240,7 +1242,7 @@ function ModeButton({
           ? "border-accent bg-accent text-ink-900"
           : enabled
             ? "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
-            : "border-bone-50/10 text-bone-50/25 cursor-not-allowed line-through decoration-1"
+            : "border-bone-50/10 text-bone-50/25 cursor-not-allowed"
       }`}
     >
       {displayMode(mode)}

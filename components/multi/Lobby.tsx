@@ -506,7 +506,7 @@ function HostModeButton({
         selected && available
           ? "border-accent bg-accent text-ink-900"
           : !available && hasSelectedSong && !probing
-            ? "border-bone-50/15 text-bone-50/30 line-through cursor-not-allowed"
+            ? "border-bone-50/15 text-bone-50/30 cursor-not-allowed"
             : disabled
               ? "border-bone-50/15 text-bone-50/30 cursor-wait"
               : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
