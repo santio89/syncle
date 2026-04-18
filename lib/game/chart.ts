@@ -274,9 +274,66 @@ export async function loadSongById(
   mode: ChartMode,
   opts: { onProgress?: (msg: string) => void } = {},
 ): Promise<LoadSongResult> {
-  const ext = await fetchAndExtractAll(beatmapsetId, opts);
+  const ext = await getExtractedCached(beatmapsetId, opts);
   const session = rawSessionFromExtracted(ext);
   return finalize(session, mode);
+}
+
+/**
+ * Fast availability probe: does this beatmapset have charts mapping cleanly
+ * to easy / normal / hard buckets in Syncle's scheme?
+ *
+ * Used by the multiplayer host pane to disable difficulty buttons that the
+ * picked song doesn't actually support. Shares the per-set extract cache
+ * with `loadSongById` so probing here makes the eventual load free for the
+ * host (the .osz only downloads once).
+ */
+export async function probeSongModes(
+  beatmapsetId: number,
+  opts: { onProgress?: (msg: string) => void } = {},
+): Promise<ModeAvailability> {
+  const ext = await getExtractedCached(beatmapsetId, opts);
+  const session = rawSessionFromExtracted(ext);
+  // `finalize` derives the modes field deterministically from the session;
+  // the requested mode doesn't matter, we only read modes off the result.
+  return finalize(session, "easy").modes;
+}
+
+/**
+ * Per-beatmapset extracted-osz cache. Keeps the raw download + chart parse
+ * around so probe() and loadSongById() share the same network request.
+ *
+ * Bounded by `MAX_EXTRACT_CACHE_ENTRIES` to avoid unbounded growth if a
+ * curious host clicks through dozens of songs in one session. LRU
+ * eviction: oldest insertion order goes first.
+ */
+const MAX_EXTRACT_CACHE_ENTRIES = 8;
+const setExtractCache = new Map<number, Promise<ExtractedSongFull>>();
+
+function getExtractedCached(
+  beatmapsetId: number,
+  opts: { onProgress?: (msg: string) => void } = {},
+): Promise<ExtractedSongFull> {
+  const existing = setExtractCache.get(beatmapsetId);
+  if (existing) {
+    // Re-insert so the entry is treated as "most recently used" for LRU.
+    setExtractCache.delete(beatmapsetId);
+    setExtractCache.set(beatmapsetId, existing);
+    return existing;
+  }
+  const p = fetchAndExtractAll(beatmapsetId, opts).catch((err) => {
+    // Drop on failure so a retry actually re-fetches instead of replaying
+    // the same rejected promise forever.
+    setExtractCache.delete(beatmapsetId);
+    throw err;
+  });
+  setExtractCache.set(beatmapsetId, p);
+  while (setExtractCache.size > MAX_EXTRACT_CACHE_ENTRIES) {
+    const oldestKey = setExtractCache.keys().next().value as number | undefined;
+    if (oldestKey === undefined) break;
+    setExtractCache.delete(oldestKey);
+  }
+  return p;
 }
 
 /* ---- session selection --------------------------------------------------- */

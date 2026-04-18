@@ -11,6 +11,8 @@ import {
   prefetchAudio,
 } from "@/lib/game/chart";
 import {
+  createRenderState,
+  crossedComboMilestone,
   DEFAULT_RENDER_OPTIONS,
   drawFrame,
   RenderState,
@@ -61,12 +63,14 @@ export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioRef = useRef<AudioEngine | null>(null);
   const stateRef = useRef<GameState | null>(null);
-  const renderStateRef = useRef<RenderState>({
-    recentEvents: [],
-    laneFlash: new Array(TOTAL_LANES).fill(0),
-    particles: [],
-    pendingHits: [],
-  });
+  const renderStateRef = useRef<RenderState>(createRenderState());
+  /**
+   * Combo from the previous frame — used to detect when we cross one of the
+   * milestone thresholds (25/50/100/...). When that happens we both flash the
+   * canvas (vignette tint via renderer) and play a brief upward arpeggio.
+   * Tracked outside of React state so the RAF loop is allocation-free.
+   */
+  const prevComboRef = useRef<number>(0);
   const heldRef = useRef<boolean[]>(new Array(TOTAL_LANES).fill(false));
   const rafRef = useRef<number | null>(null);
   /** Shared empty state used during idle/loading frames (drawing a blank highway).
@@ -446,11 +450,9 @@ export default function Game() {
     // next start() doesn't re-fetch / re-decode the audio.
     audioRef.current?.stop();
     stateRef.current = null;
-    renderStateRef.current.recentEvents = [];
-    renderStateRef.current.laneFlash.fill(0);
-    renderStateRef.current.particles.length = 0;
-    renderStateRef.current.pendingHits.length = 0;
+    resetRenderState(renderStateRef.current);
     heldRef.current.fill(false);
+    prevComboRef.current = 0;
     lastScheduledBeatRef.current = -1;
     songRef.current = { meta: PLACEHOLDER_META, notes: [] };
     setStats(null);
@@ -476,6 +478,10 @@ export default function Game() {
       return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // Don't hijack key events while a text input or textarea has focus —
+      // future-proofs against in-game chat / pause-menu fields without
+      // accidentally muting D/F/J/K when the player just clicked a slider.
+      if (isEditableTarget(e.target)) return;
       if (e.code === "Escape") {
         e.preventDefault();
         if (phase === "playing") void pause();
@@ -515,6 +521,7 @@ export default function Game() {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
       if (phase === "paused") return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
@@ -637,6 +644,25 @@ export default function Game() {
       }
       if (state) rs.recentEvents = state.events;
 
+      // ---- Combo bookkeeping --------------------------------------------
+      // The renderer reads rs.combo to size the on-canvas combo number;
+      // we mirror it from the engine each frame. When the combo crosses one
+      // of the milestone thresholds we also kick off a screen flash + chime
+      // for the kind of "moment" feedback osu!mania uses to keep flow alive.
+      if (state) {
+        const newCombo = state.stats.combo;
+        rs.combo = newCombo;
+        const crossed = crossedComboMilestone(prevComboRef.current, newCombo);
+        if (crossed != null) {
+          rs.milestone = { strength: 1, combo: crossed };
+          audio?.playComboMilestone(crossed);
+        }
+        prevComboRef.current = newCombo;
+      } else {
+        rs.combo = 0;
+        prevComboRef.current = 0;
+      }
+
       // Mutate a single options object every frame instead of allocating a
       // fresh one (with a fresh laneHeld copy via [...spread]). The renderer
       // only reads laneHeld, so passing the ref directly is safe.
@@ -712,11 +738,9 @@ export default function Game() {
     // The "Try again" button thus goes from PLAY-click → first note in <50ms.
     audioRef.current?.stop();
     stateRef.current = null;
-    renderStateRef.current.recentEvents = [];
-    renderStateRef.current.laneFlash.fill(0);
-    renderStateRef.current.particles.length = 0;
-    renderStateRef.current.pendingHits.length = 0;
+    resetRenderState(renderStateRef.current);
     heldRef.current.fill(false);
+    prevComboRef.current = 0;
     lastScheduledBeatRef.current = -1;
     songRef.current = { meta: PLACEHOLDER_META, notes: [] };
     setSongSource(null);
@@ -829,6 +853,38 @@ export default function Game() {
       )}
     </div>
   );
+}
+
+/**
+ * Returns true if the keyboard event target is an editable element
+ * (input, textarea, contenteditable). We skip key handlers in that case so
+ * typing into a future chat box / settings field doesn't fire lane keys
+ * or pause the game.
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return target.isContentEditable;
+}
+
+/**
+ * Reset all live render state to its initial "no run" shape *in place*.
+ * We mutate the existing object instead of replacing it because the RAF
+ * loop captures `renderStateRef.current` once per frame and we want every
+ * subsequent frame to see the cleared arrays without needing to re-read
+ * the ref. Keeps `cache` intact so the next run reuses the gradient cache
+ * (canvas geometry hasn't changed; rebuilding would cause a 1-frame jank).
+ */
+function resetRenderState(rs: RenderState): void {
+  rs.recentEvents = [];
+  rs.laneFlash.fill(0);
+  rs.laneAnticipation.fill(0);
+  rs.particles.length = 0;
+  rs.shockwaves.length = 0;
+  rs.pendingHits.length = 0;
+  rs.combo = 0;
+  rs.milestone = null;
 }
 
 function computeAccuracy(stats: PlayerStats): number {

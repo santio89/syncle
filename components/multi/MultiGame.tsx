@@ -34,6 +34,8 @@ import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
 import type { LoadSongResult, ChartMode } from "@/lib/game/chart";
 import {
+  createRenderState,
+  crossedComboMilestone,
   DEFAULT_RENDER_OPTIONS,
   drawFrame,
   RenderState,
@@ -104,19 +106,24 @@ function CanvasPane({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioRef = useRef<AudioEngine | null>(null);
   const stateRef = useRef<GameState | null>(null);
-  const renderStateRef = useRef<RenderState>({
-    recentEvents: [],
-    laneFlash: new Array(TOTAL_LANES).fill(0),
-    particles: [],
-    pendingHits: [],
-  });
+  const renderStateRef = useRef<RenderState>(createRenderState());
   const heldRef = useRef<boolean[]>(new Array(TOTAL_LANES).fill(false));
   const rafRef = useRef<number | null>(null);
   const renderOptsRef = useRef({ ...DEFAULT_RENDER_OPTIONS });
   const emptyStateRef = useRef<GameState>(new GameState([]));
   const lastScheduledBeatRef = useRef<number>(-1);
   const lastScoreSentRef = useRef<number>(0);
+  /**
+   * Last score we actually sent to the server. Lets us skip the wire
+   * payload entirely on ticks where nothing changed (player isn't hitting
+   * notes), keeping the 50-player room's ingress tiny on idle stretches.
+   * We compare a small (score, combo, miss) tuple — those are the only
+   * fields the sidebar visibly cares about between ticks.
+   */
+  const lastScoreSentSigRef = useRef<string>("");
   const finishedRef = useRef<boolean>(false);
+  /** Combo on the previous frame — see Game.tsx for the rationale. */
+  const prevComboRef = useRef<number>(0);
 
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const [countdownLabel, setCountdownLabel] = useState<number | null>(null);
@@ -175,6 +182,18 @@ function CanvasPane({
       setStats({ ...stateRef.current.stats });
       lastScheduledBeatRef.current = -1;
       finishedRef.current = false;
+      prevComboRef.current = 0;
+      lastScoreSentSigRef.current = "";
+      // Wipe leftover particles/shockwaves/milestone from a previous song
+      // so the new run starts on a clean canvas.
+      const rs = renderStateRef.current;
+      rs.particles.length = 0;
+      rs.shockwaves.length = 0;
+      rs.pendingHits.length = 0;
+      rs.laneFlash.fill(0);
+      rs.laneAnticipation.fill(0);
+      rs.combo = 0;
+      rs.milestone = null;
     };
     void prep();
     return () => {
@@ -183,6 +202,15 @@ function CanvasPane({
   }, [loaded]);
 
   // Schedule the audio start exactly at snapshot.startsAt (countdown→playing).
+  //
+  // Late-join behavior: if the song has already begun (we mounted into a
+  // room that's mid-song after a refresh, or our chart loaded after the
+  // server-side countdown finished), startsAt is in the past. Instead of
+  // hammering start() with a 0-delay (which would replay from the top and
+  // desync the player from the rest of the lobby), we seek into the audio
+  // buffer by `now - startsAt` seconds. The engine's songTime() then reads
+  // chart-relative time correctly, so the player drops in mid-song already
+  // synced to everyone else's playhead within ~1 frame.
   useEffect(() => {
     if (!loaded || !audioRef.current) return;
     if (snapshot.phase !== "countdown" && snapshot.phase !== "playing") return;
@@ -194,9 +222,16 @@ function CanvasPane({
     const schedule = () => {
       if (cancelled) return;
       try {
-        // Convert remaining ms to seconds; clamp at 0 so a late mount still
-        // calls start() with a tiny lead-in (the engine handles "in the past").
-        audio.start(Math.max(0, delayMs) / 1000, 0.85);
+        if (delayMs >= 0) {
+          // Future start — normal countdown lead-in.
+          audio.start(delayMs / 1000, 0.85);
+        } else {
+          // Past start — seek to the right offset so we sound in time.
+          // We give ourselves a tiny 50ms head-start so the fade-in doesn't
+          // cut into the very first frame after mount.
+          const offset = -delayMs / 1000;
+          audio.start(0.05, 0.85, offset);
+        }
       } catch {
         // The engine throws if the buffer isn't loaded yet. We retry on the
         // next render once the prep effect resolves.
@@ -232,6 +267,9 @@ function CanvasPane({
   useEffect(() => {
     if (snapshot.phase !== "playing" && snapshot.phase !== "countdown") return;
     const onKeyDown = (e: KeyboardEvent) => {
+      // Skip when the user is typing in a form field (future chat, name
+      // change, etc). Same guard as single-player Game.tsx.
+      if (isEditableTarget(e.target)) return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
       if (e.repeat) return;
@@ -253,6 +291,7 @@ function CanvasPane({
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
       heldRef.current[lane] = false;
@@ -308,10 +347,15 @@ function CanvasPane({
           lastMissCount = misses;
         }
 
-        // Score upload throttle
+        // Score upload throttle (5 Hz) with a "no change → no send" guard
+        // so an idle stretch doesn't burn bandwidth in a 50-player room.
         if (now - lastScoreSentRef.current >= SCORE_TICK_MS) {
           lastScoreSentRef.current = now;
-          actions.sendScore(snapshotLive(state.stats, false));
+          const sig = `${state.stats.score}|${state.stats.combo}|${state.stats.hits.miss}`;
+          if (sig !== lastScoreSentSigRef.current) {
+            lastScoreSentSigRef.current = sig;
+            actions.sendScore(snapshotLive(state.stats, false));
+          }
         }
 
         // End-of-song detection
@@ -368,6 +412,23 @@ function CanvasPane({
         rs.laneFlash[i] = Math.max(0, rs.laneFlash[i] - dt * 4.5);
       }
       if (state) rs.recentEvents = state.events;
+
+      // Combo + milestone — same logic as single-player. The chime here is
+      // local-only (each player hears their own milestones), which keeps
+      // the audio bus uncluttered in a 50-player room.
+      if (state) {
+        const newCombo = state.stats.combo;
+        rs.combo = newCombo;
+        const crossed = crossedComboMilestone(prevComboRef.current, newCombo);
+        if (crossed != null) {
+          rs.milestone = { strength: 1, combo: crossed };
+          audio?.playComboMilestone(crossed);
+        }
+        prevComboRef.current = newCombo;
+      } else {
+        rs.combo = 0;
+        prevComboRef.current = 0;
+      }
 
       renderOptsRef.current.bpm = songMeta?.bpm ?? 120;
       renderOptsRef.current.offset = songMeta?.offset ?? 0;
@@ -542,6 +603,23 @@ function ScoreboardSidebar({
                   </span>
                 )}
               </span>
+              {/* Live combo badge — makes the sidebar feel like a race
+                  even when scores are close. Only shown for non-finished
+                  players (finished rows show the ✓ mark instead). */}
+              {!e.finished && e.combo > 0 && (
+                <span
+                  className={`shrink-0 px-1 text-[9px] tabular-nums tracking-widest ${
+                    e.combo >= 50
+                      ? "text-accent"
+                      : e.combo >= 10
+                        ? "text-bone-50/70"
+                        : "text-bone-50/40"
+                  }`}
+                  title={`Combo ×${e.combo}`}
+                >
+                  ×{e.combo}
+                </span>
+              )}
               <span className="shrink-0 text-right text-[11px] tabular-nums text-bone-50">
                 {e.score.toLocaleString()}
               </span>
@@ -644,6 +722,13 @@ function Spinner() {
 /* ------------------------------------------------------------------------ */
 /* Helpers                                                                  */
 /* ------------------------------------------------------------------------ */
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return target.isContentEditable;
+}
 
 function computeAccuracy(stats: PlayerStats): number {
   const total = stats.notesPlayed || 1;

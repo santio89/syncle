@@ -31,6 +31,8 @@ export class AudioEngine {
   private loading: Promise<void> | null = null;
 
   private master: GainNode | null = null;
+  /** Soft master limiter — catches transient clip when many SFX overlap. */
+  private limiter: DynamicsCompressorNode | null = null;
   private songGain: GainNode | null = null;
   private songFilter: BiquadFilterNode | null = null;
   private sfxGain: GainNode | null = null;
@@ -57,10 +59,25 @@ export class AudioEngine {
       const Ctor =
         (window as any).AudioContext || (window as any).webkitAudioContext;
       this.ctx = new Ctor();
+
+      // Soft-knee limiter at ~ -2 dBFS. It rarely triggers during normal
+      // play but absorbs the brief peaks when a perfect-tap pluck stacks
+      // on top of a metronome click + a high-velocity drum from the song.
+      // Without this, those transients clip on Chrome's default destination
+      // and you hear a tiny crackle. The compressor's small lookahead also
+      // smooths the SFX sum so combo chains don't get harsh.
+      this.limiter = this.ctx!.createDynamicsCompressor();
+      this.limiter.threshold.value = -2;   // dB
+      this.limiter.knee.value = 6;
+      this.limiter.ratio.value = 8;
+      this.limiter.attack.value = 0.003;
+      this.limiter.release.value = 0.18;
+      this.limiter.connect(this.ctx!.destination);
+
       // Persistent SFX bus so feedback works even before song starts.
       this.master = this.ctx!.createGain();
       this.master.gain.value = 1;
-      this.master.connect(this.ctx!.destination);
+      this.master.connect(this.limiter);
 
       this.sfxGain = this.ctx!.createGain();
       this.sfxGain.gain.value = 0.6;
@@ -138,15 +155,25 @@ export class AudioEngine {
   }
 
   /**
-   * Schedule the song to start `delay` seconds from now.
-   * Returns the AudioContext time at which the song will begin (= songTime 0).
+   * Schedule the song to start `delay` seconds from now, optionally seeking
+   * `offset` seconds into the audio buffer.
+   *
+   * `songTime()` is anchored to *audio start*, so the audio clock t=0 always
+   * corresponds to the position in the buffer the playback head is at when
+   * the source starts. With a non-zero `offset` we shift `startedAtCtxTime`
+   * BACK by that amount so songTime() returns realistic chart-relative
+   * timings — i.e. a player joining 30s into a song will read songTime ≈ 30
+   * on their first frame, lining up perfectly with the chart's notes.
+   *
+   * Returns the AudioContext time at which (logical) songTime = 0.
    */
-  start(delay: number = 0, volume: number = 0.85): number {
+  start(delay: number = 0, volume: number = 0.85, offset: number = 0): number {
     if (!this.ctx || !this.buffer) {
       throw new Error("Audio not loaded");
     }
     this.stop();
     this.songVol = volume;
+    const safeOffset = Math.max(0, Math.min(this.buffer.duration - 0.05, offset));
 
     const src = this.ctx.createBufferSource();
     src.buffer = this.buffer;
@@ -163,21 +190,26 @@ export class AudioEngine {
     src.connect(filt).connect(gain).connect(this.master!);
 
     const startAt = this.ctx.currentTime + Math.max(0, delay);
-    src.start(startAt);
+    src.start(startAt, safeOffset);
     gain.gain.setValueAtTime(0, startAt);
-    gain.gain.linearRampToValueAtTime(volume, startAt + 0.06);
+    // Slightly longer fade for late-join so the seeked-into frame doesn't
+    // crackle from being mid-waveform; 60ms still feels instantaneous.
+    const fadeLen = safeOffset > 0 ? 0.12 : 0.06;
+    gain.gain.linearRampToValueAtTime(volume, startAt + fadeLen);
 
     this.source = src;
     this.songFilter = filt;
     this.songGain = gain;
-    this.startedAtCtxTime = startAt;
+    // Logical t=0 sits `safeOffset` BEHIND the actual audio start so
+    // songTime() reports chart-relative time even mid-song.
+    this.startedAtCtxTime = startAt - safeOffset;
     this.playing = true;
 
     src.onended = () => {
       this.playing = false;
     };
 
-    return startAt;
+    return this.startedAtCtxTime;
   }
 
   /**
@@ -369,6 +401,29 @@ export class AudioEngine {
       d.setValueAtTime(d.value, t);
       d.linearRampToValueAtTime(-detuneCents, t + 0.04);
       d.linearRampToValueAtTime(0, t + dur);
+    }
+  }
+
+  /**
+   * Combo-milestone chime — a brief upward arpeggio (root → 5th → octave)
+   * keyed off the lane palette so it sits in the same musical world as the
+   * hit feedback. Volume scales softly with milestone index so 1000 doesn't
+   * drown the song. Cheap (3-4 oscillators, ~280ms total).
+   */
+  playComboMilestone(milestone: number): void {
+    if (!this.ctx || !this.sfxGain) return;
+    const t = this.ctx.currentTime;
+    // Root in mid-range so the arpeggio sits above the song without
+    // poking ears. C5 ≈ 523Hz.
+    const root = 523.25;
+    const intensity = Math.min(1, milestone / 500); // 25 → 0.05, 500+ → 1
+    const baseVol = 0.18 + intensity * 0.18;
+    this.pluck(t,         root,        0.32, baseVol,        "triangle");
+    this.pluck(t + 0.06,  root * 1.5,  0.30, baseVol * 0.85, "triangle");
+    this.pluck(t + 0.12,  root * 2,    0.36, baseVol * 0.95, "sine");
+    if (intensity >= 0.6) {
+      // Top sparkle for big milestones — Mario coin-streak energy.
+      this.pluck(t + 0.18, root * 3, 0.22, baseVol * 0.65, "sine");
     }
   }
 

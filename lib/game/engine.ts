@@ -36,6 +36,12 @@ export class GameState {
   private cursor = 0;
   /** Recent judgment events for HUD floating text & beat flashes. */
   events: JudgmentEvent[] = [];
+  /**
+   * Song-time of the most recent judgment of any kind (hit/miss/tail).
+   * Renderer reads this to decay screen-wide ripples in sync with input
+   * without scanning the events array.
+   */
+  lastJudgeAt = -Infinity;
   /** Per-lane currently-being-held note (for hold mechanics). */
   private activeHold: Array<Note | null> = [null, null, null, null];
 
@@ -236,5 +242,6 @@ export class GameState {
   private pushEvent(evt: JudgmentEvent): void {
     this.events.push(evt);
     if (this.events.length > 32) this.events.shift();
+    if (evt.at > this.lastJudgeAt) this.lastJudgeAt = evt.at;
   }
 }

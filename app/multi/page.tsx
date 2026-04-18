@@ -11,7 +11,6 @@
  * cleanly under the new URL.
  */
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -102,8 +101,17 @@ export default function MultiEntryPage() {
       <GradientBg />
 
       <header className="relative z-10 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-8 sm:py-4">
-        <Link
-          href="/"
+        <button
+          onClick={() => {
+            // Honor browser history so a player who landed here from the
+            // homepage hop is taken back to it. If they hit /multi cold,
+            // send them home as a sensible default.
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              router.back();
+            } else {
+              router.push("/");
+            }
+          }}
           className="group inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
         >
           <ArrowIcon
@@ -112,8 +120,8 @@ export default function MultiEntryPage() {
             strokeWidth={2.75}
             className="transition-transform duration-200 group-hover:-translate-x-0.5"
           />
-          <span>Syncle</span>
-        </Link>
+          <span>Back</span>
+        </button>
         <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-bone-50/50">
           Multiplayer
         </p>
@@ -224,14 +232,53 @@ export default function MultiEntryPage() {
           )}
         </div>
 
-        <ul className="space-y-2 font-mono text-[11px] text-bone-50/55">
-          <Bullet>Each player downloads the song from a public mirror in parallel — server bandwidth stays tiny.</Bullet>
-          <Bullet>You can refresh the tab; the seat holds for 60 seconds before the slot is freed.</Bullet>
-          <Bullet>If the host leaves, the next-oldest player gets the host crown automatically.</Bullet>
-          <Bullet>Stats are local-only for now. Cloud sync arrives with the Firestore migration.</Bullet>
-        </ul>
+        <section className="space-y-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-bone-50/45">
+            ░ How it works
+          </p>
+          <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Step n={1} title="Open a room">
+              Pick a name and create a room. You get a 6-character code.
+            </Step>
+            <Step n={2} title="Share the code">
+              Friends paste it on this page to join. Up to 50 per room.
+            </Step>
+            <Step n={3} title="Host picks a song">
+              Choose any track from the catalog and a difficulty. Everyone
+              loads the same chart in parallel.
+            </Step>
+            <Step n={4} title="Race in real time">
+              Each player runs their own canvas. A live sidebar shows scores;
+              highest at the end wins.
+            </Step>
+          </ol>
+        </section>
       </div>
     </main>
+  );
+}
+
+function Step({
+  n,
+  title,
+  children,
+}: {
+  n: number;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <li className="flex gap-3 border-2 border-bone-50/15 px-3 py-2.5">
+      <span className="font-mono text-[10px] font-bold tracking-widest text-accent">
+        0{n}
+      </span>
+      <div className="space-y-0.5">
+        <p className="font-mono text-[11px] uppercase tracking-widest text-bone-50">
+          {title}
+        </p>
+        <p className="text-[11px] leading-snug text-bone-50/60">{children}</p>
+      </div>
+    </li>
   );
 }
 
@@ -262,14 +309,5 @@ function ConnectionPill({ conn }: { conn: string }) {
       />
       {label}
     </p>
-  );
-}
-
-function Bullet({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="flex items-start gap-2">
-      <span className="mt-[5px] inline-block h-1.5 w-1.5 shrink-0 bg-accent" />
-      <span>{children}</span>
-    </li>
   );
 }

@@ -13,11 +13,12 @@
  *      preview if any.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import type { RoomActions } from "@/hooks/useRoomSocket";
-import type { ChartMode } from "@/lib/game/chart";
+import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
+import { probeSongModes } from "@/lib/game/chart";
 import type {
   CatalogItem,
   RoomSnapshot,
@@ -173,6 +174,16 @@ function HostPane({
   const [filter, setFilter] = useState("");
   const [starting, setStarting] = useState(false);
 
+  // Per-song probe: which difficulties does the currently-selected song
+  // actually have? `null` = unknown (probe in flight or not yet started),
+  // ModeAvailability = probe done, error = probe failed.
+  const [modeProbe, setModeProbe] = useState<ModeAvailability | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  // Guard against late results from a previous selection clobbering newer
+  // state when the host clicks through several songs quickly.
+  const probeReqId = useRef(0);
+
   const fetchCatalog = useCallback(
     async (refresh: boolean) => {
       setLoading(true);
@@ -205,8 +216,46 @@ function HostPane({
   }, [catalog, filter]);
 
   const selected = snapshot.selectedSong;
+
+  // Probe mode availability whenever the selected song changes. The probe
+  // also warms the per-set cache used by `loadSongById`, so the host's
+  // eventual "Start match" loads instantly with no extra download.
+  useEffect(() => {
+    if (!selected) {
+      setModeProbe(null);
+      setProbeError(null);
+      setProbing(false);
+      return;
+    }
+    const reqId = ++probeReqId.current;
+    setModeProbe(null);
+    setProbeError(null);
+    setProbing(true);
+    probeSongModes(selected.beatmapsetId)
+      .then((modes) => {
+        if (probeReqId.current !== reqId) return;
+        setModeProbe(modes);
+        setProbing(false);
+        // Auto-correct: if the host had picked a mode that this song doesn't
+        // expose, snap to the first mode that IS available so "Start match"
+        // never sends an impossible difficulty to clients.
+        setMode((current) => (modes.available[current] ? current : firstAvailableMode(modes)));
+      })
+      .catch((err) => {
+        if (probeReqId.current !== reqId) return;
+        setProbing(false);
+        setProbeError(err?.message ?? "Couldn't read difficulty list");
+      });
+  }, [selected]);
+
+  // Don't let the host start a match with a difficulty the song doesn't have.
+  const modeReady = !!modeProbe?.available[mode];
   const canStart =
-    !!selected && !starting && snapshot.players.some((p) => p.online);
+    !!selected &&
+    !starting &&
+    !probing &&
+    modeReady &&
+    snapshot.players.some((p) => p.online);
 
   const handleStart = () => {
     if (!canStart) return;
@@ -242,9 +291,22 @@ function HostPane({
 
       {/* Selected preview */}
       <div className="mt-4 border-2 border-bone-50/20 px-3 py-2">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
-          Selected
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+            Selected
+          </p>
+          {selected && (
+            <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/45">
+              {probing
+                ? "checking difficulties…"
+                : modeProbe
+                  ? availableModesLabel(modeProbe)
+                  : probeError
+                    ? "probe failed"
+                    : ""}
+            </p>
+          )}
+        </div>
         {selected ? (
           <p
             className="mt-0.5 truncate font-mono text-sm text-bone-50/90"
@@ -321,33 +383,87 @@ function HostPane({
 
       {/* Difficulty + start */}
       <div className="mt-4 grid grid-cols-3 gap-1">
-        {MODES.map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
-              mode === m
-                ? "border-accent bg-accent text-ink-900"
-                : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
-            }`}
-          >
-            {m === "easy" ? "easy ★" : m === "normal" ? "normal ★★" : "hard ★★★"}
-          </button>
-        ))}
+        {MODES.map((m) => {
+          // Before a song is picked, every button is enabled (purely a
+          // local default). Once a song is picked, `modeProbe` decides;
+          // while the probe is in flight everything stays disabled.
+          const available = !selected ? true : !!modeProbe?.available[m];
+          const isActive = mode === m;
+          const showSpinner = !!selected && probing && !modeProbe;
+          const disabled = !!selected && (probing || !available);
+          const reason = !selected
+            ? undefined
+            : probing
+              ? "Reading the song's difficulty list…"
+              : !available
+                ? "This song doesn't have a chart for this difficulty."
+                : undefined;
+          return (
+            <button
+              key={m}
+              onClick={() => available && !probing && setMode(m)}
+              disabled={disabled}
+              title={reason}
+              className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+                isActive && available
+                  ? "border-accent bg-accent text-ink-900"
+                  : !available && selected && !probing
+                    ? "border-bone-50/15 text-bone-50/30 line-through cursor-not-allowed"
+                    : disabled
+                      ? "border-bone-50/15 text-bone-50/30 cursor-wait"
+                      : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
+              }`}
+            >
+              {showSpinner && isActive ? "…" : m === "easy" ? "easy ★" : m === "normal" ? "normal ★★" : "hard ★★★"}
+            </button>
+          );
+        })}
       </div>
+
+      {probeError && (
+        <p className="mt-2 font-mono text-[10px] uppercase tracking-widest text-rose-400">
+          {probeError}
+        </p>
+      )}
 
       <button
         onClick={handleStart}
         disabled={!canStart}
         className="brut-btn-accent mt-3 w-full px-4 py-3 disabled:opacity-50"
       >
-        {starting ? "Starting…" : "▶ Start match"}
+        {starting
+          ? "Starting…"
+          : probing
+            ? "Reading chart…"
+            : selected && !modeReady
+              ? "Pick an available difficulty"
+              : "▶ Start match"}
       </button>
       <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
         Everyone has 30s to download + decode the song
       </p>
     </div>
   );
+}
+
+/**
+ * Pick the first available mode in difficulty order. Falls back to "hard"
+ * because finalize() guarantees hard is always present (it's just the raw
+ * chart with no thinning).
+ */
+function firstAvailableMode(modes: ModeAvailability): ChartMode {
+  for (const m of MODES) {
+    if (modes.available[m]) return m;
+  }
+  return "hard";
+}
+
+function availableModesLabel(modes: ModeAvailability): string {
+  const tags: string[] = [];
+  if (modes.available.easy) tags.push("easy");
+  if (modes.available.normal) tags.push("normal");
+  if (modes.available.hard) tags.push("hard");
+  return `has: ${tags.join(" / ")}`;
 }
 
 /* ------------------------------------------------------------------------ */

@@ -155,15 +155,52 @@ export interface PendingHit {
   tail?: boolean;
 }
 
+/** A single expanding shockwave from a perfect/great hit. */
+export interface Shockwave {
+  x: number;
+  y: number;
+  laneIdx: number;
+  /** Seconds remaining. */
+  life: number;
+  maxLife: number;
+  /** True for "perfect" — drawn slightly larger and with a white core. */
+  intense: boolean;
+}
+
+/**
+ * Combo milestone strobe — when the player passes 25/50/100/250/500/1000+,
+ * we tint the rails + judge line briefly so the eye gets a *moment*. Decays
+ * to zero over `MILESTONE_FLASH_DUR_MS`.
+ */
+export interface MilestoneFlash {
+  /** 0..1 strength remaining. */
+  strength: number;
+  /** Combo value at trigger time (used by the HUD-side chime). */
+  combo: number;
+}
+
 export interface RenderState {
   /** Last few judgment events for floating popups. */
   recentEvents: JudgmentEvent[];
   /** Lane flash impulses [0..1] driven by hits. Indexed by lane. */
   laneFlash: number[];
+  /**
+   * Per-lane "anticipation" pulse [0..1] — set by drawHighway whenever a
+   * note is within ANTICIPATION_WINDOW_S of the judge line. Read by
+   * drawLaneGate to widen the ring + brighten the glow so the player sees
+   * the gate "loading" before the note arrives.
+   */
+  laneAnticipation: number[];
   /** Active particle pool. Capped to PARTICLE_BUDGET so we can't unbounded-grow. */
   particles: Particle[];
+  /** Active shockwave pool — much smaller than particles (capped at 24). */
+  shockwaves: Shockwave[];
   /** Hit events pushed by the game; renderer drains and converts to particles. */
   pendingHits: PendingHit[];
+  /** Combo to display on the canvas. Set by Game.tsx every frame. */
+  combo: number;
+  /** Latest combo-milestone flash, or null. Decayed in-place. */
+  milestone: MilestoneFlash | null;
   /** Cached canvas geometry + gradients (only rebuilt when canvas size changes). */
   cache?: RenderCache;
 }
@@ -187,6 +224,11 @@ interface RenderCache {
 }
 
 const PARTICLE_BUDGET = 200;
+const SHOCKWAVE_BUDGET = 24;
+/** Lookahead window in seconds inside which a lane gate "primes" itself. */
+const ANTICIPATION_WINDOW_S = 0.18;
+/** Combo thresholds that trigger a screen-wide milestone flash. */
+const COMBO_MILESTONES = [25, 50, 100, 200, 350, 500, 750, 1000] as const;
 
 /**
  * Pre-parsed lane colors. `withAlpha("#3da9ff", a)` does 3 parseInts every
@@ -216,6 +258,38 @@ export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
   offset: 0.18,
   theme: "dark",
 };
+
+/**
+ * Allocate a fresh `RenderState`. Use this from the React side rather than
+ * hand-rolling the literal so we can add fields without touching every
+ * caller.
+ */
+export function createRenderState(): RenderState {
+  return {
+    recentEvents: [],
+    laneFlash: new Array(TOTAL_LANES).fill(0),
+    laneAnticipation: new Array(TOTAL_LANES).fill(0),
+    particles: [],
+    shockwaves: [],
+    pendingHits: [],
+    combo: 0,
+    milestone: null,
+  };
+}
+
+/**
+ * Returns true if `prevCombo → newCombo` crossed any milestone threshold.
+ * Used by Game / MultiGame to know when to flash + chime.
+ */
+export function crossedComboMilestone(
+  prevCombo: number,
+  newCombo: number,
+): number | null {
+  for (const m of COMBO_MILESTONES) {
+    if (prevCombo < m && newCombo >= m) return m;
+  }
+  return null;
+}
 
 interface Highway {
   bottomLeftX: number;
@@ -250,7 +324,7 @@ export function drawFrame(
   const W = ctx.canvas.clientWidth;
   const H = ctx.canvas.clientHeight;
   const palette = getPalette(opts.theme);
-  const cache = ensureCache(ctx, rs, W, H, palette);
+  const cache = ensureCache(ctx, rs, W, H, palette, opts);
 
   ctx.fillStyle = palette.pageBg;
   ctx.fillRect(0, 0, W, H);
@@ -278,16 +352,28 @@ export function drawFrame(
     Math.round((songTime - opts.offset) / beatLen) % 4 === 0;
 
   drainHits(rs, cache);
+  decayMilestone(rs, dt);
 
   drawHighway(
     ctx, hw, state, songTime, opts, rs,
     firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette,
   );
 
+  updateAndDrawShockwaves(ctx, rs, dt, palette);
   updateAndDrawParticles(ctx, rs, dt);
 
+  drawCanvasCombo(ctx, rs, cache, palette);
   drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache);
   drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette);
+  drawMilestoneVignette(ctx, rs, W, H, palette);
+}
+
+function decayMilestone(rs: RenderState, dt: number): void {
+  const m = rs.milestone;
+  if (!m) return;
+  // ~700ms full decay (1 / 1.45 ≈ 0.69s).
+  m.strength -= dt * 1.45;
+  if (m.strength <= 0) rs.milestone = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +383,7 @@ function ensureCache(
   W: number,
   H: number,
   palette: ThemePalette,
+  opts: RenderOptions,
 ): RenderCache {
   if (
     rs.cache &&
@@ -307,7 +394,7 @@ function ensureCache(
     return rs.cache;
   }
 
-  const judgeY = H * DEFAULT_RENDER_OPTIONS.judgeLineY;
+  const judgeY = H * opts.judgeLineY;
   const topY = H * 0.05;
   const cx = W / 2;
   const bottomHalf = Math.min(280, W * 0.32);
@@ -373,10 +460,13 @@ function drawHighway(
   ctx.fillStyle = cache.highway;
   ctx.fill();
 
-  const railAlpha = 0.55 + beatPulse * 0.45;
-  const railBlur = 10 + beatPulse * (isDownbeat ? 22 : 12);
+  // Combo milestone bumps the rails' brightness + glow on top of the
+  // beat pulse — a "you're cooking" moment that lasts ~700ms then fades.
+  const ms = rs.milestone?.strength ?? 0;
+  const railAlpha = clamp(0.55 + beatPulse * 0.45 + ms * 0.4, 0, 1);
+  const railBlur = 10 + beatPulse * (isDownbeat ? 22 : 12) + ms * 28;
   ctx.save();
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 3 + ms * 1.5;
   ctx.strokeStyle = rgba(palette.accentRgb, railAlpha);
   ctx.shadowColor = rgba(palette.accentRgb, 0.85);
   ctx.shadowBlur = railBlur;
@@ -417,7 +507,13 @@ function drawHighway(
   }
 
   // Notes — draw hold trails first (behind), then heads.
-  for (const n of state.notes) {
+  // Indexed loops over state.notes (instead of `for...of`) avoid the
+  // per-frame Iterator object allocation. On dense charts (~3000 notes) the
+  // hot path is called twice per frame, so this saves measurable GC.
+  const notes = state.notes;
+  const len = notes.length;
+  for (let i = 0; i < len; i++) {
+    const n = notes[i];
     if (!isHold(n)) continue;
     if (n.tailJudged) continue;
     const headLook = n.t - songTime;
@@ -429,7 +525,10 @@ function drawHighway(
     if (tailLook < -0.2) continue;
     drawHoldTrail(ctx, n, songTime, opts, hw, palette);
   }
-  for (const n of state.notes) {
+  // Reset anticipation each frame; we re-derive it from the upcoming notes.
+  for (let i = 0; i < rs.laneAnticipation.length; i++) rs.laneAnticipation[i] = 0;
+  for (let i = 0; i < len; i++) {
+    const n = notes[i];
     if (n.judged) continue;
     const lookahead = n.t - songTime;
     if (lookahead > opts.leadTime + 0.05) {
@@ -437,20 +536,51 @@ function drawHighway(
       continue;
     }
     if (lookahead < -0.2) continue;
+    // Compute anticipation: 0 outside the window, → 1 right at the line.
+    if (lookahead >= 0 && lookahead < ANTICIPATION_WINDOW_S) {
+      const a = 1 - lookahead / ANTICIPATION_WINDOW_S;
+      // Quadratic ramp so the gate ramps up near the line, not linearly.
+      const v = a * a;
+      if (v > rs.laneAnticipation[n.lane]) rs.laneAnticipation[n.lane] = v;
+    }
     drawTapNote(ctx, n, lookahead, opts, hw, palette);
   }
 
-  // Judgment line — subtle pulse on the beat too.
+  // Judgment line — subtle pulse on the beat AND on combo milestones.
   ctx.save();
-  ctx.strokeStyle = rgba(palette.judgeRgb, palette.judgeBaseAlpha + beatPulse * 0.15);
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = rgba(
+    palette.judgeRgb,
+    clamp(palette.judgeBaseAlpha + beatPulse * 0.15 + ms * 0.2, 0, 1),
+  );
+  ctx.lineWidth = 2 + ms * 1;
   ctx.shadowColor = rgba(palette.accentRgb, 0.85);
-  ctx.shadowBlur = 14 + beatPulse * 14;
+  ctx.shadowBlur = 14 + beatPulse * 14 + ms * 22;
   ctx.beginPath();
   ctx.moveTo(hw.bottomLeftX + 4, hw.judgeY);
   ctx.lineTo(hw.bottomRightX - 4, hw.judgeY);
   ctx.stroke();
   ctx.restore();
+
+  // Per-lane judgment-line "kiss" — a tiny accent segment under each gate
+  // that swells with the lane's most recent flash. Reads as the lane
+  // "lighting up the floor" for half a beat after a hit. Cheap.
+  for (let i = 0; i < MAIN_LANE_COUNT; i++) {
+    const flash = rs.laneFlash[i] ?? 0;
+    if (flash <= 0.05) continue;
+    const f = (i + 0.5) / MAIN_LANE_COUNT;
+    const x = lerp(hw.bottomLeftX, hw.bottomRightX, f);
+    const w = 36 + flash * 28;
+    ctx.save();
+    ctx.strokeStyle = rgba(LANE_RGB[i], 0.35 + flash * 0.55);
+    ctx.shadowColor = LANE_COLORS[i];
+    ctx.shadowBlur = 14 + flash * 18;
+    ctx.lineWidth = 3 + flash * 2;
+    ctx.beginPath();
+    ctx.moveTo(x - w / 2, hw.judgeY);
+    ctx.lineTo(x + w / 2, hw.judgeY);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
     const f = (i + 0.5) / MAIN_LANE_COUNT;
@@ -463,6 +593,7 @@ function drawHighway(
       opts.laneHeld[i] ?? false,
       rs.laneFlash[i] ?? 0,
       state.isHolding(i),
+      rs.laneAnticipation[i] ?? 0,
       palette,
     );
   }
@@ -603,6 +734,7 @@ function drawLaneGate(
   held: boolean,
   flash: number,
   holding: boolean,
+  anticipation: number,
   palette: ThemePalette,
 ) {
   // Gate geometry. Tuned so the letter+arrow stack reads as a single,
@@ -615,11 +747,29 @@ function drawLaneGate(
   const color = LANE_COLORS[lane];
   const colorRgb = LANE_RGB[lane];
 
+  // Anticipation halo: a soft outer ring drawn behind everything else when
+  // a note is about to land in this lane. Quadratic ease so the halo isn't
+  // visible 200ms out — it materializes only in the last ~100ms.
+  if (anticipation > 0.05) {
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = rgba(colorRgb, 0.35 * anticipation);
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 18 * anticipation;
+    ctx.beginPath();
+    ctx.arc(x, y, r + 6 + anticipation * 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.lineWidth = 4;
   ctx.strokeStyle = color;
   ctx.shadowColor = color;
-  ctx.shadowBlur = held || holding ? 26 : 8 + flash * 22;
+  // Held / flash glow + a small lift from anticipation so the gate "pulls"
+  // as the note approaches — extra anticipatory feel before any keypress.
+  ctx.shadowBlur =
+    held || holding ? 26 : 8 + flash * 22 + anticipation * 12;
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.stroke();
@@ -747,13 +897,24 @@ function drawJudgmentPopups(
 ) {
   ctx.save();
   ctx.textAlign = "center";
-  ctx.font = "800 18px var(--font-display), system-ui, sans-serif";
   for (const ev of events) {
     const age = songTime - ev.at;
     if (age < 0 || age > 0.6) continue;
     const t = age / 0.6;
-    const alpha = 1 - t;
-    const yOff = -t * 50;
+    // Cubic-out lift: fast at the start, settles at the top — reads as a
+    // satisfying "pop" instead of a constant linear drift.
+    const liftEase = 1 - Math.pow(1 - t, 3);
+    const yOff = -liftEase * 56;
+    // Alpha eases out late so the label stays legible most of its life.
+    const alpha = 1 - Math.pow(t, 2.2);
+    // Brief overshoot scale on perfect/great so the label feels punched
+    // out into the world rather than slid in.
+    const punchy = ev.judgment === "perfect" || ev.judgment === "great";
+    const scale = punchy
+      ? 0.86 + (1 - Math.pow(1 - Math.min(1, t * 3), 2)) * 0.22
+      : 1;
+    const fontPx = 18 * scale;
+    ctx.font = `800 ${fontPx.toFixed(1)}px var(--font-display), system-ui, sans-serif`;
     const baseLabel =
       ev.judgment === "perfect" ? "PERFECT"
       : ev.judgment === "great" ? "GREAT"
@@ -768,11 +929,136 @@ function drawJudgmentPopups(
     const x = cache.laneX[ev.lane] ?? cache.cx;
     ctx.fillStyle = withAlpha(color, alpha);
     ctx.shadowColor = color;
-    ctx.shadowBlur = 10 * alpha;
+    ctx.shadowBlur = 12 * alpha;
     ctx.fillText(label, x, y + yOff);
   }
   ctx.shadowBlur = 0;
   ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * Big combo number rendered straight on the canvas above the judge line.
+ * Only shows once the combo passes 10 — below that the HUD card already
+ * carries the information and a giant "5" on the highway looks silly.
+ *
+ * Sized to swell on milestones, fade slightly on the off-beat. Cheap: a
+ * single fillText call per frame.
+ */
+function drawCanvasCombo(
+  ctx: CanvasRenderingContext2D,
+  rs: RenderState,
+  cache: RenderCache,
+  palette: ThemePalette,
+): void {
+  if (rs.combo < 10) return;
+  const ms = rs.milestone?.strength ?? 0;
+  // Base size scales softly with combo, ceiling at 100 so 999 doesn't
+  // explode across the screen. Tier + milestone both feed visual weight,
+  // giving the player a clear "you're cooking" moment as they string hits.
+  const tier = Math.min(1, rs.combo / 100);
+  const size = 56 + tier * 28 + ms * 14;
+  const alpha = clamp(0.28 + tier * 0.32 + ms * 0.45, 0, 0.95);
+  const y = cache.judgeY - 130;
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `800 ${size.toFixed(0)}px var(--font-display), system-ui, sans-serif`;
+  ctx.fillStyle = rgba(palette.accentRgb, alpha);
+  ctx.shadowColor = rgba(palette.accentRgb, 0.6);
+  ctx.shadowBlur = 18 + ms * 28;
+  ctx.fillText(`${rs.combo}`, cache.cx, y);
+  ctx.shadowBlur = 0;
+  ctx.font = `800 ${(size * 0.22).toFixed(0)}px var(--font-mono), ui-monospace, monospace`;
+  ctx.fillStyle = rgba(palette.accentRgb, clamp(alpha * 0.85, 0, 1));
+  ctx.fillText("COMBO", cache.cx, y + 14);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * Brief tinted vignette on milestone — a screen-edge accent flash that
+ * fades over ~700ms. We re-use the cached vignette gradient stop pattern,
+ * but with the brand accent instead of the dark stop, and we only paint
+ * it when a milestone is active.
+ */
+function drawMilestoneVignette(
+  ctx: CanvasRenderingContext2D,
+  rs: RenderState,
+  W: number,
+  H: number,
+  palette: ThemePalette,
+): void {
+  const m = rs.milestone;
+  if (!m || m.strength <= 0) return;
+  // Curve: peak quickly then trail off — feels like a flash, not a pulse.
+  // `lighter` blend lets the accent edge punch *through* the highway
+  // colors instead of muddying them, which is what gives the milestone
+  // its characteristic "screen reacts" arcade pop.
+  const k = clamp(m.strength, 0, 1);
+  const peakAlpha = 0.32 * k * k;
+  const grad = ctx.createRadialGradient(
+    W / 2, H * 0.55, Math.min(W, H) * 0.25,
+    W / 2, H * 0.55, Math.max(W, H) * 0.85,
+  );
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(1, rgba(palette.accentRgb, peakAlpha));
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Shockwave rings — drawn between the highway pass and the particles. Use
+// `lighter` blend so overlapping waves stack into a brighter peak rather
+// than canceling each other out, matching osu!mania's hit feedback feel.
+// ---------------------------------------------------------------------------
+function updateAndDrawShockwaves(
+  ctx: CanvasRenderingContext2D,
+  rs: RenderState,
+  dt: number,
+  palette: ThemePalette,
+): void {
+  const sw = rs.shockwaves;
+  if (sw.length === 0) return;
+  let write = 0;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let read = 0; read < sw.length; read++) {
+    const s = sw[read];
+    s.life -= dt;
+    if (s.life <= 0) continue;
+    const t = 1 - s.life / s.maxLife;            // 0 → 1
+    const ease = 1 - Math.pow(1 - t, 2.2);       // ease-out radius
+    const radius = 22 + ease * (s.intense ? 88 : 64);
+    const alpha = (1 - t) * (s.intense ? 0.85 : 0.65);
+    const colorRgb = LANE_RGB[s.laneIdx];
+    ctx.lineWidth = (s.intense ? 3 : 2) * (1 - t * 0.6);
+    ctx.strokeStyle = rgba(colorRgb, alpha);
+    ctx.shadowColor = LANE_COLORS[s.laneIdx];
+    ctx.shadowBlur = (s.intense ? 26 : 14) * (1 - t);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    if (s.intense && t < 0.4) {
+      // White core for the first ~180ms of perfect hits — the splash that
+      // your eye reads as "yes that was clean".
+      ctx.strokeStyle = `rgba(255,255,255,${(0.55 * (1 - t * 2.5)).toFixed(3)})`;
+      ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, radius * 0.55, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (write !== read) sw[write] = s;
+    write++;
+  }
+  ctx.restore();
+  sw.length = write;
+  // Reference palette param so it stays in scope for future use (mute warn)
+  void palette;
 }
 
 function drawBeatDot(
@@ -816,6 +1102,21 @@ function drainHits(rs: RenderState, cache: RenderCache): void {
     const speed =
       h.judgment === "perfect" ? 380 : h.judgment === "great" ? 280 : 180;
     spawnBurst(rs, x, y, h.lane, count, speed, h.tail === true);
+
+    // Shockwave ring on perfect/great. Hold tails get one too but smaller.
+    if (h.judgment === "perfect" || h.judgment === "great") {
+      if (rs.shockwaves.length < SHOCKWAVE_BUDGET) {
+        const life = h.judgment === "perfect" ? 0.45 : 0.32;
+        rs.shockwaves.push({
+          x,
+          y,
+          laneIdx: h.lane,
+          life,
+          maxLife: life,
+          intense: h.judgment === "perfect",
+        });
+      }
+    }
   }
   rs.pendingHits.length = 0;
 }

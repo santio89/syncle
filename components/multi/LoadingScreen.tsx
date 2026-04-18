@@ -89,6 +89,20 @@ export function LoadingScreen({
           <Stat
             label="deadline"
             value={remaining !== null ? `${Math.ceil(remaining / 1000)}s` : "—"}
+            // Tint the deadline value as time runs short so the room can
+            // feel the pressure: amber under 10s, red + pulsing under 5s.
+            // The pulse is the "GAME WILL START" arcade urgency cue —
+            // people instantly know to nudge a struggling teammate.
+            tone={
+              remaining === null
+                ? "neutral"
+                : remaining < 5000
+                  ? "danger"
+                  : remaining < 10000
+                    ? "warn"
+                    : "neutral"
+            }
+            pulse={remaining !== null && remaining < 5000}
           />
         </div>
 
@@ -147,23 +161,42 @@ export function LoadingScreen({
   );
 }
 
+type StatTone = "neutral" | "warn" | "danger";
+
 function Stat({
   label,
   value,
   accent,
+  tone = "neutral",
+  pulse = false,
 }: {
   label: string;
   value: string;
   accent?: boolean;
+  tone?: StatTone;
+  pulse?: boolean;
 }) {
+  const valueClass = accent
+    ? "text-accent"
+    : tone === "danger"
+      ? "text-rose-400"
+      : tone === "warn"
+        ? "text-yellow-400"
+        : "text-bone-50";
+  const borderClass =
+    tone === "danger"
+      ? "border-rose-500/60"
+      : tone === "warn"
+        ? "border-yellow-400/40"
+        : "border-bone-50/20";
   return (
-    <div className="border-2 border-bone-50/20 px-3 py-2">
+    <div className={`border-2 px-3 py-2 transition-colors ${borderClass}`}>
       <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
         {label}
       </p>
       <p
-        className={`mt-0.5 font-display text-xl font-bold ${
-          accent ? "text-accent" : "text-bone-50"
+        className={`mt-0.5 font-display text-xl font-bold tabular-nums transition-colors ${valueClass} ${
+          pulse ? "animate-pulse" : ""
         }`}
       >
         {value}

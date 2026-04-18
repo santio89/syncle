@@ -179,7 +179,15 @@ export default function MultiRoomPage() {
         <button
           onClick={() => {
             actions.leave();
-            router.push("/");
+            // Prefer browser history so we land on whatever page sent us
+            // here (lobby, the /multi entry, the homepage, a friend's
+            // shared link page, etc). If there's no history (direct hit
+            // on the URL), fall back to the multiplayer entry.
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              router.back();
+            } else {
+              router.push("/multi");
+            }
           }}
           className="group inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
         >
@@ -189,7 +197,7 @@ export default function MultiRoomPage() {
             strokeWidth={2.75}
             className="transition-transform duration-200 group-hover:-translate-x-0.5"
           />
-          <span>Syncle</span>
+          <span>Back</span>
         </button>
         <div className="flex items-center gap-3">
           <code className="border-2 border-bone-50/30 px-2 py-1 font-mono text-[11px] tracking-[0.4em] text-bone-50/85">
@@ -364,12 +372,22 @@ function ConnectionPill({ conn }: { conn: string }) {
 
 function ConnectingCard({ conn }: { conn: string }) {
   return (
-    <div className="brut-card flex items-center gap-3 p-5">
-      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent" />
-      <p className="font-mono text-xs uppercase tracking-widest text-bone-50/70">
-        {conn === "reconnecting"
-          ? "Reconnecting to the room…"
-          : "Opening socket…"}
+    <div className="brut-card mx-auto w-full max-w-md p-5 sm:p-6">
+      <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        ░ Connecting
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent" />
+        <p className="font-mono text-xs uppercase tracking-widest text-bone-50/80">
+          {conn === "reconnecting"
+            ? "Reconnecting to the room…"
+            : "Opening socket…"}
+        </p>
+      </div>
+      <p className="mt-3 text-[11px] leading-snug text-bone-50/55">
+        Free Render servers sleep when idle and take ~30 s to wake on the
+        first connection. Once you&rsquo;re in the room, everything else is
+        instant.
       </p>
     </div>
   );
