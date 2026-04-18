@@ -101,10 +101,12 @@ export default function HomePage() {
           <span className="hidden sm:inline">osu! mania · 4K</span>
           <Link
             href="/multi"
-            className="inline-flex items-center gap-1.5 border-2 border-bone-50/40 px-2.5 py-1 leading-none text-bone-50 transition-colors hover:border-accent hover:text-accent"
+            className="inline-flex items-center gap-2 border-2 border-bone-50/40 px-3 py-1.5 leading-none text-bone-50 transition-colors hover:border-accent hover:text-accent"
             title="Up to 50 players per room — same song, parallel runs"
           >
-            <span aria-hidden className="text-bone-50/70">░</span>
+            <span aria-hidden className="text-[9px] leading-none text-bone-50/60">
+              ░
+            </span>
             <span>multi</span>
           </Link>
           <ThemeToggle />
