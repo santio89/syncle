@@ -148,15 +148,34 @@ export default function MultiRoomPage() {
   // download. We dedup by `${beatmapsetId}:${mode}` so we don't re-download
   // when the snapshot ticks for unrelated reasons (player joined, name
   // changed, etc).
+  //
+  // We ALSO trigger this in countdown / playing phases when we don't yet
+  // have a chart loaded — that's the reconnect case. If a player drops
+  // mid-game and the socket re-establishes after the room has already
+  // moved past `loading`, the snapshot they receive on rejoin will be
+  // in `countdown` or `playing` and the loading effect would otherwise
+  // never fire — leaving the highway stuck on "Waiting for chart…"
+  // forever. Re-fetching here (deduped by `lastLoadedKeyRef`) lets the
+  // returning player catch back up to the same song the room is on.
   useEffect(() => {
     if (!snapshot) return;
-    if (snapshot.phase !== "loading") return;
     const song = snapshot.selectedSong;
     if (!song) return;
+    const phase = snapshot.phase;
+    const isLoadingPhase = phase === "loading";
+    // Reconnect-during-play recovery: same song selection, no local chart
+    // yet, and the room is past the lobby. Skip if we already loaded
+    // (lastLoadedKeyRef matches) so we don't refetch for harmless
+    // snapshot ticks like another player joining or being renamed.
+    const isReconnectRecovery =
+      (phase === "countdown" || phase === "playing") && loadedChart === null;
+    if (!isLoadingPhase && !isReconnectRecovery) return;
+
     // The host's chosen difficulty is communicated via the `phase:loading`
     // event (kept off the snapshot to avoid renegotiating mid-play). If we
-    // somehow missed the event (joined right at phase change), fall back to
-    // "easy" — the server will still gate hits + the load works regardless.
+    // somehow missed the event (joined right at phase change, or the
+    // socket reconnected past the loading phase), fall back to "easy" —
+    // the server will still gate hits + the load works regardless.
     const targetMode: ChartMode = selectedMode ?? "easy";
 
     const key = `${song.beatmapsetId}:${targetMode}`;
@@ -177,19 +196,32 @@ export default function MultiRoomPage() {
         if (cancelled) return;
         setLoadedChart(res);
         setLoadProgress(null);
-        actions.markReady();
+        // Only flag ourselves as `ready` to the server when we're in the
+        // loading phase — that's the signal the server uses to advance
+        // past `loading`. On reconnect-into-play we just want the local
+        // chart populated so the canvas can render; the server is past
+        // the readiness gate already and a stray `client:ready` would
+        // be ignored at best, churn state at worst.
+        if (isLoadingPhase) actions.markReady();
       })
       .catch((err) => {
         if (cancelled) return;
         const msg = err?.message ?? "Failed to load song";
         setLoadError(msg);
-        actions.reportLoadFailure(msg);
+        // Same rationale: only report a load failure to the server while
+        // it's still gating on our readiness in the `loading` phase.
+        if (isLoadingPhase) actions.reportLoadFailure(msg);
       });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot?.phase, snapshot?.selectedSong?.beatmapsetId, selectedMode]);
+  }, [
+    snapshot?.phase,
+    snapshot?.selectedSong?.beatmapsetId,
+    selectedMode,
+    loadedChart,
+  ]);
 
   // Reset the chart when we go back to lobby so a fresh round can re-trigger
   // the loading effect for the same song (same key) without thinking it was
@@ -502,9 +534,23 @@ function RoomBody({
   // that scroll with the page rather than fill it.
   const isCanvasPhase =
     snapshot.phase === "countdown" || snapshot.phase === "playing";
+  // Stable key across countdown → playing so React keeps the SAME
+  // <MultiGame> instance through the transition. Using `snapshot.phase`
+  // here (the previous behavior) caused the wrapper to unmount and
+  // remount the moment the server flipped the phase — which destroyed
+  // the audio engine, canvas, rAF loop, and `stats` state that gates
+  // the HUD overlays. Visible symptom: the score / combo / rock-meter
+  // panels disappeared for ~2 s while the audio buffer re-decoded and
+  // the first tick of the rAF loop repopulated `stats`, plus a
+  // noticeable gameplay stutter on the first frame as everything
+  // reinitialized. Treating both canvas phases as a single "game"
+  // shell preserves all of that across the transition; the lobby /
+  // loading / results phases still get their own keys so the
+  // fade-in animation re-fires on those screens.
+  const shellKey = isCanvasPhase ? "game" : snapshot.phase;
   return (
     <div
-      key={snapshot.phase}
+      key={shellKey}
       className={`phase-shell${isCanvasPhase ? " h-full w-full" : ""}`}
     >
       {inner}

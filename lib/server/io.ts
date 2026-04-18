@@ -231,6 +231,10 @@ class RoomRegistry {
       hostId: room.hostId,
       phase: room.phase,
       selectedSong: room.selectedSong,
+      // Carry the active difficulty on every snapshot so reconnecting
+      // clients can re-derive which chart to fetch without having to
+      // re-receive the one-shot `phase:loading` event they missed.
+      selectedMode: room.selectedMode,
       startsAt: room.startsAt,
       songStartedAt: room.songStartedAt,
       players,

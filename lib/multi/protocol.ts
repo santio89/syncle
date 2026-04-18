@@ -152,6 +152,14 @@ export interface RoomSnapshot {
   hostId: string;
   phase: RoomPhase;
   selectedSong: SongRef | null;
+  /**
+   * Host-chosen difficulty for the current run. Mirrored on every
+   * snapshot (in addition to being announced via the one-shot
+   * `phase:loading` event) so a client that reconnects mid-game has
+   * enough state to refetch the same chart instead of falling back to
+   * "easy". Null while the host is still picking in the lobby.
+   */
+  selectedMode: ChartMode | null;
   /** Wall-clock ms when audio is supposed to start (countdown phase only). */
   startsAt: number | null;
   /** Wall-clock ms when audio actually started (playing/results phases). */

@@ -21,7 +21,7 @@
  *     cleanly so empty rooms hit their TTL faster.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io as createSocket, Socket } from "socket.io-client";
 
 import type {
@@ -277,6 +277,15 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
         setResults(null);
         setSelectedMode(null);
         setLoadDeadline(null);
+      } else if (snap.selectedMode) {
+        // Sync the selected difficulty from the snapshot during
+        // loading / countdown / playing phases. The one-shot
+        // `phase:loading` event is the primary source, but a client
+        // that joins or reconnects past that point would otherwise
+        // never learn the mode and would fall back to "easy". The
+        // server now mirrors `selectedMode` on every snapshot for
+        // exactly this reason.
+        setSelectedMode((prev) => (prev === snap.selectedMode ? prev : snap.selectedMode));
       }
       // Reconcile chat history from the snapshot: this is the source
       // of truth for late joiners + post-refresh recovery. Append-only
@@ -521,21 +530,20 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
 
   const clearError = useCallback(() => setLastError(null), []);
 
-  return {
-    conn,
-    socketId,
-    sessionId,
-    snapshot,
-    scoreboard,
-    notices,
-    results,
-    chat,
-    selectedMode,
-    loadDeadline,
-    lastError,
-    kicked,
-    clearError,
-    actions: {
+  // Stabilize the actions object across renders. Each individual action
+  // is already a `useCallback`, but rebuilding the wrapper object on
+  // every render meant any consumer with `actions` in a hook dep array
+  // would re-fire on every snapshot tick (~5Hz per peer score update,
+  // plus chat / join / leave). In <MultiGame> that translated into the
+  // rAF render loop being torn down + restarted multiple times per
+  // second mid-song — visible as a chronic micro-stutter at match
+  // start (when the snapshot churn peaks while everyone marks ready /
+  // loads / countdowns) and dropped frames whenever a peer's score
+  // refreshed. Memoizing here gives every consumer a stable reference
+  // for the lifetime of the hook (callbacks are themselves stable, so
+  // this object never changes).
+  const actions = useMemo<RoomActions>(
+    () => ({
       create,
       join,
       leave,
@@ -558,6 +566,47 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       mute,
       sendChat,
       listPublicRooms,
-    },
+    }),
+    [
+      create,
+      join,
+      leave,
+      setName,
+      setRoomName,
+      setRoomVisibility,
+      requestCatalog,
+      selectSong,
+      setMode,
+      startMatch,
+      cancelLoading,
+      returnToLobby,
+      setReady,
+      markReady,
+      reportLoadFailure,
+      sendScore,
+      sendFinished,
+      sendChoice,
+      kick,
+      mute,
+      sendChat,
+      listPublicRooms,
+    ],
+  );
+
+  return {
+    conn,
+    socketId,
+    sessionId,
+    snapshot,
+    scoreboard,
+    notices,
+    results,
+    chat,
+    selectedMode,
+    loadDeadline,
+    lastError,
+    kicked,
+    clearError,
+    actions,
   };
 }

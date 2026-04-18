@@ -467,8 +467,15 @@ function CanvasPane({
       const audio = audioRef.current;
       const state = stateRef.current;
       const songTime = audio ? audio.songTime() : -3;
+      // Read phase off the ref so this loop doesn't have to be a dep of
+      // the effect — that's what keeps the same rAF + audio engine alive
+      // across the countdown → playing transition (otherwise the loop
+      // tore itself down at the moment the song actually started, which
+      // also reset `last` / `pacedNext` and produced a visible stutter
+      // on the first frame of audio).
+      const currentPhase = phaseRef.current;
 
-      if (state && snapshot.phase === "playing") {
+      if (state && currentPhase === "playing") {
         state.expireMisses(songTime);
         const misses = state.stats.hits.miss;
         if (misses > lastMissCount) {
@@ -516,7 +523,7 @@ function CanvasPane({
       }
 
       // Metronome scheduling matches single-player engine
-      if (audio && songMeta && (snapshot.phase === "playing" || snapshot.phase === "countdown")) {
+      if (audio && songMeta && (currentPhase === "playing" || currentPhase === "countdown")) {
         const beatLen = 60 / songMeta.bpm;
         const lookahead = 0.6;
         const horizon = songTime + lookahead;
@@ -571,7 +578,7 @@ function CanvasPane({
       // animate (those read off `rs`, not the chart), only chart notes
       // are suppressed until phase flips to "playing".
       const drawState =
-        snapshot.phase === "countdown"
+        currentPhase === "countdown"
           ? emptyStateRef.current
           : (state ?? emptyStateRef.current);
       drawFrame(
@@ -601,7 +608,14 @@ function CanvasPane({
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
-  }, [snapshot.phase, loaded, actions]);
+    // Intentional: `snapshot.phase` is read via `phaseRef` inside the
+    // loop so this effect never restarts on phase changes (which would
+    // cancel + re-create the rAF, reset pacing, and stutter the first
+    // frame after countdown). `actions` is now memoized in the hook so
+    // including it here is referentially stable for the room's
+    // lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, actions]);
 
   // Mirror React state into the AudioEngine. `loaded` is in the dep list
   // for both effects so the values get re-applied as soon as the engine
