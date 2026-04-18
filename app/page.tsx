@@ -104,10 +104,7 @@ export default function HomePage() {
             className="inline-flex items-center gap-2 border-2 border-bone-50/40 px-3 py-1.5 leading-none text-bone-50 transition-colors hover:border-accent hover:text-accent"
             title="Up to 50 players per room — same song, parallel runs"
           >
-            <span
-              aria-hidden
-              className="translate-y-[1px] text-[9px] leading-none text-bone-50/60"
-            >
+            <span aria-hidden className="text-[9px] leading-none text-bone-50/60">
               ░
             </span>
             <span>multi</span>
