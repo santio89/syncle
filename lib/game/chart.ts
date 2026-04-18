@@ -89,6 +89,19 @@ export function displayMode(
 }
 
 /**
+ * Canonical "intensity stars" for each tier. We keep this fixed (1..5,
+ * easy → expert) instead of deriving it from the loaded chart's nps so
+ * the rating means the same thing across every song the player ever
+ * sees: an Insane in song A and an Insane in song B both render four
+ * stars, full stop. That predictability is what makes the badge useful
+ * as a HUD tag and as a picker label.
+ */
+export function modeStars(mode: ChartMode): 1 | 2 | 3 | 4 | 5 {
+  const i = MODE_ORDER.indexOf(mode);
+  return ((i >= 0 ? i : 0) + 1) as 1 | 2 | 3 | 4 | 5;
+}
+
+/**
  * Snap notes to a beat-grid and dedup by cell. The shape of the grid
  * (how many cells per beat) controls how aggressively the chart is
  * thinned; chord preservation controls whether multiple notes at the

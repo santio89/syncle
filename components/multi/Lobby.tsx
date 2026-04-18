@@ -21,6 +21,7 @@ import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
 import {
   displayMode,
   MODE_ORDER,
+  modeStars,
   probeSongModes,
 } from "@/lib/game/chart";
 import type {
@@ -84,10 +85,10 @@ function PlayerRoster({
   return (
     <div className="brut-card flex h-full flex-col p-5 sm:p-6">
       <div className="flex items-baseline justify-between gap-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Players
         </p>
-        <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+        <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
           {snapshot.players.length} / {MAX_PLAYERS_PER_ROOM}
         </span>
       </div>
@@ -104,12 +105,12 @@ function PlayerRoster({
               }`}
               title={p.online ? "Online" : "Disconnected"}
             />
-            <span className="flex-1 truncate font-mono text-sm text-bone-50/90">
+            <span className="flex-1 truncate font-mono text-[0.92rem] text-bone-50/90">
               {p.name || "—"}
             </span>
             {p.isHost && (
               <span
-                className="font-mono text-[9px] uppercase tracking-widest text-accent"
+                className="font-mono text-[9.5px] uppercase tracking-widest text-accent"
                 title="Room host"
               >
                 ★ host
@@ -120,7 +121,7 @@ function PlayerRoster({
       </ul>
 
       <div className="mt-4 border-t-2 border-bone-50/10 pt-3">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+        <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
           Your name
         </p>
         {editing ? (
@@ -134,11 +135,11 @@ function PlayerRoster({
                 if (e.key === "Escape") setEditing(false);
               }}
               maxLength={NAME_MAX_LEN}
-              className="flex-1 border-2 border-bone-50/20 bg-transparent px-2 py-1 font-mono text-sm text-bone-50 outline-none focus:border-accent"
+              className="flex-1 border-2 border-bone-50/20 bg-transparent px-2 py-1 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent"
             />
             <button
               onClick={commit}
-              className="brut-btn-accent px-3 py-1 text-xs"
+              className="brut-btn-accent px-3 py-1 text-[0.79rem]"
             >
               save
             </button>
@@ -149,7 +150,7 @@ function PlayerRoster({
               setDraft("");
               setEditing(true);
             }}
-            className="mt-1 inline-flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-bone-50/70 hover:text-accent"
+            className="mt-1 inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 hover:text-accent"
           >
             <span>rename</span>
           </button>
@@ -278,16 +279,16 @@ function HostPane({
     <div className="brut-card flex h-full flex-col p-5 sm:p-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             ░ Host controls
           </p>
-          <h3 className="mt-1 font-display text-xl font-bold">
+          <h3 className="mt-1 font-display text-[1.31rem] font-bold">
             Pick the song.
           </h3>
         </div>
         <button
           onClick={copyCode}
-          className="brut-btn px-3 py-2 text-xs"
+          className="brut-btn px-3 py-2 text-[0.79rem]"
           title="Copy room code"
         >
           ⧉ copy code
@@ -297,11 +298,11 @@ function HostPane({
       {/* Selected preview */}
       <div className="mt-4 border-2 border-bone-50/20 px-3 py-2">
         <div className="flex items-center justify-between gap-3">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+          <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
             Selected
           </p>
           {selected && (
-            <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/45">
+            <p className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/45">
               {probing
                 ? "checking difficulties…"
                 : modeProbe
@@ -314,14 +315,14 @@ function HostPane({
         </div>
         {selected ? (
           <p
-            className="mt-0.5 truncate font-mono text-sm text-bone-50/90"
+            className="mt-0.5 truncate font-mono text-[0.92rem] text-bone-50/90"
             title={`${selected.artist} — ${selected.title}`}
           >
             <span className="text-bone-50/60">{selected.artist}</span> —{" "}
             <span className="text-bone-50">{selected.title}</span>
           </p>
         ) : (
-          <p className="mt-0.5 font-mono text-sm text-bone-50/40">
+          <p className="mt-0.5 font-mono text-[0.92rem] text-bone-50/40">
             nothing yet — pick from the catalog below
           </p>
         )}
@@ -333,12 +334,12 @@ function HostPane({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="filter by title or artist…"
-          className="flex-1 border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-xs text-bone-50 outline-none focus:border-accent"
+          className="flex-1 border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-[0.79rem] text-bone-50 outline-none focus:border-accent"
         />
         <button
           onClick={() => fetchCatalog(true)}
           disabled={loading}
-          className="brut-btn px-3 py-2 text-xs disabled:opacity-50"
+          className="brut-btn px-3 py-2 text-[0.79rem] disabled:opacity-50"
           title="Refresh the candidate pool"
         >
           {loading ? "…" : "↻"}
@@ -347,17 +348,17 @@ function HostPane({
 
       <div className="mt-2 max-h-72 min-h-[10rem] flex-1 overflow-y-auto border-2 border-bone-50/10">
         {error && (
-          <p className="border-b-2 border-rose-500 p-3 font-mono text-xs text-rose-400">
+          <p className="border-b-2 border-rose-500 p-3 font-mono text-[0.79rem] text-rose-400">
             {error}
           </p>
         )}
         {loading && !catalog && (
-          <p className="p-3 font-mono text-xs text-bone-50/50">
+          <p className="p-3 font-mono text-[0.79rem] text-bone-50/50">
             Fetching osu!mania 4K candidates…
           </p>
         )}
         {!loading && filtered.length === 0 && (
-          <p className="p-3 font-mono text-xs text-bone-50/40">
+          <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
             No tracks match that filter.
           </p>
         )}
@@ -368,7 +369,7 @@ function HostPane({
               <li key={c.beatmapsetId}>
                 <button
                   onClick={() => actions.selectSong(c as SongRef)}
-                  className={`flex w-full items-baseline justify-between gap-2 border-b border-bone-50/5 px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-bone-50/5 ${
+                  className={`flex w-full items-baseline justify-between gap-2 border-b border-bone-50/5 px-3 py-2 text-left font-mono text-[0.79rem] transition-colors hover:bg-bone-50/5 ${
                     active ? "bg-accent/15 text-bone-50" : "text-bone-50/80"
                   }`}
                 >
@@ -376,7 +377,7 @@ function HostPane({
                     <span className="text-bone-50/55">{c.artist}</span>{" "}
                     <span className="text-bone-50">— {c.title}</span>
                   </span>
-                  <span className="shrink-0 font-mono text-[9px] uppercase tracking-widest text-bone-50/30">
+                  <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/30">
                     {c.source}
                   </span>
                 </button>
@@ -427,7 +428,7 @@ function HostPane({
       </div>
 
       {probeError && (
-        <p className="mt-2 font-mono text-[10px] uppercase tracking-widest text-rose-400">
+        <p className="mt-2 font-mono text-[10.5px] uppercase tracking-widest text-rose-400">
           {probeError}
         </p>
       )}
@@ -445,7 +446,7 @@ function HostPane({
               ? "Pick an available difficulty"
               : "▶ Start match"}
       </button>
-      <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+      <p className="mt-2 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
         Everyone has 30s to download + decode the song
       </p>
     </div>
@@ -488,9 +489,14 @@ function HostModeButton({
   hasSelectedSong: boolean;
   onPick: (m: ChartMode) => void;
 }) {
+  // Match single-player ModeButton behavior: every tier is always
+  // rendered with its name + 5-star intensity row, just disabled until
+  // we know what the song ships. That keeps the picker grid stable
+  // (no buttons hiding / collapsing) and reads as "loading the menu"
+  // rather than "menu disappeared".
   const available = !hasSelectedSong ? true : !!probe?.available[mode];
-  const showSpinner = hasSelectedSong && probing && !probe;
   const disabled = hasSelectedSong && (probing || !available);
+  const enabled = !disabled;
   const reason = !hasSelectedSong
     ? undefined
     : probing
@@ -498,22 +504,29 @@ function HostModeButton({
       : !available
         ? `This song doesn't ship a ${displayMode(mode)} chart.`
         : undefined;
+  const stars = modeStars(mode);
   return (
     <button
-      onClick={() => available && !probing && onPick(mode)}
+      onClick={() => enabled && onPick(mode)}
       disabled={disabled}
-      title={reason}
-      className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+      title={
+        reason ?? `${displayMode(mode).toUpperCase()} · ${stars} / 5 intensity`
+      }
+      className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
         selected && available
           ? "border-accent bg-accent text-ink-900"
-          : !available && hasSelectedSong && !probing
-            ? "border-bone-50/15 text-bone-50/30 cursor-not-allowed"
-            : disabled
-              ? "border-bone-50/15 text-bone-50/30 cursor-wait"
-              : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
+          : disabled
+            ? `border-bone-50/30 text-bone-50/50 ${probing ? "cursor-wait" : "cursor-not-allowed"}`
+            : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
       }`}
     >
-      {showSpinner && selected ? "…" : displayMode(mode)}
+      <span>{displayMode(mode)}</span>
+      {/* Fixed 5-slot star row keeps every button the same width, so
+          easy and expert don't visually shift the picker grid. */}
+      <span aria-hidden className="text-[8.5px] leading-none tracking-[0.2em]">
+        {"★".repeat(stars)}
+        <span className="opacity-30">{"★".repeat(5 - stars)}</span>
+      </span>
     </button>
   );
 }
@@ -535,13 +548,13 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
   return (
     <div className="brut-card flex h-full flex-col items-start gap-4 p-5 sm:p-6">
       <div>
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Waiting for host
         </p>
-        <h3 className="mt-1 font-display text-xl font-bold">
+        <h3 className="mt-1 font-display text-[1.31rem] font-bold">
           Sit tight — host is picking.
         </h3>
-        <p className="mt-2 max-w-md text-sm text-bone-50/65">
+        <p className="mt-2 max-w-md text-[0.92rem] text-bone-50/65">
           The host of this room chooses the song and difficulty. As soon as
           they hit start you&apos;ll get a 30s window to download it on your
           end.
@@ -549,17 +562,17 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
       </div>
 
       <div className="w-full border-2 border-bone-50/20 px-3 py-2">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+        <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
           Currently selected
         </p>
         {selected ? (
           <p
-            className="mt-0.5 truncate font-mono text-sm text-bone-50/90"
+            className="mt-0.5 truncate font-mono text-[0.92rem] text-bone-50/90"
             title={`${selected.artist} — ${selected.title}`}
           >
             <ArrowIcon
               direction="right"
-              size={12}
+              size={13}
               strokeWidth={2.75}
               className="mr-1 inline align-middle text-accent"
             />
@@ -567,7 +580,7 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
             <span className="text-bone-50">{selected.title}</span>
           </p>
         ) : (
-          <p className="mt-0.5 font-mono text-sm text-bone-50/40">
+          <p className="mt-0.5 font-mono text-[0.92rem] text-bone-50/40">
             nothing yet
           </p>
         )}

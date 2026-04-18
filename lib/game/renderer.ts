@@ -421,7 +421,7 @@ function ensureCache(
   const judgeY = H * opts.judgeLineY;
   const topY = H * 0.05;
   const cx = W / 2;
-  const bottomHalf = Math.min(280, W * 0.32);
+  const bottomHalf = Math.min(294, W * 0.336);
   const topHalf = bottomHalf * 0.5;
   const bottomLeftX = cx - bottomHalf;
   const bottomRightX = cx + bottomHalf;
@@ -679,7 +679,7 @@ function drawTapNote(
   const xBot = lerp(hw.bottomLeftX, hw.bottomRightX, f);
   const x = lerp(xTop, xBot, 1 - progress);
 
-  const radius = lerp(11, 26, 1 - progress);
+  const radius = lerp(11.5, 27.5, 1 - progress);
   const color = LANE_COLORS[n.lane];
 
   ctx.save();
@@ -748,8 +748,8 @@ function drawHoldTrail(
   const xTail = lerp(xHeadTop, xHeadBot, 1 - visTail);
 
   // Width tapers with perspective just like the notes themselves.
-  const wHead = lerp(10, 26, 1 - visHead);
-  const wTail = lerp(10, 26, 1 - visTail);
+  const wHead = lerp(10.5, 27.5, 1 - visHead);
+  const wTail = lerp(10.5, 27.5, 1 - visTail);
 
   const color = LANE_COLORS[n.lane];
   const colorRgb = LANE_RGB[n.lane];
@@ -809,7 +809,7 @@ function drawLaneGate(
   // Gate geometry. Tuned so the letter+arrow stack reads as a single,
   // centered glyph block — see LETTER_DY / ARROW_DY below for the exact
   // offsets that compensate for canvas text metrics.
-  const r = 36;            // outer ring radius
+  const r = 38;            // outer ring radius
   const innerRingR = r - 5;  // held-color disk (sits inside the ring)
   const innerCoreR = r - 11; // page-color core (where the label lives)
 

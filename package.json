@@ -5,6 +5,8 @@
   "scripts": {
     "fetch-song": "node scripts/fetch-song.mjs",
     "dev": "tsx watch --clear-screen=false --ignore .next --ignore public --ignore node_modules server.ts",
+    "dev:fresh": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && npm run dev",
+    "dev:nuke": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\"",
     "build": "next build",
     "start": "tsx scripts/start.mjs",
     "socket:dev": "tsx watch --clear-screen=false --ignore .next --ignore public --ignore node_modules socket-server.ts",

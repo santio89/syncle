@@ -41,7 +41,7 @@ const MultiEntryClient = dynamic(
 function MultiEntryFallback() {
   return (
     <>
-      <p className="inline-flex w-fit items-center gap-2 border-2 border-yellow-400/70 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-yellow-400/90">
+      <p className="inline-flex w-fit items-center gap-2 border-2 border-yellow-400/70 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-widest text-yellow-400/90">
         <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-yellow-400" />
         Loading multiplayer…
       </p>
@@ -81,17 +81,17 @@ export default function MultiEntryPage() {
               router.push("/");
             }
           }}
-          className="group inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
+          className="group inline-flex items-center gap-2 font-mono text-[11.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
         >
           <ArrowIcon
             direction="left"
-            size={13}
+            size={14}
             strokeWidth={2.75}
             className="transition-transform duration-200 group-hover:-translate-x-0.5"
           />
           <span>Back</span>
         </button>
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-bone-50/50">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-bone-50/50">
           Multiplayer
         </p>
         <ThemeToggle />
@@ -99,23 +99,21 @@ export default function MultiEntryPage() {
 
       <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-10 pb-16 sm:px-6 sm:pt-16">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             ░ Up to 50 per room · same song, parallel runs
           </p>
-          <h1 className="mt-2 font-display text-4xl font-bold leading-none sm:text-5xl">
+          <h1 className="mt-2 font-display text-[2.36rem] font-bold leading-none sm:text-[3.15rem]">
             Pick a name and a room.
           </h1>
-          <p className="mt-3 max-w-md text-sm text-bone-50/70">
-            Create a fresh room and share the code, or join one a friend
-            sent you. The host picks the song; everyone races on the same
-            chart.
+          <p className="mt-3 max-w-md text-[0.92rem] text-bone-50/70">
+            Create or join a room.
           </p>
         </div>
 
         <MultiEntryClient />
 
-        <section className="space-y-3">
-          <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-bone-50/45">
+        <section className="mt-4 space-y-3">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.35em] text-bone-50/45">
             ░ How it works
           </p>
           <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -149,14 +147,14 @@ function Step({
 }) {
   return (
     <li className="flex gap-3 border-2 border-bone-50/15 px-3 py-2.5">
-      <span className="font-mono text-[10px] font-bold tracking-widest text-accent">
+      <span className="font-mono text-[10.5px] font-bold tracking-widest text-accent">
         0{n}
       </span>
       <div className="space-y-0.5">
-        <p className="font-mono text-[11px] uppercase tracking-widest text-bone-50">
+        <p className="font-mono text-[11.5px] uppercase tracking-widest text-bone-50">
           {title}
         </p>
-        <p className="text-[11px] leading-snug text-bone-50/60">{children}</p>
+        <p className="text-[11.5px] leading-snug text-bone-50/60">{children}</p>
       </div>
     </li>
   );

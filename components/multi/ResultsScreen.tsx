@@ -86,14 +86,14 @@ export function ResultsScreen({
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
       {/* Winner / your spot */}
       <div className="brut-card-accent p-5 sm:p-7">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Match complete
         </p>
-        <h2 className="mt-2 font-display text-3xl font-bold leading-none sm:text-4xl">
+        <h2 className="mt-2 font-display text-[1.97rem] font-bold leading-none sm:text-[2.36rem]">
           {winner ? `${winner.name} wins.` : "No one finished."}
         </h2>
         {winner && (
-          <p className="mt-2 font-mono text-sm text-bone-50/80">
+          <p className="mt-2 font-mono text-[0.92rem] text-bone-50/80">
             {winner.score.toLocaleString()} ·{" "}
             {winner.accuracy.toFixed(1)}% · ×{winner.maxCombo}
           </p>
@@ -101,7 +101,7 @@ export function ResultsScreen({
 
         {standings.length > 0 && (
           <div className="mt-5 border-2 border-bone-50/20 px-3 py-2">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+            <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
               Your run
             </p>
             <YourRunRow me={me} standings={standings} />
@@ -122,7 +122,7 @@ export function ResultsScreen({
           >
             <ArrowIcon
               direction="left"
-              size={13}
+              size={14}
               strokeWidth={2.75}
               className="transition-transform duration-200 group-hover:-translate-x-0.5"
             />
@@ -140,14 +140,14 @@ export function ResultsScreen({
           </button>
         )}
 
-        <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+        <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
           ESC = leave · host kicks off the next round
         </p>
       </div>
 
       {/* Full leaderboard */}
       <div className="brut-card p-5 sm:p-6">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Final standings
         </p>
         <ol className="mt-3 space-y-1.5">
@@ -157,7 +157,7 @@ export function ResultsScreen({
             return (
               <li
                 key={s.id}
-                className={`grid grid-cols-[28px_minmax(0,1fr)_auto_auto] items-baseline gap-2 border-2 px-3 py-2 font-mono text-xs transition-colors ${
+                className={`grid grid-cols-[28px_minmax(0,1fr)_auto_auto] items-baseline gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
                   s.id === me
                     ? "border-accent bg-accent/10"
                     : s.rank === 1
@@ -166,7 +166,7 @@ export function ResultsScreen({
                 }`}
               >
                 <span
-                  className={`text-[11px] uppercase tracking-widest ${
+                  className={`text-[11.5px] uppercase tracking-widest ${
                     s.rank === 1
                       ? "text-accent"
                       : s.rank === 2
@@ -181,7 +181,7 @@ export function ResultsScreen({
                 <span className="min-w-0 truncate text-bone-50">
                   {s.name}
                   {s.id === me && (
-                    <span className="ml-1 text-[9px] uppercase text-accent">
+                    <span className="ml-1 text-[9.5px] uppercase text-accent">
                       you
                     </span>
                   )}
@@ -189,7 +189,7 @@ export function ResultsScreen({
                 <span className="shrink-0 text-right tabular-nums text-bone-50">
                   {s.score.toLocaleString()}
                 </span>
-                <span className="shrink-0 text-right text-[10px] tracking-widest text-bone-50/55">
+                <span className="shrink-0 text-right text-[10.5px] tracking-widest text-bone-50/55">
                   {choice === "stay"
                     ? "stay"
                     : choice === "leave"
@@ -202,7 +202,7 @@ export function ResultsScreen({
             );
           })}
         </ol>
-        <p className="mt-3 border-t-2 border-bone-50/10 pt-2 font-mono text-[9px] uppercase tracking-widest text-bone-50/40">
+        <p className="mt-3 border-t-2 border-bone-50/10 pt-2 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
           Stats are saved locally. Cloud sync arrives later.
         </p>
       </div>
@@ -220,13 +220,13 @@ function YourRunRow({
   const mine = standings.find((s) => s.id === me);
   if (!mine) {
     return (
-      <p className="mt-1 font-mono text-sm text-bone-50/40">
+      <p className="mt-1 font-mono text-[0.92rem] text-bone-50/40">
         no run recorded
       </p>
     );
   }
   return (
-    <p className="mt-1 font-mono text-sm text-bone-50">
+    <p className="mt-1 font-mono text-[0.92rem] text-bone-50">
       <span className="text-accent">#{mine.rank}</span> ·{" "}
       <span className="font-bold">{mine.score.toLocaleString()}</span> ·{" "}
       {mine.accuracy.toFixed(1)}% · ×{mine.maxCombo}

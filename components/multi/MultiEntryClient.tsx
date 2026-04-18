@@ -96,13 +96,13 @@ export default function MultiEntryClient() {
       <ConnectionPill conn={conn} />
 
       {showColdStartHint && (
-        <div className="brut-card-accent flex gap-3 px-4 py-3 text-[11px] leading-relaxed text-bone-50/80">
+        <div className="brut-card-accent flex gap-3 px-4 py-3 text-[11.5px] leading-relaxed text-bone-50/80">
           <span
             aria-hidden
-            className="mt-[3px] inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent"
+            className="mt-[3px] inline-block h-[0.79rem] w-[0.79rem] shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent"
           />
           <div className="flex-1 space-y-1">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-accent">
+            <p className="font-mono text-[10.5px] uppercase tracking-widest text-accent">
               ░ Waking the multiplayer server
             </p>
             <p>
@@ -118,7 +118,7 @@ export default function MultiEntryClient() {
 
       <div className="brut-card space-y-4 p-5 sm:p-6">
         <label className="block">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/60">
             Display name
           </span>
           <input
@@ -129,9 +129,9 @@ export default function MultiEntryClient() {
             maxLength={20}
             autoComplete="off"
             spellCheck={false}
-            className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-sm text-bone-50 outline-none focus:border-accent transition-colors"
+            className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent transition-colors"
           />
-          <p className="mt-1 font-mono text-[9px] uppercase tracking-widest text-bone-50/40">
+          <p className="mt-1 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
             Up to 20 characters, no formatting.
           </p>
         </label>
@@ -175,7 +175,7 @@ export default function MultiEntryClient() {
                   <span>Join</span>
                   <ArrowIcon
                     direction="right"
-                    size={14}
+                    size={15}
                     strokeWidth={2.75}
                     className="transition-transform duration-200 group-hover:translate-x-0.5"
                   />
@@ -186,7 +186,7 @@ export default function MultiEntryClient() {
         </div>
 
         {error && (
-          <div className="border-2 border-rose-500 p-2 font-mono text-xs text-rose-400">
+          <div className="border-2 border-rose-500 p-2 font-mono text-[0.79rem] text-rose-400">
             {error}
           </div>
         )}
@@ -213,7 +213,7 @@ function ConnectionPill({ conn }: { conn: string }) {
         : "border-rose-500 text-rose-400";
   return (
     <p
-      className={`inline-flex w-fit items-center gap-2 border-2 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest ${color}`}
+      className={`inline-flex w-fit items-center gap-2 border-2 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-widest ${color}`}
     >
       <span
         className={`inline-block h-1.5 w-1.5 rounded-full ${

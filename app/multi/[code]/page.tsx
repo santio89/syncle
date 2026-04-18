@@ -198,11 +198,11 @@ export default function MultiRoomPage() {
               router.push("/multi");
             }
           }}
-          className="group inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
+          className="group inline-flex items-center gap-2 font-mono text-[11.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
         >
           <ArrowIcon
             direction="left"
-            size={13}
+            size={14}
             strokeWidth={2.75}
             className="transition-transform duration-200 group-hover:-translate-x-0.5"
           />
@@ -214,7 +214,7 @@ export default function MultiRoomPage() {
             without the room code wrapping or being squeezed. Tracking on
             the code chip is also tightened slightly on mobile. */}
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <code className="shrink-0 border-2 border-bone-50/30 px-1.5 py-0.5 font-mono text-[10px] tracking-[0.25em] text-bone-50/85 sm:px-2 sm:py-1 sm:text-[11px] sm:tracking-[0.4em]">
+          <code className="shrink-0 border-2 border-bone-50/30 px-1.5 py-0.5 font-mono text-[10.5px] tracking-[0.25em] text-bone-50/85 sm:px-2 sm:py-1 sm:text-[11.5px] sm:tracking-[0.4em]">
             {code}
           </code>
           <ConnectionPill conn={conn} />
@@ -280,11 +280,11 @@ export default function MultiRoomPage() {
 
           {lastError && (
             <div className="brut-card-accent flex items-start justify-between gap-3 p-3">
-              <p className="font-mono text-xs">
+              <p className="font-mono text-[0.79rem]">
                 <span className="text-rose-400">[{lastError.code}]</span>{" "}
                 {lastError.message}
               </p>
-              <button onClick={clearError} className="font-mono text-[10px] uppercase tracking-widest text-bone-50/70 hover:text-accent">
+              <button onClick={clearError} className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent">
                 dismiss
               </button>
             </div>
@@ -402,7 +402,7 @@ function ConnectionPill({ conn }: { conn: string }) {
           : "Disconnected";
   return (
     <span
-      className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-bone-50/60"
+      className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/60"
       title={text}
     >
       <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
@@ -418,18 +418,18 @@ function ConnectionPill({ conn }: { conn: string }) {
 function ConnectingCard({ conn }: { conn: string }) {
   return (
     <div className="brut-card mx-auto w-full max-w-md p-5 sm:p-6">
-      <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+      <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
         ░ Connecting
       </p>
       <div className="mt-3 flex items-center gap-3">
-        <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent" />
-        <p className="font-mono text-xs uppercase tracking-widest text-bone-50/80">
+        <span className="inline-block h-[1.05rem] w-[1.05rem] shrink-0 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent" />
+        <p className="font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/80">
           {conn === "reconnecting"
             ? "Reconnecting to the room…"
             : "Opening socket…"}
         </p>
       </div>
-      <p className="mt-3 text-[11px] leading-snug text-bone-50/55">
+      <p className="mt-3 text-[11.5px] leading-snug text-bone-50/55">
         Free Render servers sleep when idle and take ~30 s to wake on the
         first connection. Once you&rsquo;re in the room, everything else is
         instant.
@@ -455,12 +455,12 @@ function JoinForm({
 }) {
   return (
     <div className="brut-card mx-auto w-full max-w-md p-5 sm:p-6">
-      <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+      <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
         Joining room
       </p>
-      <h2 className="mt-1 font-display text-2xl font-bold">{code}</h2>
+      <h2 className="mt-1 font-display text-[1.58rem] font-bold">{code}</h2>
       <label className="mt-4 block">
-        <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+        <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/60">
           Your name
         </span>
         <input
@@ -473,7 +473,7 @@ function JoinForm({
           }}
           placeholder="player"
           maxLength={20}
-          className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-sm text-bone-50 outline-none focus:border-accent transition-colors"
+          className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent transition-colors"
         />
       </label>
       <button
@@ -488,7 +488,7 @@ function JoinForm({
             <span>Join room</span>
             <ArrowIcon
               direction="right"
-              size={14}
+              size={15}
               strokeWidth={2.75}
               className="transition-transform duration-200 group-hover:translate-x-0.5"
             />
@@ -496,7 +496,7 @@ function JoinForm({
         )}
       </button>
       {error && (
-        <p className="mt-3 border-2 border-rose-500 p-2 font-mono text-xs text-rose-400">
+        <p className="mt-3 border-2 border-rose-500 p-2 font-mono text-[0.79rem] text-rose-400">
           {error}
         </p>
       )}
@@ -515,7 +515,7 @@ function NoticeStack({
       {notices.slice(-5).map((n) => (
         <div
           key={n.id}
-          className="brut-card-accent pointer-events-auto px-3 py-2 font-mono text-[11px] text-bone-50/90 shadow-lg"
+          className="brut-card-accent pointer-events-auto px-3 py-2 font-mono text-[11.5px] text-bone-50/90 shadow-lg"
         >
           {n.text}
         </div>
@@ -529,11 +529,11 @@ function InvalidCodeScreen({ code, onBack }: { code: string; onBack: () => void 
     <main className="relative min-h-screen">
       <GradientBg />
       <div className="relative z-10 mx-auto flex max-w-md flex-col items-center justify-center gap-4 px-4 py-32 text-center">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-rose-400">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-rose-400">
           Bad room code
         </p>
-        <h1 className="font-display text-3xl font-bold">{code || "—"}</h1>
-        <p className="text-sm text-bone-50/70">
+        <h1 className="font-display text-[1.97rem] font-bold">{code || "—"}</h1>
+        <p className="text-[0.92rem] text-bone-50/70">
           Room codes are 6 characters, A–Z and 2–9. Double-check what your
           friend sent and try again.
         </p>

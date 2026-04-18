@@ -42,7 +42,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
  *   - radius / ray lengths tuned for visual weight parity with the moon
  * ------------------------------------------------------------------------- */
 
-function SunIcon({ size = 18 }: { size?: number }) {
+function SunIcon({ size = 19 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -70,7 +70,7 @@ function SunIcon({ size = 18 }: { size?: number }) {
   );
 }
 
-function MoonIcon({ size = 18 }: { size?: number }) {
+function MoonIcon({ size = 19 }: { size?: number }) {
   return (
     <svg
       width={size}

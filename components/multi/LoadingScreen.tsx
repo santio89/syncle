@@ -38,24 +38,24 @@ export function LoadingScreen({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.4fr)_1fr]">
       <div className="brut-card flex flex-col gap-4 p-5 sm:p-7">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Loading
         </p>
         {song ? (
           <h2
-            className="truncate font-display text-3xl font-bold sm:text-4xl"
+            className="truncate font-display text-[1.97rem] font-bold sm:text-[2.36rem]"
             title={`${song.artist} — ${song.title}`}
           >
             {song.title}
           </h2>
         ) : (
-          <h2 className="font-display text-3xl font-bold sm:text-4xl">—</h2>
+          <h2 className="font-display text-[1.97rem] font-bold sm:text-[2.36rem]">—</h2>
         )}
         {song && (
           <p className="-mt-2 truncate text-bone-50/70" title={song.artist}>
             {song.artist}
             {mode && (
-              <span className="ml-2 font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+              <span className="ml-2 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
                 · {displayMode(mode)}
               </span>
             )}
@@ -63,29 +63,29 @@ export function LoadingScreen({
         )}
 
         <div className="border-2 border-bone-50/20 px-3 py-2">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+          <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
             Your client
           </p>
           {error ? (
-            <p className="mt-0.5 font-mono text-sm text-rose-400">
+            <p className="mt-0.5 font-mono text-[0.92rem] text-rose-400">
               ✕ {error} — waiting on the others, or hit cancel
             </p>
           ) : progress ? (
-            <p className="mt-0.5 flex items-center gap-2 font-mono text-sm text-bone-50/85">
+            <p className="mt-0.5 flex items-center gap-2 font-mono text-[0.92rem] text-bone-50/85">
               <Spinner />
               <span className="truncate" title={progress}>
                 {progress}
               </span>
             </p>
           ) : (
-            <p className="mt-0.5 flex items-center gap-2 font-mono text-sm text-accent">
+            <p className="mt-0.5 flex items-center gap-2 font-mono text-[0.92rem] text-accent">
               <span className="inline-block h-2 w-2 bg-accent" />
               ready — waiting for the room
             </p>
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 font-mono text-xs">
+        <div className="grid grid-cols-2 gap-2 font-mono text-[0.79rem]">
           <Stat label="ready" value={`${ready} / ${total}`} accent />
           <Stat
             label="deadline"
@@ -110,7 +110,7 @@ export function LoadingScreen({
         {isHost && (
           <button
             onClick={onCancel}
-            className="brut-btn mt-2 self-start px-4 py-2 text-xs"
+            className="brut-btn mt-2 self-start px-4 py-2 text-[0.79rem]"
           >
             ✕ Cancel back to lobby
           </button>
@@ -119,7 +119,7 @@ export function LoadingScreen({
 
       {/* Per-player readiness grid */}
       <div className="brut-card p-5 sm:p-6">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Players
         </p>
         <ul className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -132,7 +132,7 @@ export function LoadingScreen({
             return (
               <li
                 key={p.id}
-                className={`flex items-center gap-2 border-2 px-3 py-2 font-mono text-xs transition-colors ${
+                className={`flex items-center gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
                   status === "ready"
                     ? "border-accent text-accent"
                     : status === "offline"
@@ -150,7 +150,7 @@ export function LoadingScreen({
                   }`}
                 />
                 <span className="flex-1 truncate">{p.name}</span>
-                <span className="font-mono text-[9px] uppercase tracking-widest opacity-70">
+                <span className="font-mono text-[9.5px] uppercase tracking-widest opacity-70">
                   {status}
                 </span>
               </li>
@@ -192,11 +192,11 @@ function Stat({
         : "border-bone-50/20";
   return (
     <div className={`border-2 px-3 py-2 transition-colors ${borderClass}`}>
-      <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+      <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
         {label}
       </p>
       <p
-        className={`mt-0.5 font-display text-xl font-bold tabular-nums transition-colors ${valueClass} ${
+        className={`mt-0.5 font-display text-[1.31rem] font-bold tabular-nums transition-colors ${valueClass} ${
           pulse ? "animate-pulse" : ""
         }`}
       >
@@ -211,7 +211,7 @@ function Spinner() {
     <span
       role="status"
       aria-label="Loading"
-      className="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent"
+      className="inline-block h-[0.92rem] w-[0.92rem] shrink-0 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent"
     />
   );
 }

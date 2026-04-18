@@ -35,8 +35,8 @@ export function StatusBadge({
             : "border-bone-50/40 text-bone-50/60";
   const sizing =
     size === "xs"
-      ? "text-[9px] px-1.5 py-px"
-      : "text-[10px] px-2 py-0.5";
+      ? "text-[9.5px] px-1.5 py-px"
+      : "text-[10.5px] px-2 py-0.5";
   return (
     <span
       className={`border-2 font-mono uppercase tracking-widest ${palette} ${sizing}`}

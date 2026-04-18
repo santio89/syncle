@@ -100,7 +100,7 @@ export default function HomePage() {
         <div className="flex min-w-0 items-center gap-3">
           <svg
             viewBox="0 0 24 24"
-            className="h-7 w-7 shrink-0 text-accent"
+            className="h-[1.84rem] w-[1.84rem] shrink-0 text-accent"
             shapeRendering="crispEdges"
             aria-hidden="true"
           >
@@ -116,18 +116,18 @@ export default function HomePage() {
             />
             <polygon points="10,7.5 16.5,12 10,16.5" fill="currentColor" />
           </svg>
-          <span className="font-mono text-xs tracking-[0.3em] text-bone-50/70">
+          <span className="font-mono text-[0.79rem] tracking-[0.3em] text-bone-50/70">
             SYNCLE
           </span>
         </div>
-        <nav className="flex items-center gap-3 font-mono text-xs uppercase tracking-widest text-bone-50/60 sm:gap-6">
+        <nav className="flex items-center gap-3 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60 sm:gap-6">
           <span className="hidden sm:inline">osu! mania · 4K</span>
           <Link
             href="/multi"
             className="inline-flex items-center gap-2 border-2 border-bone-50/40 px-3 py-1.5 leading-none text-bone-50 transition-colors hover:border-accent hover:text-accent"
             title="Up to 50 players per room — same song, parallel runs"
           >
-            <span aria-hidden className="text-[9px] leading-none text-bone-50/60">
+            <span aria-hidden className="text-[9.5px] leading-none text-bone-50/60">
               ░
             </span>
             <span>multi</span>
@@ -139,13 +139,13 @@ export default function HomePage() {
       <section className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 sm:gap-8 sm:px-6 lg:justify-center lg:py-8">
         <div className="grid grid-cols-1 items-center gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:gap-12">
           <div className="flex min-w-0 flex-col gap-3">
-            <span className="font-mono text-[10px] uppercase tracking-[0.35em] text-accent sm:text-[11px] sm:tracking-[0.4em]">
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.35em] text-accent sm:text-[11.5px] sm:tracking-[0.4em]">
               ░ Random song · Endless retries
             </span>
-            <h1 className="font-display whitespace-nowrap font-bold leading-[0.85] tracking-tight text-[clamp(2.75rem,15vw,9rem)]">
+            <h1 className="font-display whitespace-nowrap font-bold leading-[0.85] tracking-tight text-[clamp(2.9rem,15.75vw,9.45rem)]">
               SYNC<span className="text-accent">LE.</span>
             </h1>
-            <p className="max-w-xl text-sm text-bone-50/80 sm:text-base">
+            <p className="max-w-xl text-[0.92rem] text-bone-50/80 sm:text-[1.05rem]">
               A fresh osu!mania track every refresh. Hit the notes, hold the
               long ones, push your best. Refresh for a new one.
             </p>
@@ -162,34 +162,34 @@ export default function HomePage() {
                 ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}`
                 : undefined
             }
-            className="brut-play-cta flex h-32 w-full flex-row items-center justify-center gap-4 px-6 sm:aspect-square sm:h-auto sm:w-52 sm:flex-col sm:gap-1 sm:px-4 md:w-56 lg:w-64 xl:w-72 shrink-0 justify-self-center md:justify-self-end"
+            className="brut-play-cta flex h-[8.4rem] w-full flex-row items-center justify-center gap-4 px-6 sm:aspect-square sm:h-auto sm:w-[13.65rem] sm:flex-col sm:gap-1 sm:px-4 md:w-[14.7rem] lg:w-[16.8rem] xl:w-[18.9rem] shrink-0 justify-self-center md:justify-self-end"
           >
-            <span className="font-display text-6xl leading-none translate-x-[2px] sm:text-7xl sm:-translate-y-1 lg:text-8xl shrink-0">
+            <span className="font-display text-[3.95rem] leading-none translate-x-[2px] sm:text-[4.75rem] sm:-translate-y-1 lg:text-[6.3rem] shrink-0">
               ▶
             </span>
             {/* min-w-0 + flex-1 (mobile) / w-full (desktop) is what unlocks
              *  truncation inside this flex parent — without min-w-0 the flex
              *  child defaults to min-width:auto and refuses to shrink. */}
             <div className="flex min-w-0 flex-1 flex-col items-start text-left sm:w-full sm:flex-none sm:items-center sm:text-center">
-              <span className="font-display text-2xl font-bold tracking-[0.25em] sm:text-2xl lg:text-3xl">
+              <span className="font-display text-[1.6rem] font-bold tracking-[0.25em] sm:text-[1.6rem] lg:text-[1.95rem]">
                 PLAY
               </span>
               {load.status === "ready" ? (
                 <span className="block w-full max-w-full">
-                  <span className="block w-full truncate font-mono text-[11px] font-bold uppercase tracking-widest opacity-90">
+                  <span className="block w-full truncate font-mono text-[11.5px] font-bold uppercase tracking-widest opacity-90">
                     {load.meta.title}
                   </span>
-                  <span className="block w-full truncate font-mono text-[10px] uppercase tracking-wider opacity-60">
+                  <span className="block w-full truncate font-mono text-[10.5px] uppercase tracking-wider opacity-60">
                     {load.meta.artist}
                   </span>
                 </span>
               ) : load.status === "loading" ? (
-                <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest opacity-70">
+                <span className="flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest opacity-70">
                   <Spinner small dark />
                   <span>Loading track…</span>
                 </span>
               ) : (
-                <span className="font-mono text-[10px] uppercase tracking-widest opacity-70">
+                <span className="font-mono text-[10.5px] uppercase tracking-widest opacity-70">
                   no chart found
                 </span>
               )}
@@ -199,24 +199,60 @@ export default function HomePage() {
 
         <div className="grid gap-4 md:grid-cols-3">
           <div
-            className="brut-card-accent relative overflow-hidden p-4 sm:p-5 md:col-span-2"
+            // `flex flex-col` + `mt-auto` on the waveform row pins the
+            // waveform/PLAY controls to the bottom edge of the card.
+            // Without this they hug the title block and leave the
+            // bottom half of the cover image as empty padding — bad
+            // composition, especially with anime keyart covers whose
+            // subjects sit center/lower. The card height comes from
+            // grid `stretch` matching the stats card on the right.
+            className="brut-card-accent relative flex flex-col overflow-hidden p-4 sm:p-5 md:col-span-2"
+            // When a cover image is in play, lock this card to the
+            // dark-theme palette regardless of the page-wide theme.
+            // The cover artwork is a dark photographic surface, so
+            // light-mode's near-black `--fg` text inherits down and
+            // disappears against it (title and artist lines
+            // basically vanish on cream-themed users). Forcing
+            // `data-theme="dark"` on the card swaps every CSS theme
+            // var inside (`--fg`, `--surface`, borders, etc.) to the
+            // dark variants, matching the always-readable dark-mode
+            // look without having to override each child element's
+            // color one by one.
+            data-theme={
+              load.status === "ready" && load.meta.coverUrl
+                ? "dark"
+                : undefined
+            }
             style={
               load.status === "ready" && load.meta.coverUrl
                 ? {
-                    // Beatmap cover as ambient background. We layer a
-                    // dark left-to-right gradient over the image so the
-                    // title/artist column on the left always has enough
-                    // contrast — some covers are blown-out anime
-                    // keyart, others are black album sleeves; the
-                    // gradient handles both. Fading to lighter on the
-                    // right lets the cover breathe through near the
-                    // duration badge.
+                    // Re-anchor `color` on the card itself so the
+                    // newly-overridden `--fg` (now dark-mode bone)
+                    // actually takes effect — descendants inherit
+                    // the resolved color value, not the CSS var, so
+                    // without this they'd still show body's
+                    // near-black light-mode color.
+                    color: "rgb(var(--fg))",
+                    // Beatmap cover as ambient background. We layer
+                    // TWO darkening passes over the image:
+                    //   1. Left-weighted directional gradient — the
+                    //      title/artist column lives on the left, so
+                    //      it gets the heaviest dim. Right side stays
+                    //      lighter to let the cover breathe near the
+                    //      duration badge.
+                    //   2. Flat 0.35 dim across the whole card. This
+                    //      is the part that fixes the previous bug
+                    //      where bright anime keyart fought the white
+                    //      title for legibility — even with the
+                    //      directional gradient the cover's highlights
+                    //      would punch through. The flat layer pins a
+                    //      minimum contrast ceiling everywhere.
                     //
-                    // If the URL 404s the browser silently falls back
-                    // to the card's own translucent surface color from
-                    // `.brut-card-accent` — no broken-image icon, no
-                    // layout shift, no JS error handling needed.
-                    backgroundImage: `linear-gradient(90deg, rgba(4,5,8,0.95) 0%, rgba(4,5,8,0.75) 50%, rgba(4,5,8,0.4) 100%), url(${load.meta.coverUrl})`,
+                    // 404s silently fall back to the card's own
+                    // translucent surface from `.brut-card-accent` —
+                    // no broken-image icon, no layout shift, no JS
+                    // error handling needed.
+                    backgroundImage: `linear-gradient(90deg, rgba(4,5,8,0.90) 0%, rgba(4,5,8,0.65) 50%, rgba(4,5,8,0.30) 100%), linear-gradient(rgba(4,5,8,0.22), rgba(4,5,8,0.22)), url(${load.meta.coverUrl})`,
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                   }
@@ -234,7 +270,7 @@ export default function HomePage() {
                     : undefined
                 }
               >
-                <p className="flex flex-wrap items-center gap-2 font-mono text-xs uppercase tracking-widest text-accent">
+                <p className="flex flex-wrap items-center gap-2 font-mono text-[0.78rem] uppercase tracking-widest text-accent">
                   <span>Now playing</span>
                   {load.status === "ready" && (
                     <span className="text-bone-50/40">· osu! 4K</span>
@@ -246,10 +282,24 @@ export default function HomePage() {
 
                 {load.status === "ready" ? (
                   <>
-                    <h2 className="mt-1 block w-full truncate font-display text-2xl font-bold leading-tight sm:text-3xl">
+                    <h2
+                      className="mt-1 block w-full truncate font-display text-[1.55rem] font-bold leading-tight sm:text-[1.95rem]"
+                      style={
+                        load.meta.coverUrl
+                          ? { textShadow: "0 2px 10px rgba(0,0,0,0.85)" }
+                          : undefined
+                      }
+                    >
                       {load.meta.title}
                     </h2>
-                    <p className="mt-0.5 block w-full truncate text-sm text-bone-50/70">
+                    <p
+                      className="mt-0.5 block w-full truncate text-[0.92rem] text-bone-50/85"
+                      style={
+                        load.meta.coverUrl
+                          ? { textShadow: "0 1px 6px rgba(0,0,0,0.85)" }
+                          : undefined
+                      }
+                    >
                       {load.meta.artist}
                       {load.meta.year ? ` · ${load.meta.year}` : ""}
                     </p>
@@ -264,10 +314,10 @@ export default function HomePage() {
                   </div>
                 ) : (
                   <>
-                    <h2 className="mt-1 font-display text-xl font-bold leading-tight text-rose-400 sm:text-2xl">
+                    <h2 className="mt-1 font-display text-[1.31rem] font-bold leading-tight text-rose-400 sm:text-[1.58rem]">
                       No chart available
                     </h2>
-                    <p className="mt-0.5 font-mono text-xs text-bone-50/50 break-words">
+                    <p className="mt-0.5 font-mono text-[0.79rem] text-bone-50/50 break-words">
                       {load.message}
                     </p>
                   </>
@@ -280,7 +330,7 @@ export default function HomePage() {
                 // so a single label can't summarize the song's range. The
                 // full picker on /play is the source of truth for which
                 // tiers are actually available.
-                <div className="flex shrink-0 flex-row gap-2 font-mono text-xs sm:flex-col sm:items-end sm:gap-1">
+                <div className="flex shrink-0 flex-row gap-2 font-mono text-[0.78rem] sm:flex-col sm:items-end sm:gap-1">
                   <span className="border-2 border-bone-50 px-2 py-0.5">
                     {formatDuration(load.meta.duration)}
                   </span>
@@ -288,8 +338,8 @@ export default function HomePage() {
               )}
             </div>
 
-            <div className="mt-4 flex items-end gap-3 sm:mt-5">
-              <div className="flex h-10 flex-1 items-end gap-[2px] overflow-hidden sm:h-12 sm:gap-1">
+            <div className="mt-auto flex items-end gap-3 pt-5">
+              <div className="flex h-[2.6rem] flex-1 items-end gap-[2px] overflow-hidden sm:h-[3.15rem] sm:gap-1">
                 {Array.from({ length: 72 }).map((_, i) => {
                   const ready = load.status === "ready";
                   // Deterministic-but-irregular stagger so each bar pulses
@@ -317,17 +367,17 @@ export default function HomePage() {
                 <Link
                   href="/play"
                   aria-label={`Play ${load.meta.title}`}
-                  className="flex h-10 shrink-0 items-center gap-2 px-2 font-display text-sm font-bold tracking-widest text-bone-50 transition-opacity hover:opacity-80 sm:h-12"
+                  className="flex h-[2.6rem] shrink-0 items-center gap-2 px-2 font-display text-[0.92rem] font-bold tracking-widest text-bone-50 transition-opacity hover:opacity-80 sm:h-[3.15rem]"
                 >
-                  <span className="text-base leading-none">▶</span>
+                  <span className="text-[1.05rem] leading-none">▶</span>
                   <span>PLAY</span>
                 </Link>
               ) : (
                 <span
                   aria-disabled
-                  className="flex h-10 shrink-0 items-center gap-2 px-2 font-display text-sm font-bold tracking-widest text-bone-50/30 sm:h-12"
+                  className="flex h-[2.6rem] shrink-0 items-center gap-2 px-2 font-display text-[0.92rem] font-bold tracking-widest text-bone-50/30 sm:h-[3.15rem]"
                 >
-                  <span className="text-base leading-none">▶</span>
+                  <span className="text-[1.05rem] leading-none">▶</span>
                   <span>PLAY</span>
                 </span>
               )}
@@ -335,10 +385,10 @@ export default function HomePage() {
           </div>
 
           <div className="brut-card p-4 sm:p-5">
-            <p className="font-mono text-xs uppercase tracking-widest text-bone-50/60">
+            <p className="font-mono text-[0.78rem] uppercase tracking-widest text-bone-50/60">
               Your stats
             </p>
-            <div className="mt-3 space-y-2 font-mono text-sm">
+            <div className="mt-3 space-y-2 font-mono text-[0.92rem]">
               <Stat
                 label="tracks played"
                 value={stats.tracksPlayed.length.toLocaleString()}
@@ -367,7 +417,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <footer className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t-2 border-bone-50/20 px-4 py-3 font-mono text-[10px] uppercase tracking-widest text-bone-50/40 sm:px-6 sm:text-[11px]">
+      <footer className="relative z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t-2 border-bone-50/20 px-4 py-3 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40 sm:px-6 sm:text-[11.5px]">
         <span>Syncle · Random song · Endless retries</span>
         <Link
           href="/multi"
@@ -382,7 +432,7 @@ export default function HomePage() {
 }
 
 function Spinner({ small, dark }: { small?: boolean; dark?: boolean }) {
-  const size = small ? 12 : 20;
+  const size = small ? 13 : 21;
   // `dark` flips the contrast for use on the bright blue play CTA.
   return (
     <span
@@ -411,14 +461,14 @@ function Stat({
   return (
     <div className="border-b border-bone-50/10 pb-2">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-bone-50/50 uppercase text-[10px] tracking-widest">
+        <span className="text-bone-50/50 uppercase text-[10.5px] tracking-widest">
           {label}
         </span>
         <span className="text-bone-50 tabular-nums">{value}</span>
       </div>
       {hint && (
         <div
-          className="mt-0.5 truncate text-right text-[9px] uppercase tracking-widest text-bone-50/30"
+          className="mt-0.5 truncate text-right text-[9.5px] uppercase tracking-widest text-bone-50/30"
           title={hint}
         >
           {hint}

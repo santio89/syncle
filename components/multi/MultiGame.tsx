@@ -33,7 +33,7 @@ import type { RoomActions } from "@/hooks/useRoomSocket";
 import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
 import type { LoadSongResult, ChartMode } from "@/lib/game/chart";
-import { displayMode } from "@/lib/game/chart";
+import { displayMode, modeStars } from "@/lib/game/chart";
 import { loadVolume, saveVolume } from "@/lib/game/settings";
 import {
   createRenderState,
@@ -601,6 +601,7 @@ function CanvasPane({
               fps={fps}
               songTitle={loaded?.meta.title ?? snapshot.selectedSong?.title ?? null}
               songArtist={loaded?.meta.artist ?? snapshot.selectedSong?.artist ?? null}
+              chartMode={mode}
             />
           </div>
         </div>
@@ -609,13 +610,13 @@ function CanvasPane({
       {countdownLabel !== null && (
         <Overlay translucent>
           <div className="text-center">
-            <p className="font-mono text-xs uppercase tracking-[0.4em] text-accent">
+            <p className="font-mono text-[0.79rem] uppercase tracking-[0.4em] text-accent">
               Get ready
             </p>
-            <p className="mt-2 font-display text-[clamp(6rem,18vw,12rem)] font-bold leading-none drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
+            <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
               {countdownLabel}
             </p>
-            <p className="mt-2 font-mono text-xs uppercase tracking-widest text-bone-50/60">
+            <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
               {touchOnly ? "tap the lanes" : "D F J K · or ← ↓ ↑ →"} · {displayMode(mode)} mode · scoreboard updates live
             </p>
           </div>
@@ -626,7 +627,7 @@ function CanvasPane({
         <Overlay>
           <div className="brut-card-accent flex items-center gap-3 p-5">
             <Spinner />
-            <p className="font-mono text-xs uppercase tracking-widest text-bone-50/80">
+            <p className="font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/80">
               waiting for chart…
             </p>
           </div>
@@ -636,13 +637,13 @@ function CanvasPane({
       {loadError && !loaded && (
         <Overlay>
           <div className="brut-card-accent max-w-md p-5 text-center">
-            <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-rose-400">
+            <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-rose-400">
               ✕ Couldn&apos;t load
             </p>
-            <p className="mt-2 font-mono text-xs text-bone-50/80">
+            <p className="mt-2 font-mono text-[0.79rem] text-bone-50/80">
               {loadError}
             </p>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+            <p className="mt-2 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
               Hang tight — host can cancel back to the lobby.
             </p>
           </div>
@@ -769,13 +770,13 @@ function ScoreboardSidebar({
     //     panel and never leak into the gameplay area.
     <div className="pointer-events-none absolute inset-0 z-10 mx-auto w-full max-w-6xl">
       <aside
-        className="brut-card pointer-events-auto absolute right-3 top-3 flex max-h-[calc(100%-1.5rem)] w-[280px] max-w-[40vw] flex-col p-4 sm:right-5 sm:top-5 sm:max-h-[calc(100%-2.5rem)] sm:w-[320px] sm:p-5"
+        className="brut-card pointer-events-auto absolute right-3 top-3 flex max-h-[calc(100%-1.5rem)] w-[272px] max-w-[40vw] flex-col p-4 sm:right-5 sm:top-5 sm:max-h-[calc(100%-2.5rem)] sm:w-[310px] sm:p-5"
       >
       <div className="flex items-baseline justify-between gap-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+        <p className="font-mono text-[10.2px] uppercase tracking-[0.4em] text-accent">
           ░ Live
         </p>
-        <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+        <span className="font-mono text-[10.2px] uppercase tracking-widest text-bone-50/40">
           {entries.filter((e) => e.online).length} online
         </span>
       </div>
@@ -794,19 +795,19 @@ function ScoreboardSidebar({
               }`}
             >
               <span
-                className={`w-5 shrink-0 text-center text-[10px] uppercase tracking-widest ${
+                className={`w-5 shrink-0 text-center text-[10.2px] uppercase tracking-widest ${
                   i === 0 ? "text-accent" : "text-bone-50/40"
                 }`}
               >
                 {i + 1}
               </span>
               <span
-                className="min-w-0 flex-1 truncate text-xs"
+                className="min-w-0 flex-1 truncate text-[0.77rem]"
                 title={e.name}
               >
                 {e.name}
                 {isMe && (
-                  <span className="ml-1 text-[9px] uppercase text-accent">
+                  <span className="ml-1 text-[9.2px] uppercase text-accent">
                     you
                   </span>
                 )}
@@ -816,7 +817,7 @@ function ScoreboardSidebar({
                   players (finished rows show the ✓ mark instead). */}
               {!e.finished && e.combo > 0 && (
                 <span
-                  className={`shrink-0 px-1 text-[9px] tabular-nums tracking-widest ${
+                  className={`shrink-0 px-1 text-[9.2px] tabular-nums tracking-widest ${
                     e.combo >= 50
                       ? "text-accent"
                       : e.combo >= 10
@@ -828,12 +829,12 @@ function ScoreboardSidebar({
                   ×{e.combo}
                 </span>
               )}
-              <span className="shrink-0 text-right text-[11px] tabular-nums text-bone-50">
+              <span className="shrink-0 text-right text-[11.2px] tabular-nums text-bone-50">
                 {e.score.toLocaleString()}
               </span>
               {e.finished && (
                 <span
-                  className="shrink-0 text-[9px] uppercase tracking-widest text-accent"
+                  className="shrink-0 text-[9.2px] uppercase tracking-widest text-accent"
                   title="Finished"
                 >
                   ✓
@@ -841,7 +842,7 @@ function ScoreboardSidebar({
               )}
               {!e.online && (
                 <span
-                  className="shrink-0 text-[9px] uppercase tracking-widest text-bone-50/30"
+                  className="shrink-0 text-[9.2px] uppercase tracking-widest text-bone-50/30"
                   title="Disconnected"
                 >
                   ⌀
@@ -851,7 +852,7 @@ function ScoreboardSidebar({
           );
         })}
       </ol>
-      <p className="mt-3 border-t-2 border-bone-50/10 pt-2 font-mono text-[9px] uppercase tracking-widest text-bone-50/40">
+      <p className="mt-3 border-t-2 border-bone-50/10 pt-2 font-mono text-[9.2px] uppercase tracking-widest text-bone-50/40">
         Updates ~5×/sec · everyone races on the same chart
       </p>
       </aside>
@@ -867,30 +868,30 @@ function PerformancePanel({ stats }: { stats: PlayerStats }) {
   const accuracy = computeAccuracy(stats);
   return (
     <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-3">
-      <div className="min-w-[88px] sm:min-w-[150px]">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
+      <div className="min-w-[89px] sm:min-w-[153px]">
+        <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           Score
         </p>
-        <p className="font-display text-xl font-bold leading-none sm:text-3xl">
+        <p className="font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
           {stats.score.toLocaleString()}
         </p>
-        <p className="mt-1 font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
+        <p className="mt-1 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
           {accuracy.toFixed(1)}% · {stats.notesPlayed}/{stats.totalNotes}
         </p>
       </div>
       <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-      <div className="flex min-w-[56px] flex-col items-center justify-center sm:min-w-[80px]">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
+      <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[81px]">
+        <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           Combo
         </p>
         <p
-          className={`font-display text-2xl font-bold leading-none tabular-nums sm:text-4xl ${
+          className={`font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
             stats.combo > 0 ? "text-accent" : "text-bone-50/40"
           }`}
         >
           {stats.combo}
         </p>
-        <p className="mt-1 font-mono text-[10px] font-bold text-accent sm:text-xs">
+        <p className="mt-1 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
           ×{stats.multiplier}
         </p>
       </div>
@@ -914,6 +915,7 @@ function HealthPanel({
   fps,
   songTitle,
   songArtist,
+  chartMode,
 }: {
   stats: PlayerStats;
   volume: number;
@@ -923,7 +925,9 @@ function HealthPanel({
   fps: number;
   songTitle: string | null;
   songArtist: string | null;
+  chartMode: ChartMode;
 }) {
+  const tierStars = modeStars(chartMode);
   const healthColor =
     stats.health > 0.6
       ? "#3dff8a"
@@ -939,18 +943,37 @@ function HealthPanel({
           so the strip is populated even before the audio buffer is ready. */}
       {songTitle && (
         <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
-          <p className="truncate font-mono text-[8px] uppercase tracking-widest text-bone-50/45 sm:text-[9px]">
-            ♪ Now playing
-          </p>
+          {/* Top-right difficulty tag mirrors the single-player HUD so
+              both modes use the same on-screen vocabulary for "which
+              tier are you actually playing right now". Inline with the
+              "♪ Now playing" label keeps the song title row free for
+              long titles without collisions. */}
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate font-mono text-[8.2px] uppercase tracking-widest text-bone-50/45 sm:text-[9.2px]">
+              ♪ Now playing
+            </p>
+            <span
+              className="inline-flex shrink-0 items-center gap-1 border border-accent/60 px-1 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
+              title={`Difficulty: ${displayMode(chartMode)} (${tierStars} / 5 intensity)`}
+            >
+              <span>{displayMode(chartMode)}</span>
+              <span aria-hidden className="leading-none tracking-[0.15em]">
+                {"★".repeat(tierStars)}
+                <span className="opacity-30">
+                  {"★".repeat(5 - tierStars)}
+                </span>
+              </span>
+            </span>
+          </div>
           <p
-            className="truncate font-mono text-[10px] font-bold text-bone-50/90 sm:text-[11px]"
+            className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
             title={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
           >
             {songTitle}
           </p>
           {songArtist && (
             <p
-              className="truncate font-mono text-[9px] text-bone-50/50 sm:text-[10px]"
+              className="truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
               title={songArtist}
             >
               {songArtist}
@@ -959,12 +982,12 @@ function HealthPanel({
         </div>
       )}
       <div className="flex items-center justify-between gap-1 sm:gap-2">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
+        <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           Rock meter
         </p>
         <button
           onClick={onToggleMetronome}
-          className={`pointer-events-auto font-mono text-[9px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
+          className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
             metronome
               ? "border-accent text-accent"
               : "border-bone-50/30 text-bone-50/40"
@@ -975,7 +998,7 @@ function HealthPanel({
           ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
         </button>
       </div>
-      <div className="relative h-3 w-full border-2 border-bone-50/40">
+      <div className="relative h-[0.78rem] w-full border-2 border-bone-50/40">
         <div
           className="absolute inset-y-0 left-0 transition-[width] duration-200"
           style={{
@@ -984,12 +1007,12 @@ function HealthPanel({
           }}
         />
       </div>
-      <p className="font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
+      <p className="font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
         P{stats.hits.perfect} · G{stats.hits.great} · g{stats.hits.good} · M
         {stats.hits.miss}
       </p>
       <div className="mt-1 flex items-center gap-1.5 sm:gap-2">
-        <span className="font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
+        <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50">
           vol
         </span>
         <input
@@ -1005,13 +1028,13 @@ function HealthPanel({
           className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
           aria-label="Music volume"
         />
-        <span className="hidden sm:inline font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">
+        <span className="hidden sm:inline font-mono text-[9.2px] tabular-nums text-bone-50/40 w-7 text-right">
           {Math.round(volume * 100)}
         </span>
       </div>
       <div className="hidden items-center justify-end sm:flex">
         <span
-          className={`font-mono text-[9px] tabular-nums tracking-widest ${
+          className={`font-mono text-[9.2px] tabular-nums tracking-widest ${
             fps >= 55
               ? "text-bone-50/40"
               : fps >= 40
@@ -1056,7 +1079,7 @@ function Spinner() {
     <span
       role="status"
       aria-label="Loading"
-      className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent"
+      className="inline-block h-[1.05rem] w-[1.05rem] animate-spin rounded-full border-2 border-bone-50/20 border-t-accent"
     />
   );
 }

@@ -9,6 +9,7 @@ import {
   loadSong,
   MODE_ORDER,
   ModeAvailability,
+  modeStars,
   PLACEHOLDER_META,
   prefetchAudio,
 } from "@/lib/game/chart";
@@ -831,6 +832,7 @@ export default function Game() {
             fps={fps}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
+            chartMode={chartMode}
           />
         )}
 
@@ -876,13 +878,13 @@ export default function Game() {
       {phase === "countdown" && (
         <Overlay translucent>
           <div className="text-center">
-            <p className="font-mono text-xs uppercase tracking-[0.4em] text-accent">
+            <p className="font-mono text-[0.79rem] uppercase tracking-[0.4em] text-accent">
               Get ready
             </p>
-            <p className="mt-2 font-display text-[clamp(6rem,18vw,12rem)] font-bold leading-none text-bone-50 drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
+            <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none text-bone-50 drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
               {countdown}
             </p>
-            <p className="mt-2 font-mono text-xs uppercase tracking-widest text-bone-50/60">
+            <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
               {touchOnly
                 ? "tap the four lanes · hold for sustains"
                 : "D F J K · or ← ↓ ↑ → · M = metronome · ESC = pause · hold for sustains"}
@@ -997,19 +999,49 @@ function StartCard({
   return (
     <div
       className="brut-card relative w-full max-w-xl overflow-hidden p-6 sm:p-8"
+      // When a cover image is in play, lock this card to the dark-theme
+      // palette regardless of the page-wide theme. The cover artwork is
+      // a dark photographic surface, so light-mode's near-black `--fg`
+      // text would inherit down and become unreadable (title, artist,
+      // keycap labels, difficulty button text, etc. all collapse to
+      // black-on-black). Forcing `data-theme="dark"` on the card swaps
+      // every CSS theme var inside (`--fg`, `--surface`, borders) to
+      // the dark variants — same look the user already confirmed reads
+      // perfectly in dark mode, applied uniformly.
+      data-theme={ready && meta!.coverUrl ? "dark" : undefined}
       style={
         ready && meta!.coverUrl
           ? {
-              // Same cover-as-ambient-background trick the homepage
-              // uses — the gradient stack is what makes it readable.
-              // Vertical here (rather than left-weighted) because
-              // StartCard text spans the full width: title at top,
-              // start button at bottom. Both ends need extra darkness;
-              // the middle can let the cover breathe through.
+              // Re-anchor `color` on the card itself so the freshly
+              // re-scoped dark `--fg` actually applies. Descendants
+              // inherit the resolved color value (not the CSS var),
+              // so without this re-declaration they'd keep body's
+              // near-black light-mode color even though the card
+              // itself is in dark mode.
+              color: "rgb(var(--fg))",
+              // Two-layer stack on top of the cover:
+              //   1. Vertical gradient — heavy dim at the title band
+              //      (top) and the Start button band (bottom) where
+              //      raw text sits directly on the cover, lighter in
+              //      the middle 35–65% band where the inner panels
+              //      (DIFFICULTY / BEST / METRONOME / VOLUME) supply
+              //      their own `bg-ink-900/50` backing so the cover
+              //      can show through between them.
+              //   2. Flat 0.20 dim across the whole card — a gentle
+              //      contrast floor so even bright anime keyart
+              //      can't punch the brand-blue accents into illegible
+              //      white-on-white.
               //
-              // 404s naturally fall back to the card's surface color
-              // from `.brut-card` — nothing to handle in JS.
-              backgroundImage: `linear-gradient(180deg, rgba(4,5,8,0.92) 0%, rgba(4,5,8,0.75) 35%, rgba(4,5,8,0.85) 65%, rgba(4,5,8,0.96) 100%), url(${meta!.coverUrl})`,
+              // Previous pass stacked 0.78–0.97 + 0.45 across the
+              // whole card and crushed darker photographic covers
+              // (e.g. dim photo art) to flat black — the user
+              // couldn't see the cover at all. This version keeps
+              // the title/Start bands locked in for readability but
+              // lets the artwork breathe through the middle, matching
+              // the homepage card's "ambient cover" feel. 404s fall
+              // back to the card's own surface from `.brut-card` —
+              // nothing to handle in JS.
+              backgroundImage: `linear-gradient(180deg, rgba(4,5,8,0.90) 0%, rgba(4,5,8,0.45) 30%, rgba(4,5,8,0.45) 70%, rgba(4,5,8,0.92) 100%), linear-gradient(rgba(4,5,8,0.25), rgba(4,5,8,0.25)), url(${meta!.coverUrl})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
             }
@@ -1018,7 +1050,7 @@ function StartCard({
     >
       <div className="flex items-baseline justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-2">
-          <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             {mirror ? "Random pick" : "Now playing"}
           </p>
           {ready && meta!.status && (
@@ -1027,7 +1059,7 @@ function StartCard({
         </div>
         {ready && songSource && (
           <span
-            className="font-mono text-[9px] uppercase tracking-widest text-accent/70"
+            className="font-mono text-[9.5px] uppercase tracking-widest text-accent/70"
             title={
               mirror
                 ? `Pulled from ${mirror} at runtime${meta!.creator ? ` · mapped by ${meta!.creator}` : ""}`
@@ -1041,10 +1073,24 @@ function StartCard({
 
       {ready ? (
         <>
-          <h2 className="mt-2 font-display text-3xl sm:text-4xl font-bold leading-none">
+          <h2
+            className="mt-2 font-display text-[1.97rem] sm:text-[2.36rem] font-bold leading-none"
+            style={
+              meta!.coverUrl
+                ? { textShadow: "0 2px 10px rgba(0,0,0,0.85)" }
+                : undefined
+            }
+          >
             {meta!.title}
           </h2>
-          <p className="mt-1 text-bone-50/70">
+          <p
+            className="mt-1 text-[1.05rem] text-bone-50/85"
+            style={
+              meta!.coverUrl
+                ? { textShadow: "0 1px 6px rgba(0,0,0,0.85)" }
+                : undefined
+            }
+          >
             {meta!.artist}
             {meta!.year ? ` · ${meta!.year}` : ""}
             {beatmapsetId != null && (
@@ -1057,13 +1103,13 @@ function StartCard({
                 // mono "#…" label rather than dropping below the
                 // baseline like a unicode `↗` would. `align-middle` on
                 // the icon nudges it up to optical center.
-                className="ml-2 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-bone-50/40 transition-colors hover:text-accent"
+                className="ml-2 inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40 transition-colors hover:text-accent"
                 title="Open on osu.ppy.sh"
               >
                 <span>#{beatmapsetId}</span>
                 <ArrowIcon
                   direction="up-right"
-                  size={11}
+                  size={12}
                   strokeWidth={2.75}
                   className="align-middle"
                 />
@@ -1076,13 +1122,13 @@ function StartCard({
           <Spinner />
           <div className="space-y-1">
             {progressMsg ? (
-              <p className="font-mono text-[11px] uppercase tracking-widest text-bone-50/70">
+              <p className="font-mono text-[11.5px] uppercase tracking-widest text-bone-50/70">
                 {progressMsg}
               </p>
             ) : (
               <div className="h-7 w-48 animate-pulse bg-bone-50/10" />
             )}
-            <p className="font-mono text-[9px] tracking-widest text-bone-50/40">
+            <p className="font-mono text-[9.5px] tracking-widest text-bone-50/40">
               {progressMsg
                 ? "first load downloads + unzips a 3\u20138 MB osu! beatmap"
                 : "loading\u2026"}
@@ -1097,23 +1143,23 @@ function StartCard({
         <KeyCap primary="J" direction="up" color="#3dff8a" />
         <KeyCap primary="K" direction="right" color="#3da9ff" />
       </div>
-      <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+      <p className="mt-2 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
         {touchOnly
           ? "tap the four lanes when notes hit the line · hold for sustains"
           : "D F J K or arrow keys · hold for long notes"}
       </p>
       {touchOnly && (
-        <p className="mt-1 hidden text-center font-mono text-[10px] uppercase tracking-widest text-accent/70 portrait:block">
+        <p className="mt-1 hidden text-center font-mono text-[10.5px] uppercase tracking-widest text-accent/70 portrait:block">
           ↻ rotate to landscape for more room
         </p>
       )}
 
-      <div className="mt-5 border-2 border-bone-50/20 px-3 py-2">
+      <div className="mt-5 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
         <div className="flex items-baseline justify-between gap-3">
-          <span className="font-mono text-[11px] uppercase tracking-widest text-bone-50/70">
+          <span className="font-mono text-[11.5px] uppercase tracking-widest text-bone-50/70">
             Difficulty
           </span>
-          <span className="font-mono text-[10px] text-bone-50/40">
+          <span className="font-mono text-[10.5px] text-bone-50/40">
             {chartLength} notes · {nps} nps
             {rawNoteCount > chartLength && (
               <span className="text-bone-50/30"> · raw {rawNoteCount}</span>
@@ -1151,49 +1197,49 @@ function StartCard({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <div className="border-2 border-bone-50/20 px-3 py-2">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/50">
+        <div className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
+          <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
             Best on this track
           </p>
           {best ? (
-            <p className="mt-1 font-display text-2xl font-bold text-accent">
+            <p className="mt-1 font-display text-[1.58rem] font-bold text-accent">
               {best.score.toLocaleString()}
             </p>
           ) : (
-            <p className="mt-1 font-display text-2xl font-bold text-bone-50/30">
+            <p className="mt-1 font-display text-[1.58rem] font-bold text-bone-50/30">
               —
             </p>
           )}
-          <p className="font-mono text-[9px] text-bone-50/50">
+          <p className="font-mono text-[9.5px] text-bone-50/50">
             {best
               ? `${best.accuracy.toFixed(1)}% · ×${best.maxCombo} combo`
               : "no runs yet"}
           </p>
         </div>
-        <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/20 px-3 py-2 cursor-pointer">
+        <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
           <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/70">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
               Metronome
             </span>
             <input
               type="checkbox"
               checked={metronome}
               onChange={onToggleMetronome}
-              className="h-4 w-4 accent-accent"
+              className="h-[1.05rem] w-[1.05rem] accent-accent"
             />
           </div>
-          <span className="font-mono text-[9px] text-bone-50/40">
+          <span className="font-mono text-[9.5px] text-bone-50/40">
             press M to toggle in-game
           </span>
         </label>
       </div>
 
-      <div className="mt-3 border-2 border-bone-50/20 px-3 py-2">
+      <div className="mt-3 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
         <div className="flex items-center justify-between gap-3">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/70">
+          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
             Music volume
           </span>
-          <span className="font-mono text-[10px] text-bone-50/40 tabular-nums">
+          <span className="font-mono text-[10.5px] text-bone-50/40 tabular-nums">
             {Math.round(volume * 100)}%
           </span>
         </div>
@@ -1210,7 +1256,7 @@ function StartCard({
       </div>
 
       {error && (
-        <p className="mt-4 border-2 border-rose-500 p-2 font-mono text-xs text-rose-400">
+        <p className="mt-4 border-2 border-rose-500 p-2 font-mono text-[0.78rem] text-rose-400">
           {error}
         </p>
       )}
@@ -1218,7 +1264,7 @@ function StartCard({
       <button
         onClick={onStart}
         disabled={loading || !ready}
-        className="brut-btn-accent mt-6 flex w-full items-center justify-center gap-2 px-6 py-4 text-base sm:text-lg disabled:opacity-50"
+        className="brut-btn-accent mt-6 flex w-full items-center justify-center gap-2 px-6 py-4 text-[1.05rem] sm:text-[1.18rem] disabled:opacity-50"
       >
         {loading || !ready ? (
           <>
@@ -1229,7 +1275,7 @@ function StartCard({
           <span>{best ? "▶ Try again" : "▶ Start"}</span>
         )}
       </button>
-      <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+      <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
         Replay as many times as you want!
       </p>
     </div>
@@ -1259,30 +1305,71 @@ function ModeButton({
   selected: boolean;
   onPick: (m: ChartMode) => void;
 }) {
+  const stars = modeStars(mode);
   return (
     <button
       onClick={() => enabled && onPick(mode)}
       disabled={!enabled}
       title={
         enabled
-          ? undefined
+          ? `${displayMode(mode).toUpperCase()} · ${stars} / 5 intensity`
           : `This song doesn't ship a ${displayMode(mode)} chart.`
       }
-      className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+      className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
         !enabled
-          ? "border-bone-50/10 text-bone-50/25 cursor-not-allowed"
+          ? // Bumped from /10 + /25 → /30 + /50 so disabled tiers
+            // stay legible when the StartCard sits on top of a busy
+            // cover image (anime keyart, bright album sleeves).
+            // Still clearly reads as "disabled" against an enabled
+            // tier (`text-bone-50/60`) and a selected tier (full
+            // accent fill).
+            "border-bone-50/30 text-bone-50/50 cursor-not-allowed bg-ink-900/40"
           : selected
             ? "border-accent bg-accent text-ink-900"
-            : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
+            : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60 bg-ink-900/40"
       }`}
     >
-      {displayMode(mode)}
+      <span>{displayMode(mode)}</span>
+      {/* Stars are rendered as a fixed 5-slot row (filled vs hollow) so
+          every button is the same width regardless of tier — otherwise
+          Easy (★) would be visibly narrower than Expert (★★★★★) and
+          the picker grid would feel uneven. */}
+      <span aria-hidden className="text-[8.5px] leading-none tracking-[0.2em]">
+        {"★".repeat(stars)}
+        <span className="opacity-30">{"★".repeat(5 - stars)}</span>
+      </span>
     </button>
   );
 }
 
+/**
+ * Compact `EASY ★★` style badge used in the in-game HUD to remind the
+ * player which tier they picked at the lobby. Mirrors the picker's
+ * label format (name + filled-vs-hollow stars) so the player can map
+ * the badge back to the picker button without re-reading legend text.
+ *
+ * Visual: bordered + accent-tinted so it reads as a "tag" rather than
+ * inline copy. Stays small enough not to fight the song title for the
+ * eye in the rock-meter card.
+ */
+function DifficultyTag({ mode }: { mode: ChartMode }) {
+  const stars = modeStars(mode);
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 border border-accent/60 px-1 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
+      title={`Difficulty: ${displayMode(mode)} (${stars} / 5 intensity)`}
+    >
+      <span>{displayMode(mode)}</span>
+      <span aria-hidden className="leading-none tracking-[0.15em]">
+        {"★".repeat(stars)}
+        <span className="opacity-30">{"★".repeat(5 - stars)}</span>
+      </span>
+    </span>
+  );
+}
+
 function Spinner({ small }: { small?: boolean }) {
-  const size = small ? 14 : 20;
+  const size = small ? 15 : 21;
   return (
     <span
       role="status"
@@ -1334,10 +1421,12 @@ function KeyCap({
       className="flex flex-col items-center justify-center gap-1 border-2 py-3"
       style={{ borderColor: color, color }}
     >
-      <span className="font-mono text-xl font-bold leading-none">{primary}</span>
+      <span className="font-mono text-[1.31rem] font-bold leading-none">
+        {primary}
+      </span>
       <ArrowIcon
         direction={direction}
-        size={14}
+        size={15}
         strokeWidth={2.75}
         style={{ opacity: 0.75 }}
       />
@@ -1358,6 +1447,7 @@ function HUD({
   fps,
   songTitle,
   songArtist,
+  chartMode,
 }: {
   stats: PlayerStats;
   metronome: boolean;
@@ -1370,6 +1460,7 @@ function HUD({
   fps: number;
   songTitle: string | null;
   songArtist: string | null;
+  chartMode: ChartMode;
 }) {
   const accuracy = computeAccuracy(stats);
   const total = stats.totalNotes;
@@ -1382,41 +1473,41 @@ function HUD({
           panel fits 4-lane phones in landscape without crowding the
           rock-meter card on the right. */}
       <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-3">
-        <div className="min-w-[88px] sm:min-w-[150px]">
-          <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
+        <div className="min-w-[89px] sm:min-w-[153px]">
+          <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Score
           </p>
-          <p className="font-display text-xl font-bold leading-none sm:text-3xl">
+          <p className="font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
             {stats.score.toLocaleString()}
           </p>
-          <p className="mt-1 font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
+          <p className="mt-1 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
             {accuracy.toFixed(1)}% · {stats.notesPlayed}/{total}
           </p>
           {best && (
-            <p className="mt-1 hidden font-mono text-[9px] uppercase tracking-widest text-bone-50/50 sm:block">
+            <p className="mt-1 hidden font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50 sm:block">
               track best {best.score.toLocaleString()}
             </p>
           )}
         </div>
         <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-        <div className="flex min-w-[56px] flex-col items-center justify-center sm:min-w-[80px]">
-          <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
+        <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[81px]">
+          <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Combo
           </p>
           <p
-            className={`font-display text-2xl font-bold leading-none tabular-nums sm:text-4xl ${
+            className={`font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
               stats.combo > 0 ? "text-accent" : "text-bone-50/40"
             }`}
           >
             {stats.combo}
           </p>
-          <p className="mt-1 font-mono text-[10px] font-bold text-accent sm:text-xs">
+          <p className="mt-1 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
             ×{stats.multiplier}
           </p>
         </div>
       </div>
 
-      <div className="brut-card flex w-[140px] flex-col gap-1 px-2.5 py-2 sm:w-[200px] sm:px-4 sm:py-3">
+      <div className="brut-card flex w-[143px] flex-col gap-1 px-2.5 py-2 sm:w-[204px] sm:px-4 sm:py-3">
         {/* "Now playing" strip — single source of truth for which song is on
             screen during gameplay (the StartCard hands off and disappears,
             so without this the player has nothing to remind them what's
@@ -1425,18 +1516,29 @@ function HUD({
             full text shows in the native title tooltip on hover. */}
         {songTitle && (
           <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
-            <p className="truncate font-mono text-[8px] uppercase tracking-widest text-bone-50/45 sm:text-[9px]">
-              ♪ Now playing
-            </p>
+            {/* Top row: "♪ Now playing" label on the left, current
+                difficulty tag on the right. We keep the tag inside the
+                same card (top-right) instead of absolute-positioning
+                it over the card chrome — that way the song title row
+                below always has predictable horizontal space and the
+                tag never collides with a long title. The tag mirrors
+                the picker's `EASY ★★` format so the player can map
+                the in-game label back to the lobby button at a glance. */}
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate font-mono text-[8.2px] uppercase tracking-widest text-bone-50/45 sm:text-[9.2px]">
+                ♪ Now playing
+              </p>
+              <DifficultyTag mode={chartMode} />
+            </div>
             <p
-              className="truncate font-mono text-[10px] font-bold text-bone-50/90 sm:text-[11px]"
+              className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
               title={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
             >
               {songTitle}
             </p>
             {songArtist && (
               <p
-                className="truncate font-mono text-[9px] text-bone-50/50 sm:text-[10px]"
+                className="truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
                 title={songArtist}
               >
                 {songArtist}
@@ -1445,13 +1547,13 @@ function HUD({
           </div>
         )}
         <div className="flex items-center justify-between gap-1 sm:gap-2">
-          <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
+          <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Rock meter
           </p>
           <div className="flex gap-1">
             <button
               onClick={onToggleMetronome}
-              className={`pointer-events-auto font-mono text-[9px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
+              className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
                 metronome
                   ? "border-accent text-accent"
                   : "border-bone-50/30 text-bone-50/40"
@@ -1464,7 +1566,7 @@ function HUD({
             <button
               onClick={onPause}
               disabled={paused}
-              className="pointer-events-auto font-mono text-[9px] uppercase tracking-widest border border-bone-50/40 px-1 py-0.5 text-bone-50/80 transition-colors hover:border-accent hover:text-accent disabled:opacity-40 sm:px-1.5"
+              className="pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border border-bone-50/40 px-1 py-0.5 text-bone-50/80 transition-colors hover:border-accent hover:text-accent disabled:opacity-40 sm:px-1.5"
               title="Pause (ESC)"
               aria-label="Pause"
             >
@@ -1472,7 +1574,7 @@ function HUD({
             </button>
           </div>
         </div>
-        <div className="relative h-3 w-full border-2 border-bone-50/40">
+        <div className="relative h-[0.78rem] w-full border-2 border-bone-50/40">
           <div
             className="absolute inset-y-0 left-0 transition-[width] duration-200"
             style={{
@@ -1486,12 +1588,12 @@ function HUD({
             }}
           />
         </div>
-        <p className="font-mono text-[9px] text-bone-50/60 sm:text-[10px]">
+        <p className="font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
           P{stats.hits.perfect} · G{stats.hits.great} · g{stats.hits.good} · M
           {stats.hits.miss}
         </p>
         <div className="mt-1 flex items-center gap-1.5 sm:gap-2">
-          <span className="font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50">
             vol
           </span>
           <input
@@ -1504,17 +1606,17 @@ function HUD({
             // min-w-0 is critical: <input type="range"> has a UA-set
             // intrinsic min-width (~120px) that overrides flex-shrink, so
             // without it the slider pokes past the card's right edge on
-            // narrow viewports (mobile rock-meter card is only ~140px).
+            // narrow viewports (mobile rock-meter card is only ~143px).
             className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
             aria-label="Music volume"
           />
-          <span className="hidden sm:inline font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">
+          <span className="hidden sm:inline font-mono text-[9.2px] tabular-nums text-bone-50/40 w-7 text-right">
             {Math.round(volume * 100)}
           </span>
         </div>
         <div className="hidden items-center justify-end sm:flex">
           <span
-            className={`font-mono text-[9px] tabular-nums tracking-widest ${
+            className={`font-mono text-[9.2px] tabular-nums tracking-widest ${
               fps >= 55
                 ? "text-bone-50/40"
                 : fps >= 40
@@ -1540,13 +1642,13 @@ function PauseCard({
 }) {
   return (
     <div className="brut-card w-full max-w-md p-6 sm:p-8 text-center">
-      <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+      <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
         Paused
       </p>
-      <h2 className="mt-2 font-display text-5xl font-bold leading-none">
+      <h2 className="mt-2 font-display text-[3.15rem] font-bold leading-none">
         ❚❚
       </h2>
-      <p className="mt-3 font-mono text-xs uppercase tracking-widest text-bone-50/60">
+      <p className="mt-3 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
         Audio is suspended — take your time
       </p>
       <div className="mt-6 grid grid-cols-2 gap-3">
@@ -1557,7 +1659,7 @@ function PauseCard({
           ✕ Give up
         </button>
       </div>
-      <p className="mt-3 font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+      <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
         ESC = resume · giving up doesn&rsquo;t save the run
       </p>
     </div>
@@ -1708,15 +1810,15 @@ function ResultsCard({
 
   return (
     <div className="brut-card-accent w-full max-w-lg p-6 sm:p-8">
-      <p className="font-mono text-xs uppercase tracking-[0.4em] text-accent">
+      <p className="font-mono text-[0.79rem] uppercase tracking-[0.4em] text-accent">
         {newBest ? "★ New track best" : "Run complete"}
       </p>
       <div className="mt-2 flex items-baseline justify-between">
-        <h2 className="font-display text-3xl sm:text-4xl font-bold">
+        <h2 className="font-display text-[1.97rem] sm:text-[2.36rem] font-bold">
           {meta.title}
         </h2>
         <span
-          className={`font-display text-6xl sm:text-7xl font-bold leading-none ${
+          className={`font-display text-[3.95rem] sm:text-[4.74rem] font-bold leading-none ${
             grade === "S"
               ? "text-accent"
               : grade === "F"
@@ -1728,7 +1830,7 @@ function ResultsCard({
         </span>
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 font-mono text-sm">
+      <div className="mt-6 grid grid-cols-2 gap-3 font-mono text-[0.92rem]">
         <Row label="Score" value={stats.score.toLocaleString()} accent />
         <Row label="Accuracy" value={`${accuracy.toFixed(2)}%`} />
         <Row label="Max combo" value={stats.maxCombo.toString()} />
@@ -1742,14 +1844,14 @@ function ResultsCard({
       {best && (
         <div className="mt-4 border-2 border-bone-50/20 px-3 py-2">
           <div className="flex items-baseline justify-between gap-3">
-            <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/60">
               Best on this track
             </span>
-            <span className="font-mono text-sm text-accent">
+            <span className="font-mono text-[0.92rem] text-accent">
               {best.score.toLocaleString()}
             </span>
           </div>
-          <p className="mt-0.5 font-mono text-[10px] text-bone-50/40">
+          <p className="mt-0.5 font-mono text-[10.5px] text-bone-50/40">
             {best.accuracy.toFixed(1)}% · ×{best.maxCombo} combo
             {newBest && (
               <span className="ml-2 text-accent">· you just set this</span>
@@ -1781,7 +1883,7 @@ function Row({
 }) {
   return (
     <div className="flex items-baseline justify-between border-b border-bone-50/15 pb-1.5">
-      <span className="text-[10px] uppercase tracking-widest text-bone-50/50">
+      <span className="text-[10.5px] uppercase tracking-widest text-bone-50/50">
         {label}
       </span>
       <span className={accent ? "text-accent font-bold" : "text-bone-50"}>

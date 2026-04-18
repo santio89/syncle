@@ -27,18 +27,18 @@ export default function PlayPage() {
       <header className="z-30 flex items-center justify-between gap-3 border-b-2 border-bone-50/20 px-4 py-2">
         <Link
           href="/"
-          className="group inline-flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-bone-50/70 transition-colors hover:text-accent"
+          className="group inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 transition-colors hover:text-accent"
         >
           <ArrowIcon
             direction="left"
-            size={14}
+            size={15}
             strokeWidth={2.75}
             className="transition-transform duration-200 group-hover:-translate-x-0.5"
           />
           <span>Syncle</span>
         </Link>
         <div className="flex items-center gap-2 sm:gap-3">
-          <span className="hidden font-mono text-[10px] uppercase tracking-[0.3em] text-bone-50/40 sm:inline">
+          <span className="hidden font-mono text-[10.5px] uppercase tracking-[0.3em] text-bone-50/40 sm:inline">
             Single player · v0.2
           </span>
           <ThemeToggle />
@@ -62,9 +62,9 @@ function GameSkeleton() {
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-900">
       <span
         aria-hidden
-        className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-bone-50/15 border-t-accent"
+        className="inline-block h-[1.84rem] w-[1.84rem] animate-spin rounded-full border-2 border-bone-50/15 border-t-accent"
       />
-      <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-bone-50/45">
+      <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-bone-50/45">
         Loading game…
       </p>
     </div>
