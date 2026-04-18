@@ -16,6 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
+import { CopyToast } from "@/components/CopyToast";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
 import {
@@ -273,10 +275,7 @@ function HostPane({
     // Server will flip phase, which unmounts this pane.
   };
 
-  const copyCode = useCallback(() => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(code).catch(() => {});
-  }, [code]);
+  const { copy, copied } = useCopyToClipboard();
 
   return (
     <div className="brut-card flex h-full flex-col p-5 sm:p-6">
@@ -289,13 +288,28 @@ function HostPane({
             Pick the song.
           </h3>
         </div>
-        <button
-          onClick={copyCode}
-          className="brut-btn px-3 py-2 text-[0.79rem]"
-          title="Copy room code"
-        >
-          ⧉ copy code
-        </button>
+        {/* Room code IS the button label, with the copy glyph trailing
+            on the right. Shows the host the code at a glance and
+            doubles as the copy-to-clipboard action — one element, two
+            jobs. Tooltip carries the verb since the button no longer
+            spells it out. `font-mono` + tracking-wider keep the code
+            legible (matches the room-code styling used elsewhere).
+            CopyToast pops above the button on a successful write so
+            the host gets visible confirmation, since the button
+            content itself doesn't change on click. */}
+        <div className="relative">
+          <CopyToast visible={copied} />
+          <button
+            onClick={() => copy(code)}
+            className="brut-btn inline-flex items-center gap-2 px-3 py-2 font-mono text-[0.86rem] uppercase tracking-wider"
+            title="Copy room code"
+          >
+            <span>{code}</span>
+            <span aria-hidden className="text-[0.92rem] leading-none">
+              ⧉
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Selected preview */}
@@ -304,15 +318,15 @@ function HostPane({
           <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
             Selected
           </p>
-          {selected && (
+          {/* Status line for the probe — only renders when we have
+              something to say (loading or error). The success case
+              used to print a "has: easy / medium / …" summary, but
+              the difficulty picker buttons below already convey that
+              (dashed style for unavailable tiers), so the label was
+              just duplicate noise. */}
+          {selected && (probing || probeError) && (
             <p className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/45">
-              {probing
-                ? "checking difficulties…"
-                : modeProbe
-                  ? availableModesLabel(modeProbe)
-                  : probeError
-                    ? "probe failed"
-                    : ""}
+              {probing ? "checking difficulties…" : "probe failed"}
             </p>
           )}
         </div>
@@ -562,14 +576,6 @@ function HostModeButton({
       </span>
     </button>
   );
-}
-
-function availableModesLabel(modes: ModeAvailability): string {
-  const tags: string[] = [];
-  for (const m of MODE_ORDER) {
-    if (modes.available[m]) tags.push(displayMode(m));
-  }
-  return tags.length ? `has: ${tags.join(" / ")}` : "no playable diffs";
 }
 
 /* ------------------------------------------------------------------------ */

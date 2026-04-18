@@ -18,9 +18,11 @@
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { CopyToast } from "@/components/CopyToast";
 import { GradientBg } from "@/components/GradientBg";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { Lobby } from "@/components/multi/Lobby";
 import { LoadingScreen } from "@/components/multi/LoadingScreen";
 import { MultiGame } from "@/components/multi/MultiGame";
@@ -453,12 +455,34 @@ function JoinForm({
   busy: boolean;
   error: string | null;
 }) {
+  const { copy, copied } = useCopyToClipboard();
   return (
     <div className="brut-card mx-auto w-full max-w-md p-5 sm:p-6">
       <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
         Joining room
       </p>
-      <h2 className="mt-1 font-display text-[1.58rem] font-bold">{code}</h2>
+      {/* Code doubles as a copy-to-clipboard button so the joiner
+          can share the same code with another friend in one click.
+          Mirrors the host's "code + ⧉" button in the lobby. Inline-
+          flex with `w-fit` so the click target is just the code +
+          icon, not the full row. CopyToast pops above on success. */}
+      <div className="relative mt-1 w-fit">
+        <CopyToast visible={copied} />
+        <button
+          type="button"
+          onClick={() => copy(code)}
+          title="Copy room code"
+          className="group inline-flex items-center gap-2 font-display text-[1.58rem] font-bold leading-none text-bone-50 transition-colors hover:text-accent"
+        >
+          <span>{code}</span>
+          <span
+            aria-hidden
+            className="text-[1.05rem] leading-none text-bone-50/50 transition-colors group-hover:text-accent"
+          >
+            ⧉
+          </span>
+        </button>
+      </div>
       <label className="mt-4 block">
         <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/60">
           Your name

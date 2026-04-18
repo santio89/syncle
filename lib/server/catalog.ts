@@ -36,50 +36,113 @@ const SEARCH_SOURCES: SearchSource[] = [
 const PAGE_WINDOW = 30;
 const PAGE_SIZE = 50;
 const FETCH_TIMEOUT_MS = 8_000;
-const MAX_CATALOG_ITEMS = 24;
+// Target catalog size. Mirrors cap a single page at PAGE_SIZE (50)
+// items, and ranking-quality filtering (4K mania only) typically drops
+// 10-30 % of those, so reaching this target requires walking 3-4
+// consecutive pages from a random offset and deduping by id.
+//
+// Wire cost is still trivial: ~100 bytes per CatalogItem → ~10 KB per
+// room. The expensive .osz / cover / chart bytes only ever land for
+// the ONE song the host actually clicks (probeSongModes() warms the
+// per-set cache; loadSongById() reuses it for "Start match").
+const MAX_CATALOG_ITEMS = 100;
+// Hard cap on consecutive pages walked per source before giving up.
+// Protects against a sparse mirror or a malformed page that never
+// contributes new items — without this we could spin forever fetching
+// duplicates of the same `beatmapsetId`s.
+const MAX_PAGES_PER_SOURCE = 6;
 
 /**
- * Fetch a fresh page of ranked osu!mania 4K beatmapsets from a public search
- * mirror. Sources are tried in random order to spread load and survive a
- * single mirror hiccup. Returns up to `MAX_CATALOG_ITEMS` 4K-eligible items.
+ * Fetch up to `MAX_CATALOG_ITEMS` ranked osu!mania 4K beatmapsets from a
+ * public search mirror.
+ *
+ * Strategy:
+ *   - Pick mirrors in random order so the load spreads and a single
+ *     bad mirror doesn't always serve everyone.
+ *   - Per mirror, start from a random page in `PAGE_WINDOW` and walk
+ *     consecutive pages until we hit the target count, run out of
+ *     pages (an empty page = mirror has no more results from this
+ *     offset), or stop making progress for two pages in a row (sparse
+ *     4K mania pool past the random offset).
+ *   - Dedupe by `beatmapsetId` so a mirror returning overlapping
+ *     pages doesn't inflate the count with repeats.
+ *   - Fall through to the next mirror if the current one yields zero
+ *     items across all attempts; surface a combined error if all
+ *     mirrors fail.
  */
 export async function fetchCatalog(): Promise<CatalogItem[]> {
   const sources = [...SEARCH_SOURCES].sort(() => Math.random() - 0.5);
   const errors: string[] = [];
 
   for (const src of sources) {
-    const page = Math.floor(Math.random() * PAGE_WINDOW);
-    const url = src.url(page, PAGE_SIZE);
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        headers: { accept: "application/json" },
-        signal: ac.signal,
-      });
-      if (!res.ok) {
-        errors.push(`${src.name}: HTTP ${res.status}`);
-        continue;
+    const startPage = Math.floor(Math.random() * PAGE_WINDOW);
+    const seen = new Set<number>();
+    const items: CatalogItem[] = [];
+    let consecutiveEmpty = 0;
+
+    for (
+      let pageOffset = 0;
+      pageOffset < MAX_PAGES_PER_SOURCE && items.length < MAX_CATALOG_ITEMS;
+      pageOffset++
+    ) {
+      const page = startPage + pageOffset;
+      const url = src.url(page, PAGE_SIZE);
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(url, {
+          headers: { accept: "application/json" },
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          errors.push(`${src.name} p${page}: HTTP ${res.status}`);
+          // Stop walking pages on this source after a hard error;
+          // continuation is unlikely to recover. Fall through to the
+          // next mirror.
+          break;
+        }
+        const json = await res.json();
+        const sets = src.extract(json);
+        if (sets.length === 0) {
+          // Empty page = exhausted this offset window; continuing is
+          // pointless. Treat as end-of-mirror, not a failure.
+          break;
+        }
+        const before = items.length;
+        for (const raw of sets) {
+          const item = normalize(raw, src.name);
+          if (!item || seen.has(item.beatmapsetId)) continue;
+          seen.add(item.beatmapsetId);
+          items.push(item);
+          if (items.length >= MAX_CATALOG_ITEMS) break;
+        }
+        if (items.length === before) {
+          // No new items from this page — either entirely duplicates
+          // or all filtered out. Two such pages in a row means the
+          // remaining offset window isn't going to contribute, so cut
+          // losses and either return what we have or fall through.
+          consecutiveEmpty++;
+          if (consecutiveEmpty >= 2) break;
+        } else {
+          consecutiveEmpty = 0;
+        }
+      } catch (err: any) {
+        const msg =
+          err?.name === "AbortError" ? "timeout" : err?.message ?? String(err);
+        errors.push(`${src.name} p${page}: ${msg}`);
+        // Network error mid-walk: bail to the next mirror rather than
+        // retrying — the per-page timeout is already 8 s, retrying
+        // here would push the host's perceived "loading catalog" wait
+        // past 30 s.
+        break;
+      } finally {
+        clearTimeout(timer);
       }
-      const json = await res.json();
-      const sets = src.extract(json);
-      const items: CatalogItem[] = [];
-      for (const raw of sets) {
-        const item = normalize(raw, src.name);
-        if (!item) continue;
-        items.push(item);
-        if (items.length >= MAX_CATALOG_ITEMS) break;
-      }
-      if (items.length === 0) {
-        errors.push(`${src.name}: page ${page} had 0 4K mania results`);
-        continue;
-      }
-      return items;
-    } catch (err: any) {
-      const msg = err?.name === "AbortError" ? "timeout" : err?.message ?? String(err);
-      errors.push(`${src.name}: ${msg}`);
-    } finally {
-      clearTimeout(timer);
+    }
+
+    if (items.length > 0) return items;
+    if (errors.length === 0 || !errors[errors.length - 1].startsWith(src.name)) {
+      errors.push(`${src.name}: 0 4K mania results across walked pages`);
     }
   }
 
