@@ -1348,13 +1348,15 @@ function ModeButton({
       }
       className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
         !enabled
-          ? // Bumped from /10 + /25 → /30 + /50 so disabled tiers
-            // stay legible when the StartCard sits on top of a busy
-            // cover image (anime keyart, bright album sleeves).
-            // Still clearly reads as "disabled" against an enabled
-            // tier (`text-bone-50/60`) and a selected tier (full
-            // accent fill).
-            "border-bone-50/30 text-bone-50/50 cursor-not-allowed bg-ink-900/40"
+          ? // Distinct "unavailable" treatment: dashed border + much
+            // dimmer text/stars. Reads as obviously off vs the solid
+            // outline of an unselected-but-available tier (which the
+            // player CAN click). The dashed stroke is the brutalist
+            // "this slot exists in the layout but not for you" tell;
+            // dropping text alpha to /35 (vs /60 unselected) makes
+            // the diff impossible to miss in a glance, even on top
+            // of busy cover-art backgrounds.
+            "border-dashed border-bone-50/20 text-bone-50/35 cursor-not-allowed bg-ink-900/40"
           : selected
             ? "border-accent bg-accent text-ink-900"
             : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60 bg-ink-900/40"
@@ -1364,8 +1366,13 @@ function ModeButton({
       {/* Stars are rendered as a fixed 5-slot row (filled vs hollow) so
           every button is the same width regardless of tier — otherwise
           Easy (★) would be visibly narrower than Expert (★★★★★) and
-          the picker grid would feel uneven. */}
-      <span aria-hidden className="text-[8.5px] leading-none tracking-[0.2em]">
+          the picker grid would feel uneven. Disabled tiers fade the
+          whole star row further so it doesn't fight the dimmed name
+          for attention. */}
+      <span
+        aria-hidden
+        className={`text-[8.5px] leading-none tracking-[0.2em] ${enabled ? "" : "opacity-60"}`}
+      >
         {"★".repeat(stars)}
         <span className="opacity-30">{"★".repeat(5 - stars)}</span>
       </span>

@@ -124,9 +124,23 @@ export function modeStars(mode: ChartMode): 1 | 2 | 3 | 4 | 5 {
  *     dedup. Used for Hard/Insane where chord patterns are part of
  *     what makes the tier feel like itself.
  *
+ * `maxPerCell` (only meaningful with `preserveChords: true`):
+ *   - undefined: no cap. Pure chord-preserve.
+ *   - N: at most N notes survive per cell across lanes (first-come on
+ *     a per-lane basis, since `bucketCharts` are time-sorted by parser).
+ *     Lets us thin chord stacks WITHOUT collapsing every cell to a
+ *     single note — the missing rung between full chord-preserve and
+ *     full chord-collapse. Critical for synthesizing a tier whose
+ *     band sits narrowly between Hard and Expert: pure chord-preserve
+ *     leaves all notes (= Expert), pure chord-collapse strips too
+ *     much, but `maxPerCell: 2` or `3` reliably shaves chord stacks
+ *     without flattening timing variety.
+ *
  * Hold notes (sustains) are always preserved unconditionally — losing
  * them on easier tiers would silently drop entire phrases of the song.
  * Their head time is snapped to the nearest cell; duration is kept.
+ * Hold heads do NOT count against `maxPerCell` (a sustain anchoring a
+ * lane shouldn't displace a downbeat tap in another lane).
  */
 function quantizeToGrid(
   notes: Note[],
@@ -134,6 +148,7 @@ function quantizeToGrid(
   offsetSec: number,
   gridDivisor: 1 | 2 | 3 | 4 | 6 | 8,
   preserveChords = false,
+  maxPerCell?: number,
 ): Note[] {
   const beatLen = 60 / bpm;
   const cell = beatLen / gridDivisor;
@@ -146,6 +161,13 @@ function quantizeToGrid(
   // for the chord-collapse path. Map keeps insertion order so the
   // resulting note array stays roughly in chart order.
   const buckets = new Map<string, Note>();
+  // Per-cell lane occupancy — only populated when maxPerCell is in
+  // effect. Tracks how many distinct lanes already landed in each cell
+  // so we can stop accepting new lanes once the cap is reached.
+  const cellLanes =
+    preserveChords && maxPerCell != null
+      ? new Map<number, Set<number>>()
+      : null;
 
   for (const n of notes) {
     const idx = Math.round((n.t - offsetSec) / cell);
@@ -161,12 +183,77 @@ function quantizeToGrid(
       continue;
     }
     const key = preserveChords ? `${idx}:${n.lane}` : `${idx}`;
-    if (!buckets.has(key)) {
-      buckets.set(key, { id: 0, t: snapped, lane: n.lane });
+    if (buckets.has(key)) continue;
+    if (cellLanes) {
+      let lanes = cellLanes.get(idx);
+      if (!lanes) {
+        lanes = new Set();
+        cellLanes.set(idx, lanes);
+      }
+      // At cap: drop notes for any lane not already accepted in this
+      // cell. Notes for already-accepted lanes are no-ops anyway since
+      // the `(idx, lane)` key would have hit the `buckets.has(key)`
+      // short-circuit above.
+      if (lanes.size >= maxPerCell! && !lanes.has(n.lane)) continue;
+      lanes.add(n.lane);
     }
+    buckets.set(key, { id: 0, t: snapped, lane: n.lane });
   }
 
   const out: Note[] = [...holds, ...buckets.values()];
+  out.sort((a, b) => a.t - b.t);
+  out.forEach((n, i) => (n.id = i));
+  return out;
+}
+
+/**
+ * Final-resort thinning that bypasses the beat-grid entirely and just
+ * removes a fixed fraction of taps along the chart timeline.
+ *
+ * Used as the LAST recipe entry for Hard / Insane to guarantee a
+ * usable synthesized chart even on awkward sources where every grid
+ * recipe either preserves all notes (no chord stacks at finer cells)
+ * or strips too aggressively (sparse chart with chord-collapse). The
+ * canonical break case: a Hard already lands at /3 chord-preserve,
+ * leaving Insane a narrow band of "between Hard and Expert" that no
+ * grid divisor naturally hits.
+ *
+ * Approach: keep all holds (sustains carry phrasing — losing one
+ * silently kills part of the song) and Bresenham-step through the
+ * sorted taps to drop `(1 - ratio) * count` of them at evenly-spaced
+ * indices. This avoids dropping a contiguous burst of notes (which
+ * would carve a hole in a single bar) at the cost of slight loss of
+ * pattern integrity — acceptable since this only fires when no
+ * grid-aligned recipe could thin at all.
+ */
+function subsampleNotes(notes: Note[], ratio: number): Note[] {
+  const isHold = (n: Note) => n.endT != null && n.endT > n.t + 0.05;
+  const holds: Note[] = [];
+  const taps: Note[] = [];
+  for (const n of notes) (isHold(n) ? holds : taps).push(n);
+  taps.sort((a, b) => a.t - b.t);
+
+  const targetTaps = Math.max(0, Math.floor(taps.length * ratio));
+  const dropCount = taps.length - targetTaps;
+  if (dropCount <= 0) {
+    // No-op — return a fresh array so the id-rewrite below is honest.
+    const out = [...holds, ...taps];
+    out.sort((a, b) => a.t - b.t);
+    out.forEach((n, i) => (n.id = i));
+    return out;
+  }
+
+  // Mark `dropCount` indices to skip, evenly distributed.
+  const drop = new Set<number>();
+  const step = taps.length / dropCount;
+  for (let i = 0; i < dropCount; i++) {
+    drop.add(Math.min(taps.length - 1, Math.floor((i + 0.5) * step)));
+  }
+  const kept: Note[] = [];
+  for (let i = 0; i < taps.length; i++) {
+    if (!drop.has(i)) kept.push(taps[i]);
+  }
+  const out: Note[] = [...holds, ...kept];
   out.sort((a, b) => a.t - b.t);
   out.forEach((n, i) => (n.id = i));
   return out;
@@ -727,32 +814,68 @@ async function pickRandomLocal(): Promise<RawSession> {
  *     since coarsest produces the most thinning when it works at all.
  *   - Only then drop chord preservation as a last resort.
  */
-type Recipe = {
+/**
+ * A recipe is either a beat-grid quantization step or a final-resort
+ * percentage subsample. Discriminated by `kind` so `resolveTier` can
+ * branch on the engine to use without runtime type sniffing.
+ */
+type GridRecipe = {
+  kind: "grid";
   divisor: 1 | 2 | 3 | 4 | 6 | 8;
   preserveChords: boolean;
+  /** Cap chord size per cell across lanes (see `quantizeToGrid`). */
+  maxPerCell?: number;
 };
+type SubsampleRecipe = {
+  kind: "subsample";
+  /** Fraction of source taps to keep, 0..1. Holds are always kept. */
+  ratio: number;
+};
+type Recipe = GridRecipe | SubsampleRecipe;
+
 const RECIPES: Record<Exclude<ChartMode, "expert">, Recipe[]> = {
   // Easy / Normal use a single fixed coarse grid + chord-collapse.
   // No fallbacks needed: chord-collapse at /1 or /2 produces such
   // aggressive thinning that even a single-note-no-chord source
   // (extremely rare) drops to ~max-1-note-per-cell density.
-  easy:   [{ divisor: 1, preserveChords: false }],
-  normal: [{ divisor: 2, preserveChords: false }],
+  easy:   [{ kind: "grid", divisor: 1, preserveChords: false }],
+  normal: [{ kind: "grid", divisor: 2, preserveChords: false }],
   hard: [
-    { divisor: 3, preserveChords: true },
-    { divisor: 4, preserveChords: true },
-    { divisor: 6, preserveChords: true },
+    { kind: "grid", divisor: 3, preserveChords: true },
+    { kind: "grid", divisor: 4, preserveChords: true },
+    { kind: "grid", divisor: 6, preserveChords: true },
+    // Chord-cap fallbacks: shrink chord stacks without flattening
+    // every cell to a single note. Useful for dense sources where
+    // chord-preserve at /3 already keeps everything.
+    { kind: "grid", divisor: 3, preserveChords: true, maxPerCell: 2 },
     // Chord-collapse fallbacks: kicked in for sparse Expert sources
     // (8-10 nps) where chord-preserve doesn't find collisions.
-    { divisor: 4, preserveChords: false },
-    { divisor: 6, preserveChords: false },
+    { kind: "grid", divisor: 4, preserveChords: false },
+    { kind: "grid", divisor: 6, preserveChords: false },
+    // Last-resort: thin to ~70 % of source taps. Always lands above
+    // the previous tier's count (otherwise the previous tier would
+    // also be unavailable and `prevAvailableCount` would be the
+    // count below that), and strictly below source count.
+    { kind: "subsample", ratio: 0.7 },
   ],
   insane: [
-    { divisor: 4, preserveChords: true },
-    { divisor: 6, preserveChords: true },
-    { divisor: 8, preserveChords: true },
-    { divisor: 6, preserveChords: false },
-    { divisor: 8, preserveChords: false },
+    { kind: "grid", divisor: 4, preserveChords: true },
+    { kind: "grid", divisor: 6, preserveChords: true },
+    { kind: "grid", divisor: 8, preserveChords: true },
+    // Chord-cap fallbacks (the missing rung that fixes the common
+    // "Expert is the only source above" case): with `maxPerCell: 3`
+    // we strip 4-stacks down to 3, with `maxPerCell: 2` we also
+    // strip 3-stacks down to 2. Either reliably lands inside the
+    // narrow (Hard, Expert) band that pure chord-preserve / pure
+    // chord-collapse can't hit.
+    { kind: "grid", divisor: 4, preserveChords: true, maxPerCell: 3 },
+    { kind: "grid", divisor: 4, preserveChords: true, maxPerCell: 2 },
+    { kind: "grid", divisor: 6, preserveChords: false },
+    { kind: "grid", divisor: 8, preserveChords: false },
+    // Last-resort: keep ~90 % of source taps. Insane between Hard
+    // and Expert is conceptually "almost Expert" — losing one tap
+    // in ten preserves the feel without re-labeling Expert.
+    { kind: "subsample", ratio: 0.9 },
   ],
 };
 
@@ -974,14 +1097,18 @@ function resolveTier(
 
   const recipes = RECIPES[tier];
   const sourceCount = source.rawNotes.length;
-  for (const { divisor, preserveChords } of recipes) {
-    const result = quantizeToGrid(
-      source.rawNotes,
-      source.bpm,
-      source.offset,
-      divisor,
-      preserveChords,
-    );
+  for (const recipe of recipes) {
+    const result =
+      recipe.kind === "grid"
+        ? quantizeToGrid(
+            source.rawNotes,
+            source.bpm,
+            source.offset,
+            recipe.divisor,
+            recipe.preserveChords,
+            recipe.maxPerCell,
+          )
+        : subsampleNotes(source.rawNotes, recipe.ratio);
     if (result.length > prevAvailableCount && result.length < sourceCount) {
       return {
         notes: result,

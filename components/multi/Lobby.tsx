@@ -516,14 +516,29 @@ function HostModeButton({
         selected && available
           ? "border-accent bg-accent text-ink-900"
           : disabled
-            ? `border-bone-50/30 text-bone-50/50 ${probing ? "cursor-wait" : "cursor-not-allowed"}`
+            ? probing
+              ? // Probing is transient ("waiting on the song probe");
+                // keep the solid outline + cursor-wait so the slot
+                // still feels live, just not yet pickable.
+                "border-bone-50/30 text-bone-50/50 cursor-wait"
+              : // Permanently unavailable (this song doesn't ship the
+                // tier and can't synthesize it): dashed outline + much
+                // dimmer text. Mirrors the single-player ModeButton so
+                // the same visual language tells the player "off, not
+                // loading" everywhere a difficulty picker exists.
+                "border-dashed border-bone-50/20 text-bone-50/35 cursor-not-allowed"
             : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
       }`}
     >
       <span>{displayMode(mode)}</span>
       {/* Fixed 5-slot star row keeps every button the same width, so
-          easy and expert don't visually shift the picker grid. */}
-      <span aria-hidden className="text-[8.5px] leading-none tracking-[0.2em]">
+          easy and expert don't visually shift the picker grid. Stars
+          fade further on a permanently unavailable tier so they don't
+          out-shout the dimmed name. */}
+      <span
+        aria-hidden
+        className={`text-[8.5px] leading-none tracking-[0.2em] ${disabled && !probing ? "opacity-60" : ""}`}
+      >
         {"★".repeat(stars)}
         <span className="opacity-30">{"★".repeat(5 - stars)}</span>
       </span>
