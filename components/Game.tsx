@@ -28,7 +28,14 @@ import {
   RunBest,
 } from "@/lib/game/best";
 import { recordRun } from "@/lib/game/stats";
-import { loadVolume, saveVolume } from "@/lib/game/settings";
+import {
+  loadVolume,
+  saveVolume,
+  loadFpsLock,
+  saveFpsLock,
+  nextFpsLock,
+  type FpsLock,
+} from "@/lib/game/settings";
 import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -146,6 +153,15 @@ export default function Game() {
   const [volume, setVolume] = useState<number>(0.85);
   /** Rolling average frame rate, sampled every ~250ms for HUD readout. */
   const [fps, setFps] = useState<number>(0);
+  /** Optional render frame-rate cap (off / 30 / 60). Persisted across
+   *  sessions. The rAF loop reads `fpsLockRef.current` so toggling the
+   *  lock takes effect on the next frame without a remount.
+   *  Hydrated from localStorage in the same effect that loads `volume`. */
+  const [fpsLock, setFpsLock] = useState<FpsLock>(null);
+  const fpsLockRef = useRef<FpsLock>(null);
+  useEffect(() => {
+    fpsLockRef.current = fpsLock;
+  }, [fpsLock]);
   /** True if the user is on a touch-only device (no physical keyboard).
    *  Drives the on-screen <TouchLanes> overlay and swaps the "press D F J K"
    *  hints in the StartCard for tap-friendly copy. */
@@ -308,9 +324,17 @@ export default function Game() {
     saveVolume(volume);
   }, [volume]);
 
+  // Persist the FPS lock the moment it changes (the rAF loop already
+  // picks it up via fpsLockRef; this just keeps the choice across
+  // refreshes / new sessions).
+  useEffect(() => {
+    saveFpsLock(fpsLock);
+  }, [fpsLock]);
+
   // Hydrate persisted volume + detect touch-only devices on mount.
   useEffect(() => {
     setVolume(loadVolume());
+    setFpsLock(loadFpsLock());
     if (typeof window !== "undefined" && window.matchMedia) {
       // pointer:coarse + no fine pointer ⇒ phone/tablet without a real keyboard.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
@@ -613,6 +637,20 @@ export default function Game() {
 
     const loop = () => {
       const now = performance.now();
+      // Optional render frame-rate cap. We still wake on every vblank
+      // (rAF), but skip the draw + game-tick work until the per-frame
+      // budget has elapsed. Tolerance of 1.5ms absorbs vblank jitter so
+      // a 60-cap on a 200Hz monitor settles at ~60fps instead of ~50.
+      // The audio engine runs off its own AudioContext clock so capping
+      // render frames does NOT desync hits or metronome timing.
+      const lockedFps = fpsLockRef.current;
+      if (lockedFps != null) {
+        const budgetMs = 1000 / lockedFps - 1.5;
+        if (now - last < budgetMs) {
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
+      }
       // Clamp dt to 100ms so a tab-switch / pause doesn't yank particles
       // hundreds of pixels in a single frame on the first frame back.
       const dt = Math.min(0.1, (now - last) / 1000);
@@ -830,6 +868,8 @@ export default function Game() {
             onPause={pause}
             paused={phase === "paused"}
             fps={fps}
+            fpsLock={fpsLock}
+            onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
             chartMode={chartMode}
@@ -1436,6 +1476,8 @@ function HUD({
   onPause,
   paused,
   fps,
+  fpsLock,
+  onCycleFpsLock,
   songTitle,
   songArtist,
   chartMode,
@@ -1449,6 +1491,8 @@ function HUD({
   onPause: () => void;
   paused: boolean;
   fps: number;
+  fpsLock: FpsLock;
+  onCycleFpsLock: () => void;
   songTitle: string | null;
   songArtist: string | null;
   chartMode: ChartMode;
@@ -1605,7 +1649,31 @@ function HUD({
             {Math.round(volume * 100)}
           </span>
         </div>
-        <div className="hidden items-center justify-end sm:flex">
+        <div className="hidden items-center justify-end gap-1.5 sm:flex">
+          {/* FPS lock toggle — clicking cycles off → 30 → 60 → off. The
+              uncapped state is intentionally a dim "OFF" pill so the
+              eye doesn't read it as the active option; the locked
+              states get the brand accent so the player can confirm at
+              a glance which cap is in effect. */}
+          <button
+            onClick={onCycleFpsLock}
+            type="button"
+            className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
+              fpsLock == null
+                ? "border-bone-50/30 text-bone-50/50 hover:border-bone-50/60 hover:text-bone-50/80"
+                : "border-accent text-accent"
+            }`}
+            title={
+              fpsLock == null
+                ? "FPS lock off — click to cap at 30 FPS"
+                : `Render frame-rate capped at ${fpsLock} FPS — click to ${
+                    fpsLock === 30 ? "cap at 60" : "uncap"
+                  }`
+            }
+            aria-label="Cycle render FPS lock"
+          >
+            LOCK·{fpsLock == null ? "OFF" : fpsLock}
+          </button>
           <span
             className={`font-mono text-[9.2px] tabular-nums tracking-widest ${
               fps >= 55

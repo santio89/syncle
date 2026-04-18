@@ -34,7 +34,14 @@ import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
 import type { LoadSongResult, ChartMode } from "@/lib/game/chart";
 import { displayMode, modeStars } from "@/lib/game/chart";
-import { loadVolume, saveVolume } from "@/lib/game/settings";
+import {
+  loadVolume,
+  saveVolume,
+  loadFpsLock,
+  saveFpsLock,
+  nextFpsLock,
+  type FpsLock,
+} from "@/lib/game/settings";
 import {
   createRenderState,
   crossedComboMilestone,
@@ -140,6 +147,14 @@ function CanvasPane({
   const [volume, setVolume] = useState<number>(0.85);
   const [metronome, setMetronome] = useState<boolean>(true);
   const [fps, setFps] = useState<number>(0);
+  // Optional render-loop frame-rate cap — same control surface as
+  // single-player (off / 30 / 60), shared persistence key so a player
+  // who caps in solo also has it capped in multi without re-toggling.
+  const [fpsLock, setFpsLock] = useState<FpsLock>(null);
+  const fpsLockRef = useRef<FpsLock>(null);
+  useEffect(() => {
+    fpsLockRef.current = fpsLock;
+  }, [fpsLock]);
   /**
    * Flips true once `loadFromBytes` / `load` resolves and the AudioBuffer
    * is actually decoded into the engine. The schedule effect depends on
@@ -403,6 +418,20 @@ function CanvasPane({
 
     const loop = () => {
       const now = performance.now();
+      // Optional render frame-rate cap. Mirrors single-player Game.tsx —
+      // we still wake on every vblank but skip the draw + tick body
+      // until the per-frame budget elapses. Score upload + finished
+      // detection live inside the gated body, but the room is driven
+      // by server-authoritative timestamps so missing a couple of
+      // intermediate ticks per second never affects the actual sync.
+      const lockedFps = fpsLockRef.current;
+      if (lockedFps != null) {
+        const budgetMs = 1000 / lockedFps - 1.5;
+        if (now - last < budgetMs) {
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
+      }
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
 
@@ -563,7 +592,14 @@ function CanvasPane({
   // session's preference (shared with single-player via lib/game/settings).
   useEffect(() => {
     setVolume(loadVolume());
+    setFpsLock(loadFpsLock());
   }, []);
+
+  // Persist the FPS lock — the rAF loop reads `fpsLockRef`, so this is
+  // purely about remembering the choice across reconnects / refreshes.
+  useEffect(() => {
+    saveFpsLock(fpsLock);
+  }, [fpsLock]);
 
   // Stop the engine on unmount.
   useEffect(() => {
@@ -599,6 +635,8 @@ function CanvasPane({
               metronome={metronome}
               onToggleMetronome={() => setMetronome((m) => !m)}
               fps={fps}
+              fpsLock={fpsLock}
+              onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               songTitle={loaded?.meta.title ?? snapshot.selectedSong?.title ?? null}
               songArtist={loaded?.meta.artist ?? snapshot.selectedSong?.artist ?? null}
               chartMode={mode}
@@ -913,6 +951,8 @@ function HealthPanel({
   metronome,
   onToggleMetronome,
   fps,
+  fpsLock,
+  onCycleFpsLock,
   songTitle,
   songArtist,
   chartMode,
@@ -923,6 +963,8 @@ function HealthPanel({
   metronome: boolean;
   onToggleMetronome: () => void;
   fps: number;
+  fpsLock: FpsLock;
+  onCycleFpsLock: () => void;
   songTitle: string | null;
   songArtist: string | null;
   chartMode: ChartMode;
@@ -1032,7 +1074,30 @@ function HealthPanel({
           {Math.round(volume * 100)}
         </span>
       </div>
-      <div className="hidden items-center justify-end sm:flex">
+      <div className="hidden items-center justify-end gap-1.5 sm:flex">
+        {/* FPS lock toggle — same control + visual treatment as the
+            single-player HUD. Cycles off → 30 → 60 → off; the audio
+            engine + server-driven start timestamps are unaffected by
+            the cap so room sync stays exact. */}
+        <button
+          onClick={onCycleFpsLock}
+          type="button"
+          className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
+            fpsLock == null
+              ? "border-bone-50/30 text-bone-50/50 hover:border-bone-50/60 hover:text-bone-50/80"
+              : "border-accent text-accent"
+          }`}
+          title={
+            fpsLock == null
+              ? "FPS lock off — click to cap at 30 FPS"
+              : `Render frame-rate capped at ${fpsLock} FPS — click to ${
+                  fpsLock === 30 ? "cap at 60" : "uncap"
+                }`
+          }
+          aria-label="Cycle render FPS lock"
+        >
+          LOCK·{fpsLock == null ? "OFF" : fpsLock}
+        </button>
         <span
           className={`font-mono text-[9.2px] tabular-nums tracking-widest ${
             fps >= 55
