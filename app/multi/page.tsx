@@ -31,6 +31,18 @@ export default function MultiEntryPage() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // After ~3s of staying in "connecting" we surface the cold-start hint.
+  // Free Render dynos sleep after 15min idle and take ~30s to wake up.
+  const [showColdStartHint, setShowColdStartHint] = useState(false);
+  useEffect(() => {
+    if (conn === "connected") {
+      setShowColdStartHint(false);
+      return;
+    }
+    if (conn !== "connecting" && conn !== "reconnecting") return;
+    const t = setTimeout(() => setShowColdStartHint(true), 3_000);
+    return () => clearTimeout(t);
+  }, [conn]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -125,6 +137,27 @@ export default function MultiEntryPage() {
 
         <ConnectionPill conn={conn} />
 
+        {showColdStartHint && (
+          <div className="brut-card-accent flex gap-3 px-4 py-3 text-[11px] leading-relaxed text-bone-50/80">
+            <span
+              aria-hidden
+              className="mt-[3px] inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent"
+            />
+            <div className="flex-1 space-y-1">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-accent">
+                ░ Waking the multiplayer server
+              </p>
+              <p>
+                The realtime server sleeps when idle and takes around{" "}
+                <strong className="text-bone-50">30 seconds</strong> to spin
+                back up on the first connection. This happens once — every
+                player who joins after that connects instantly. Single-player
+                isn't affected.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="brut-card space-y-4 p-5 sm:p-6">
           <label className="block">
             <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
@@ -151,7 +184,11 @@ export default function MultiEntryPage() {
               disabled={!canSubmit}
               className="brut-btn-accent flex items-center justify-center gap-2 px-4 py-3 disabled:opacity-50"
             >
-              {busy === "create" ? "Creating…" : "+ Create room"}
+              {busy === "create"
+                ? "Creating…"
+                : conn !== "connected"
+                  ? "Waking server…"
+                  : "+ Create room"}
             </button>
 
             <div className="flex flex-col gap-2">
@@ -171,7 +208,11 @@ export default function MultiEntryPage() {
                 disabled={!canJoin}
                 className="brut-btn px-4 py-3 disabled:opacity-50"
               >
-                {busy === "join" ? "Joining…" : "→ Join"}
+                {busy === "join"
+                  ? "Joining…"
+                  : conn !== "connected"
+                    ? "Waking server…"
+                    : "→ Join"}
               </button>
             </div>
           </div>
