@@ -46,7 +46,19 @@ export interface RenderOptions {
 export interface ThemePalette {
   /** Stable id used to invalidate the gradient cache on theme swap. */
   id: ThemeName;
-  /** Solid background painted before the vignette and highway. */
+  /**
+   * Reference page-bg color matching the app's `--bg` CSS token.
+   *
+   * NOTE: `drawFrame` does NOT paint this — it `clearRect`s the canvas
+   * and lets the underlying body background (which is themed via CSS
+   * with a 220ms cubic-bezier crossfade) show through. The field is
+   * kept on the palette for two reasons:
+   *   1. It documents which RGB the canvas SHOULD line up with, so a
+   *      reader doesn't have to cross-reference globals.css.
+   *   2. Any future blending math (alpha compositing tests, stat
+   *      visualizations rendered onto the highway, etc.) that needs
+   *      to know the "true" body color has it locally available.
+   */
   pageBg: string;
   /** Outer color stop of the radial vignette (inner stop is always transparent). */
   vignetteOuter: string;
@@ -99,9 +111,22 @@ const LIGHT_PALETTE: ThemePalette = {
   // Tracks --bg in light mode (245 245 240). Slight warmth, not pure white,
   // matching the brutalist "bone" surface the rest of the app uses.
   pageBg: "#f5f5f0",
-  // Light-mode vignette is a soft darken-to-edges (instead of darken-to-black)
-  // so the highway sits in a pool of attention without bruising the bg.
-  vignetteOuter: "rgba(20,18,14,0.18)",
+  // Light-mode vignette intentionally NEUTRALIZED (transparent fill).
+  //
+  // We used to paint rgba(20,18,14,0.18) at the outer ring for focus
+  // pull, but on a cream `--bg` that blended down to ~rgb(204,204,199)
+  // at the canvas corners — visibly grayer than the surrounding page
+  // bg, so the gameplay rectangle read as a darker chunk floating
+  // inside a brighter page. (In dark mode the same trick is invisible
+  // because pageBg is already near-black; the darken-to-black just
+  // deepens corners by a few values.)
+  //
+  // The depth cue is still carried by the light highway gradient
+  // (white → cream → tan), which is brighter than the page, so the
+  // highway naturally pops without any vignette help. Keeping the
+  // gradient stop in `palette.vignetteOuter` (instead of skipping
+  // the fill) means the per-frame draw path stays branch-free.
+  vignetteOuter: "rgba(245,245,240,0)",
   // Highway gradient flips: brightest at the top (where notes spawn) fading
   // to a slightly tanned shadow near the judgment line. Keeps the depth cue
   // working ("notes come out of the light, land in the cooler foreground").
@@ -360,8 +385,28 @@ export function drawFrame(
   const palette = getPalette(opts.theme);
   const cache = ensureCache(ctx, rs, W, H, palette, opts);
 
-  ctx.fillStyle = palette.pageBg;
-  ctx.fillRect(0, 0, W, H);
+  // Clear to fully-transparent (NOT opaque pageBg) so the underlying
+  // body background shows through. The body uses `rgb(var(--bg))`
+  // which is wired into the same 220ms cubic-bezier theme transition
+  // that fades the header / footer / landing-page surface — so the
+  // gameplay-area bg now crossfades in lockstep with the rest of the
+  // app on a theme swap, instead of hard-cutting in one frame the
+  // moment React's `theme` state flips.
+  //
+  // Sanity check on visual parity (both modes are pixel-identical to
+  // the previous opaque-fill version):
+  //   - Dark : was pageBg #050608 + vignette rgba(0,0,0,0.85) overlay.
+  //            Now: clear + same vignette composited over body
+  //            #050608 yields the same near-black corners.
+  //   - Light: was pageBg #f5f5f0 + transparent vignette (we already
+  //            zeroed the alpha to fix the gray-box bug). Now: clear
+  //            + transparent vignette → body #f5f5f0 shows through.
+  //
+  // We deliberately keep `palette.pageBg` in the type for future
+  // renderers that may need it (e.g. any code that needs to know the
+  // "true" background color for blending math); the fact that
+  // drawFrame no longer paints it is documented above the field.
+  ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = cache.vignette;
   ctx.fillRect(0, 0, W, H);
 

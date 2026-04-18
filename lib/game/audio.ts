@@ -44,6 +44,14 @@ export class AudioEngine {
   private songVol = 0.85;
 
   private metronomeOn = false;
+  /**
+   * When false, suppress per-input feedback SFX (hit pluck, miss thud,
+   * release tone, combo-milestone chime, and the song's "duck" cue that
+   * stacks on a miss). Independent from `metronomeOn` so a player who
+   * wants the rhythm tick but no input SFX (or vice versa) gets that.
+   * Song playback itself is unaffected; that has its own volume slider.
+   */
+  private sfxOn = true;
 
   get duration(): number {
     return this.duration_;
@@ -294,6 +302,16 @@ export class AudioEngine {
     this.metronomeOn = on;
   }
 
+  /**
+   * Master switch for per-input feedback SFX. Mirrors `setMetronome` —
+   * the engine still functions normally, the gated `playHit` / `playMiss`
+   * / `playRelease` / `playComboMilestone` calls just no-op. Cheap,
+   * stateless, safe to flip mid-song.
+   */
+  setSfx(on: boolean): void {
+    this.sfxOn = on;
+  }
+
   // ---------------------------------------------------------------------
   // Gameplay feedback
   // ---------------------------------------------------------------------
@@ -301,6 +319,7 @@ export class AudioEngine {
   /** A satisfying pluck tone for a successful hit. */
   playHit(lane: number, judgment: Judgment): void {
     if (!this.ctx || !this.sfxGain) return;
+    if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
 
     const freq = LANE_PITCH[lane] ?? 220;
@@ -322,6 +341,7 @@ export class AudioEngine {
   /** A short, soft tone for the release of a hold note's tail. */
   playRelease(lane: number, judgment: Judgment): void {
     if (!this.ctx || !this.sfxGain) return;
+    if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
     const freq = (LANE_PITCH[lane] ?? 220) * 1.5; // 5th above the head
     const vol =
@@ -335,6 +355,11 @@ export class AudioEngine {
   /** A miss: dull thud + briefly muffle the song so it sounds wrong. */
   playMiss(empty: boolean = false): void {
     if (!this.ctx || !this.sfxGain) return;
+    // Gating playMiss here also suppresses the song-duck cue below
+    // (which only fires from this method), so when the player turns
+    // SFX off they get pure music with zero whiff feedback — exactly
+    // what the toggle promises.
+    if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
 
     // Dull descending thud.
@@ -414,6 +439,7 @@ export class AudioEngine {
    */
   playComboMilestone(milestone: number): void {
     if (!this.ctx || !this.sfxGain) return;
+    if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
     // Root in mid-range so the arpeggio sits above the song without
     // poking ears. C5 ≈ 523Hz.

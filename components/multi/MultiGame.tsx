@@ -37,6 +37,10 @@ import { displayMode, modeStars } from "@/lib/game/chart";
 import {
   loadVolume,
   saveVolume,
+  loadSfx,
+  saveSfx,
+  loadMetronome,
+  saveMetronome,
   loadFpsLock,
   saveFpsLock,
   nextFpsLock,
@@ -177,6 +181,12 @@ function CanvasPane({
   // sync, not whether each player happens to hear the metronome).
   const [volume, setVolume] = useState<number>(0.85);
   const [metronome, setMetronome] = useState<boolean>(true);
+  // Per-input feedback SFX (hit / miss / release / combo-milestone +
+  // the song-duck whiff cue). Persisted via the same shared
+  // settings store as solo so a player's preference carries across
+  // game modes. The engine no-ops the relevant `play*` calls when
+  // off — song bus + metronome stay live.
+  const [sfx, setSfx] = useState<boolean>(true);
   const [fps, setFps] = useState<number>(0);
   // Optional render-loop frame-rate cap — same control surface as
   // single-player (off / 30 / 60), shared persistence key so a player
@@ -426,6 +436,22 @@ function CanvasPane({
       // Skip when the user is typing in a form field (future chat, name
       // change, etc). Same guard as single-player Game.tsx.
       if (isEditableTarget(e.target)) return;
+      // M = metronome, N = input feedback SFX. Both are local-only
+      // toggles (don't affect other players in the room) so binding
+      // them here mirrors the single-player HUD without any room
+      // protocol implications. Sit above the lane lookup so a player
+      // who happens to bind M/N as a lane in the future doesn't
+      // shadow the meta toggles.
+      if (e.code === "KeyM") {
+        setMetronome((m) => !m);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === "KeyN") {
+        setSfx((s) => !s);
+        e.preventDefault();
+        return;
+      }
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
       if (e.repeat) return;
@@ -695,6 +721,7 @@ function CanvasPane({
   // would silently drop the value.
   useEffect(() => {
     audioRef.current?.setMetronome(metronome);
+    saveMetronome(metronome);
   }, [metronome, loaded]);
 
   useEffect(() => {
@@ -702,11 +729,25 @@ function CanvasPane({
     saveVolume(volume);
   }, [volume, loaded]);
 
-  // Hydrate persisted volume on mount so the slider remembers the last
-  // session's preference (shared with single-player via lib/game/settings).
+  // SFX mirror — same dual-write pattern as `volume` / `metronome`.
+  // `loaded` in the deps re-applies the choice the moment the engine
+  // is rebuilt for a new song, so toggling SFX between songs in the
+  // same room never silently drops the preference.
+  useEffect(() => {
+    audioRef.current?.setSfx(sfx);
+    saveSfx(sfx);
+  }, [sfx, loaded]);
+
+  // Hydrate persisted rock-meter settings (volume / fps-lock / sfx /
+  // metronome) on mount so the controls remember the last session's
+  // preference. All four share the same store as single-player via
+  // lib/game/settings so a player who tweaks them in solo also has
+  // them carried over into multi without re-toggling.
   useEffect(() => {
     setVolume(loadVolume());
     setFpsLock(loadFpsLock());
+    setSfx(loadSfx());
+    setMetronome(loadMetronome());
   }, []);
 
   // Persist the FPS lock — the rAF loop reads `fpsLockRef`, so this is
@@ -748,6 +789,8 @@ function CanvasPane({
               onVolume={setVolume}
               metronome={metronome}
               onToggleMetronome={() => setMetronome((m) => !m)}
+              sfx={sfx}
+              onToggleSfx={() => setSfx((s) => !s)}
               fps={fps}
               fpsLock={fpsLock}
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
@@ -1077,6 +1120,8 @@ function HealthPanel({
   onVolume,
   metronome,
   onToggleMetronome,
+  sfx,
+  onToggleSfx,
   fps,
   fpsLock,
   onCycleFpsLock,
@@ -1091,6 +1136,9 @@ function HealthPanel({
   onVolume: (v: number) => void;
   metronome: boolean;
   onToggleMetronome: () => void;
+  /** Per-input feedback SFX toggle (hit / miss / release / milestone). */
+  sfx: boolean;
+  onToggleSfx: () => void;
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
@@ -1199,18 +1247,45 @@ function HealthPanel({
         <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           Rock meter
         </p>
-        <button
-          onClick={onToggleMetronome}
-          className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
-            metronome
-              ? "border-accent text-accent"
-              : "border-bone-50/30 text-bone-50/40"
-          }`}
-          data-tooltip="Toggle metronome (local only)"
-          aria-label="Toggle metronome"
-        >
-          ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
-        </button>
+        {/* Audio-feel knob group: SFX (hit / miss feedback) and the
+            local metronome. Both default to on; both are local-only
+            in multi (no other player hears your metronome or your
+            mute). Same brutalist pill styling as the single-player
+            HUD so the two modes share visual vocabulary. */}
+        <div className="flex gap-1">
+          <button
+            onClick={onToggleSfx}
+            className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
+              sfx
+                ? "border-accent text-accent"
+                : "border-bone-50/30 text-bone-50/40"
+            }`}
+            data-tooltip="Toggle input feedback (N)"
+            aria-label="Toggle input sound effects"
+            aria-keyshortcuts="N"
+            aria-pressed={sfx}
+          >
+            {/* `◉` (filled target) intentionally chosen over the
+                near-identical `♪` we used initially — at HUD scale a
+                quarter note (♩) and an eighth note (♪) read as the
+                same glyph next to each other. The lane-gate target
+                shape is unmistakably distinct. */}
+            ◉<span className="hidden sm:inline"> {sfx ? "ON" : "OFF"}</span>
+          </button>
+          <button
+            onClick={onToggleMetronome}
+            className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
+              metronome
+                ? "border-accent text-accent"
+                : "border-bone-50/30 text-bone-50/40"
+            }`}
+            data-tooltip="Toggle metronome (M)"
+            aria-label="Toggle metronome"
+            aria-keyshortcuts="M"
+          >
+            ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
+          </button>
+        </div>
       </div>
       <div className="relative h-[0.78rem] w-full border-2 border-bone-50/40">
         <div
@@ -1246,7 +1321,11 @@ function HealthPanel({
           {Math.round(volume * 100)}
         </span>
       </div>
-      <div className="hidden items-center justify-end gap-1.5 sm:flex">
+      {/* `mt-2.5` matches the single-player HUD — separates the perf
+          row (FPS lock + readout) from the volume slider above so the
+          two strips read as distinct control groups instead of one
+          dense block. */}
+      <div className="mt-2.5 hidden items-center justify-end gap-1.5 sm:flex">
         {/* FPS lock toggle — same control + visual treatment as the
             single-player HUD. Cycles off → 30 → 60 → off; the audio
             engine + server-driven start timestamps are unaffected by

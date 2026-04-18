@@ -34,6 +34,10 @@ import {
   loadFpsLock,
   saveFpsLock,
   nextFpsLock,
+  loadSfx,
+  saveSfx,
+  loadMetronome,
+  saveMetronome,
   type FpsLock,
 } from "@/lib/game/settings";
 import { useTheme } from "@/components/ThemeProvider";
@@ -167,6 +171,14 @@ export default function Game() {
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
+  /** Per-input feedback SFX (hit pluck / miss thud / release tone /
+   *  combo-milestone chime + the song-duck whiff cue). Persisted so a
+   *  player who prefers pure music keeps their preference across
+   *  sessions. Mirrored into the AudioEngine via `setSfx` whenever it
+   *  changes — the engine no-ops the relevant `play*` calls when off,
+   *  which means zero audible feedback for hits or misses (song +
+   *  metronome are unaffected). */
+  const [sfx, setSfx] = useState<boolean>(true);
   /** True if the user is on a touch-only device (no physical keyboard).
    *  Drives the on-screen <TouchLanes> overlay and swaps the "press D F J K"
    *  hints in the StartCard for tap-friendly copy. */
@@ -292,6 +304,7 @@ export default function Game() {
         audioRef.current.ensureContext();
         audioRef.current.setMetronome(metronome);
         audioRef.current.setVolume(volume);
+        audioRef.current.setSfx(sfx);
         // Fire and forget — by the time PLAY is clicked, this is usually done.
         const loaded = loadedRef.current;
         if (loaded?.delivery === "remote" && loaded.audioBytes && loaded.audioKey) {
@@ -318,10 +331,11 @@ export default function Game() {
       window.removeEventListener("keydown", prep);
       window.removeEventListener("pointermove", prep);
     };
-  }, [displayMeta, metronome, volume]);
+  }, [displayMeta, metronome, volume, sfx]);
 
   useEffect(() => {
     audioRef.current?.setMetronome(metronome);
+    saveMetronome(metronome);
   }, [metronome]);
 
   useEffect(() => {
@@ -336,10 +350,22 @@ export default function Game() {
     saveFpsLock(fpsLock);
   }, [fpsLock]);
 
+  // Mirror the SFX toggle into the audio engine and persist it. Same
+  // dual-write pattern as `volume` / `metronome` — the engine no-ops
+  // `playHit` / `playMiss` / `playRelease` / `playComboMilestone`
+  // when off so the player gets pure music with no whiff cue, but
+  // the song bus + the metronome stay live.
+  useEffect(() => {
+    audioRef.current?.setSfx(sfx);
+    saveSfx(sfx);
+  }, [sfx]);
+
   // Hydrate persisted volume + detect touch-only devices on mount.
   useEffect(() => {
     setVolume(loadVolume());
     setFpsLock(loadFpsLock());
+    setSfx(loadSfx());
+    setMetronome(loadMetronome());
     if (typeof window !== "undefined" && window.matchMedia) {
       // pointer:coarse + no fine pointer ⇒ phone/tablet without a real keyboard.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
@@ -419,6 +445,7 @@ export default function Game() {
       audio.ensureContext();
       audio.setMetronome(metronome);
       audio.setVolume(volume);
+      audio.setSfx(sfx);
 
       const loaded = await loadSong(chartMode); // cached → instant
       songRef.current = { meta: loaded.meta, notes: loaded.notes };
@@ -476,7 +503,7 @@ export default function Game() {
       setError(e?.message ?? "Failed to start");
       setPhase("idle");
     }
-  }, [metronome, volume, chartMode]);
+  }, [metronome, volume, chartMode, sfx]);
 
   // ---- Pause / resume --------------------------------------------------
   const pause = useCallback(async () => {
@@ -602,6 +629,15 @@ export default function Game() {
       if (phase === "paused") return;
       if (e.code === "KeyM") {
         setMetronome((m) => !m);
+        e.preventDefault();
+        return;
+      }
+      // N toggles per-input feedback SFX (hit pluck / miss thud /
+      // release tone / combo-milestone chime). Sits next to M so the
+      // two "audio feel" knobs share an adjacent home-row keybind
+      // and a player can flip either without leaving the lane keys.
+      if (e.code === "KeyN") {
+        setSfx((s) => !s);
         e.preventDefault();
         return;
       }
@@ -909,6 +945,8 @@ export default function Game() {
             stats={stats}
             metronome={metronome}
             onToggleMetronome={() => setMetronome((m) => !m)}
+            sfx={sfx}
+            onToggleSfx={() => setSfx((s) => !s)}
             best={best}
             volume={volume}
             onVolume={setVolume}
@@ -1591,6 +1629,8 @@ function HUD({
   fps,
   fpsLock,
   onCycleFpsLock,
+  sfx,
+  onToggleSfx,
   songTitle,
   songArtist,
   songDuration,
@@ -1608,6 +1648,9 @@ function HUD({
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
+  /** Per-input feedback SFX toggle (hit / miss / release / milestone). */
+  sfx: boolean;
+  onToggleSfx: () => void;
   songTitle: string | null;
   songArtist: string | null;
   /** Track duration in seconds, or null if not yet known. */
@@ -1744,6 +1787,34 @@ function HUD({
             Rock meter
           </p>
           <div className="flex gap-1">
+            {/* Per-input feedback SFX toggle. Sits left of the
+                metronome so the two "audio feel" knobs read as a
+                pair (the player can think "I want music only" and
+                kill SFX, or "I want a click track but no whiff
+                cue" and turn metronome on / SFX off independently).
+                Same brutalist pill styling as the metronome button
+                — accent border + accent text when on, faded grey
+                when off — so the active/inactive states are
+                instantly legible. */}
+            <button
+              onClick={onToggleSfx}
+              className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
+                sfx
+                  ? "border-accent text-accent"
+                  : "border-bone-50/30 text-bone-50/40"
+              }`}
+              data-tooltip="Toggle input feedback (N)"
+              aria-label="Toggle input sound effects"
+              aria-keyshortcuts="N"
+              aria-pressed={sfx}
+            >
+              {/* Filled-circle "target" glyph echoes the on-canvas
+                  lane gates the player taps — semantically distinct
+                  from the metronome's quarter-note glyph (♩ = beat
+                  tick), so the two pills never read as the same icon
+                  even at the small HUD size. */}
+              ◉<span className="hidden sm:inline"> {sfx ? "ON" : "OFF"}</span>
+            </button>
             <button
               onClick={onToggleMetronome}
               className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
@@ -1753,6 +1824,7 @@ function HUD({
               }`}
               data-tooltip="Toggle metronome (M)"
               aria-label="Toggle metronome"
+              aria-keyshortcuts="M"
             >
               ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
             </button>
@@ -1807,7 +1879,12 @@ function HUD({
             {Math.round(volume * 100)}
           </span>
         </div>
-        <div className="hidden items-center justify-end gap-1.5 sm:flex">
+        {/* Extra top margin separates the perf row (FPS lock + FPS
+            readout) from the volume slider above it. Without this the
+            two strips visually merged into one chunk; the `mt-2.5`
+            buys ~10px of breathing room which reads as "different
+            group of controls" without bloating the card. */}
+        <div className="mt-2.5 hidden items-center justify-end gap-1.5 sm:flex">
           {/* FPS lock toggle — clicking cycles off → 30 → 60 → off. The
               uncapped state is intentionally a dim "OFF" pill so the
               eye doesn't read it as the active option; the locked

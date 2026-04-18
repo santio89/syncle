@@ -8,6 +8,10 @@
 const VOL_KEY = "syncle.volume";
 const DEFAULT_VOLUME = 0.85;
 const FPS_LOCK_KEY = "syncle.fpsLock";
+const SFX_KEY = "syncle.sfx";
+const DEFAULT_SFX = true;
+const METRONOME_KEY = "syncle.metronome";
+const DEFAULT_METRONOME = true;
 
 /**
  * Optional render-loop frame-rate cap.
@@ -72,6 +76,58 @@ export function saveVolume(v: number): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(VOL_KEY, String(Math.min(1, Math.max(0, v))));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Input sound effects toggle. When `false`, the engine suppresses
+ * hit / miss / release / combo-milestone SFX (and the song's "duck"
+ * cue that fires on a miss). The metronome and song playback itself
+ * are deliberately NOT affected — those have their own controls and
+ * silencing them here would surprise the player.
+ */
+export function loadSfx(): boolean {
+  if (typeof window === "undefined") return DEFAULT_SFX;
+  try {
+    const raw = window.localStorage.getItem(SFX_KEY);
+    if (raw == null) return DEFAULT_SFX;
+    return raw === "1" || raw === "true" || raw === "on";
+  } catch {
+    return DEFAULT_SFX;
+  }
+}
+
+export function saveSfx(on: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SFX_KEY, on ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Metronome (audible click track on every beat) toggle. Local only —
+ * never affects other players in multiplayer. Mirrored into the
+ * AudioEngine via `setMetronome` when the React state changes.
+ */
+export function loadMetronome(): boolean {
+  if (typeof window === "undefined") return DEFAULT_METRONOME;
+  try {
+    const raw = window.localStorage.getItem(METRONOME_KEY);
+    if (raw == null) return DEFAULT_METRONOME;
+    return raw === "1" || raw === "true" || raw === "on";
+  } catch {
+    return DEFAULT_METRONOME;
+  }
+}
+
+export function saveMetronome(on: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(METRONOME_KEY, on ? "1" : "0");
   } catch {
     /* ignore */
   }
