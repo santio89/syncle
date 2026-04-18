@@ -7,6 +7,7 @@ import {
   ChartMode,
   displayMode,
   loadSong,
+  MODE_ORDER,
   ModeAvailability,
   PLACEHOLDER_META,
   prefetchAudio,
@@ -109,8 +110,20 @@ export default function Game() {
   // buttons. Defaults to "all available" while loading so the picker doesn't
   // flash into a disabled state on first paint.
   const [modeAvailability, setModeAvailability] = useState<ModeAvailability>({
-    noteCounts: { easy: 0, normal: 0, hard: 0 },
-    available: { easy: true, normal: true, hard: true },
+    // Initial placeholder until the real chart resolves. We start with
+    // every tier disabled (except hard, which is always backed by the
+    // densest chart so it can't fail availability) so the picker looks
+    // correct on first paint and only "lights up" tiers the song
+    // actually ships once finalize() returns.
+    noteCounts: { easy: 0, normal: 0, hard: 0, insane: 0, expert: 0 },
+    available: {
+      easy: false,
+      normal: false,
+      hard: true,
+      insane: false,
+      expert: false,
+    },
+    npsByMode: { easy: 0, normal: 0, hard: 0, insane: 0, expert: 0 },
   });
   /** Real meta once the chart loads — null until then so we can show a spinner. */
   const [displayMeta, setDisplayMeta] = useState<SongMeta | null>(null);
@@ -1011,10 +1024,21 @@ function StartCard({
                 href={`https://osu.ppy.sh/beatmapsets/${beatmapsetId}`}
                 target="_blank"
                 rel="noreferrer"
-                className="ml-2 font-mono text-[10px] uppercase tracking-widest text-bone-50/40 hover:text-accent"
+                // Inline-flex + middle baseline so the brutalist arrow
+                // glyph sits visually centered on the cap height of the
+                // mono "#…" label rather than dropping below the
+                // baseline like a unicode `↗` would. `align-middle` on
+                // the icon nudges it up to optical center.
+                className="ml-2 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-bone-50/40 transition-colors hover:text-accent"
                 title="Open on osu.ppy.sh"
               >
-                #{beatmapsetId} ↗
+                <span>#{beatmapsetId}</span>
+                <ArrowIcon
+                  direction="up-right"
+                  size={11}
+                  strokeWidth={2.75}
+                  className="align-middle"
+                />
               </a>
             )}
           </p>
@@ -1062,40 +1086,39 @@ function StartCard({
             Difficulty
           </span>
           <span className="font-mono text-[10px] text-bone-50/40">
-            {chartLength} notes · {nps}/sec
+            {chartLength} notes · {nps} nps
             {rawNoteCount > chartLength && (
               <span className="text-bone-50/30"> · raw {rawNoteCount}</span>
             )}
           </span>
         </div>
+        {/* Picker = 5 fixed Syncle tiers. Top row holds the three "core"
+            tiers everyone recognizes; bottom row holds the two top-end
+            tiers (insane / expert) which only light up when the mapper
+            actually shipped a chart at that level. Disabled buttons stay
+            visible (line-through, dimmed) so the player sees the full
+            ladder and understands what THIS song offers vs the next one. */}
         <div className="mt-2 grid grid-cols-3 gap-1">
-          {(["easy", "normal", "hard"] as ChartMode[]).map((m) => {
-            const enabled = modeAvailability.available[m];
-            const selected = chartMode === m;
-            return (
-              <button
-                key={m}
-                onClick={() => enabled && onChangeMode(m)}
-                disabled={!enabled}
-                title={
-                  enabled
-                    ? undefined
-                    : "This song's chart is too sparse for a distinct " +
-                      displayMode(m) +
-                      " mode — try a denser difficulty."
-                }
-                className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
-                  selected
-                    ? "border-accent bg-accent text-ink-900"
-                    : enabled
-                      ? "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
-                      : "border-bone-50/10 text-bone-50/25 cursor-not-allowed line-through decoration-1"
-                }`}
-              >
-                {m === "easy" ? "easy ★" : m === "normal" ? "medium ★★" : "hard ★★★"}
-              </button>
-            );
-          })}
+          {(["easy", "normal", "hard"] as ChartMode[]).map((m) => (
+            <ModeButton
+              key={m}
+              mode={m}
+              enabled={modeAvailability.available[m]}
+              selected={chartMode === m}
+              onPick={onChangeMode}
+            />
+          ))}
+        </div>
+        <div className="mt-1 grid grid-cols-2 gap-1">
+          {(["insane", "expert"] as ChartMode[]).map((m) => (
+            <ModeButton
+              key={m}
+              mode={m}
+              enabled={modeAvailability.available[m]}
+              selected={chartMode === m}
+              onPick={onChangeMode}
+            />
+          ))}
         </div>
       </div>
 
@@ -1185,6 +1208,46 @@ function StartCard({
   );
 }
 
+/**
+ * Single difficulty button in the StartCard picker. Pulled out so the
+ * top row (easy/medium/hard) and the bottom row (insane/expert) share
+ * exactly the same styling + interaction logic and the picker JSX stays
+ * skim-able. Disabled state lines through the label so it reads as
+ * "unavailable on this song" rather than "currently inactive".
+ */
+function ModeButton({
+  mode,
+  enabled,
+  selected,
+  onPick,
+}: {
+  mode: ChartMode;
+  enabled: boolean;
+  selected: boolean;
+  onPick: (m: ChartMode) => void;
+}) {
+  return (
+    <button
+      onClick={() => enabled && onPick(mode)}
+      disabled={!enabled}
+      title={
+        enabled
+          ? undefined
+          : `This song doesn't ship a ${displayMode(mode)} chart.`
+      }
+      className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+        selected
+          ? "border-accent bg-accent text-ink-900"
+          : enabled
+            ? "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
+            : "border-bone-50/10 text-bone-50/25 cursor-not-allowed line-through decoration-1"
+      }`}
+    >
+      {displayMode(mode)}
+    </button>
+  );
+}
+
 function Spinner({ small }: { small?: boolean }) {
   const size = small ? 14 : 20;
   return (
@@ -1209,11 +1272,14 @@ function pickAvailableMode(
   requested: ChartMode,
   modes: ModeAvailability,
 ): ChartMode {
-  const order: ChartMode[] = ["easy", "normal", "hard"];
-  let i = order.indexOf(requested);
+  // Walk UP the difficulty ladder from the requested tier until we find
+  // an available one. `hard` is guaranteed available (densest fallback)
+  // so we always terminate; insane/expert get skipped if the song has no
+  // mapper chart for them.
+  let i = MODE_ORDER.indexOf(requested);
   if (i < 0) i = 0;
-  while (i < order.length && !modes.available[order[i]]) i++;
-  return order[Math.min(i, order.length - 1)];
+  while (i < MODE_ORDER.length && !modes.available[MODE_ORDER[i]]) i++;
+  return MODE_ORDER[Math.min(i, MODE_ORDER.length - 1)];
 }
 
 function KeyCap({

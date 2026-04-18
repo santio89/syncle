@@ -28,51 +28,87 @@ export const PLACEHOLDER_META: SongMeta = {
 /* ------------------------------------------------------------------------- */
 
 /**
- * Syncle difficulty modes — three stable buckets (easy/normal/hard).
+ * Syncle difficulty modes — five universal tiers that mirror osu!mania's
+ * own naming scheme (easy / normal / hard / insane / expert), so the same
+ * vocabulary works across the homepage card, the in-game picker, the
+ * multiplayer lobby, and the saved-score keys.
  *
  * Resolution order per mode (best to worst source):
- *   1. The mapper's actual chart for this bucket, when the .osz contains
- *      a 4K difficulty whose name classifies into this bucket
- *      (e.g. "Easy"/"Beginner" → easy, "Normal" → normal, "Hard"/"Insane"
- *      /"Expert" → hard). This is the authentic, hand-crafted experience.
- *   2. Quantization fallback from the densest available mapper chart:
- *        easy   → quantize to whole beats (max 1 note per beat)
- *        normal → quantize to half-beats   (max 1 note per half-beat)
- *        hard   → always backed by the densest mapper chart
- *      Hold notes are preserved (head snapped, duration kept).
+ *   1. A mapper-provided chart for this bucket — every .osz has 1–7
+ *      hand-crafted difficulties; we classify each by its name (e.g.
+ *      "[4K Insane]" → insane) and bucket the best fit. This is the
+ *      authentic experience the mapper designed.
+ *   2. Quantization fallback (only for the three EASIER tiers, since you
+ *      can THIN a dense chart but you can't INVENT extra notes for a
+ *      higher tier than the mapper provided):
+ *        easy   → quantize the densest chart to whole beats
+ *        normal → quantize the densest chart to half-beats
+ *        hard   → mapper "Hard" if present, else the densest chart as-is
+ *        insane → mapper-only; otherwise unavailable
+ *        expert → mapper-only; otherwise unavailable
+ *      Hold notes are preserved across quantization (head snapped, length
+ *      kept) so sustains never disappear.
  *
- * If a bucket has no mapper chart AND quantization produces an identical
- * note count to the next-denser bucket, that mode is marked unavailable
- * in `ModeAvailability` so the UI can disable it (no point exposing two
- * buttons that play the same notes).
+ * A mode is marked unavailable in `ModeAvailability` and disabled in the
+ * UI when:
+ *   - it's insane/expert and the song has no mapper chart for it; or
+ *   - it's easy/normal and quantization didn't actually thin the next
+ *     denser bucket (so the buttons would play an identical chart, which
+ *     is misleading).
+ *
+ * NOTE on the wire/storage value `"normal"`: we keep that string for the
+ * second tier instead of renaming to `"medium"` because localStorage best
+ * keys, the multiplayer protocol, and persisted run history all reference
+ * it. The user-facing label is mapped to `"medium"` via {@link displayMode}.
  */
-export type ChartMode = "easy" | "normal" | "hard";
+export type ChartMode = "easy" | "normal" | "hard" | "insane" | "expert";
+
+/**
+ * Difficulty order, easiest → hardest. Used for picker layout, walking
+ * to the next-available mode when a song doesn't ship the requested
+ * difficulty, and computing the homepage card's "lowest available" label.
+ */
+export const MODE_ORDER: ChartMode[] = [
+  "easy",
+  "normal",
+  "hard",
+  "insane",
+  "expert",
+];
 
 const DEFAULT_MODE: ChartMode = "easy";
 
 /**
  * Map an internal {@link ChartMode} to the label we actually show users.
- *
- * The `"normal"` value is kept internally (localStorage best keys, the
- * multiplayer protocol, and persisted run history all reference it by that
- * name — renaming the type would invalidate saved scores and break in-flight
- * multiplayer rooms during a deploy). For display we surface `"medium"`
- * instead so the three buckets read as easy / medium / hard end-to-end.
+ * `"normal"` displays as `"medium"`; everything else is identity.
  */
-export function displayMode(mode: ChartMode): "easy" | "medium" | "hard" {
+export function displayMode(
+  mode: ChartMode,
+): "easy" | "medium" | "hard" | "insane" | "expert" {
   return mode === "normal" ? "medium" : mode;
 }
 
 /**
  * Quantize TAP notes to a beat grid and keep at most one note per grid cell.
- * Hold notes are kept unconditionally so sustains aren't lost on easy/normal —
- * their head time is just snapped to the nearest grid cell.
+ * Hold notes are kept unconditionally so sustains aren't lost on the
+ * easier tiers — their head time is just snapped to the nearest grid cell.
+ *
+ * `gridDivisor` controls how many cells fit in one beat:
+ *   1 → whole beats     (≈ Easy density)
+ *   2 → half beats      (≈ Medium density)
+ *   4 → 16th notes      (≈ Insane density — used when the .osz has no
+ *                        mapper-shipped Insane chart but ships something
+ *                        denser like Expert that we can thin down)
+ *
+ * Higher divisors leave more notes alive, lower divisors thin more
+ * aggressively. We never go higher than 4 — anything denser is "play
+ * the source as-is" territory and gets handled by the Expert tier.
  */
 function quantizeToGrid(
   notes: Note[],
   bpm: number,
   offsetSec: number,
-  gridDivisor: 1 | 2,
+  gridDivisor: 1 | 2 | 4,
 ): Note[] {
   const beatLen = 60 / bpm;
   const cell = beatLen / gridDivisor;
@@ -114,21 +150,29 @@ function quantizeToGrid(
 /**
  * Per-mode availability + note counts for the currently loaded song.
  *
- * Every osu!mania 4K chart can be re-quantized into easy/normal/hard, but
- * sparse charts produce identical output across modes (e.g. a 60 BPM chart
- * with 1 note per beat is already at the easy grid — quantizing further
- * does nothing). When that happens, exposing the redundant button to the
- * player is misleading: clicking "easy" gives them exactly the same chart
- * they were already playing.
+ * `available[mode]` is what the picker reads to enable/disable a button.
+ * `noteCounts[mode]` and `npsByMode[mode]` are sized for all 5 tiers so
+ * the UI can render a real density readout for any button without extra
+ * lookups.
  *
- * Rule:
- *   hard   → always available (source chart, never thinned)
- *   normal → available iff normalCount < hardCount   (quantization removed notes)
- *   easy   → available iff easyCount  < normalCount  (further quantization removed more)
+ * Rules (computed in `finalize`):
+ *   hard   → always available (densest chart fallback always exists)
+ *   normal → available iff a mapper chart fits this bucket OR
+ *            quantization actually thinned (`normalCount < hardCount`)
+ *   easy   → available iff a mapper chart fits this bucket OR
+ *            quantization actually thinned (`easyCount < normalCount`)
+ *   insane → mapper-only — available iff a mapper chart fits this bucket
+ *   expert → mapper-only — available iff a mapper chart fits this bucket
  */
 export interface ModeAvailability {
   noteCounts: Record<ChartMode, number>;
   available: Record<ChartMode, boolean>;
+  /**
+   * Real notes-per-second for each Syncle bucket on THIS specific song.
+   * `0` for unavailable buckets (so a divide-by-zero or "no mapper chart"
+   * case never bleeds into the UI as a misleading density).
+   */
+  npsByMode: Record<ChartMode, number>;
 }
 
 export interface LoadSongResult {
@@ -498,34 +542,49 @@ function rawSessionFromExtracted(ext: ExtractedSongFull): RawSession {
 /**
  * osu!mania difficulty naming is a wild west — mappers use anything from
  * "Easy" to "[4K Lunatic]" to "yang's Hyper". We classify by name first
- * (most reliable), then fall back to note density per second.
+ * (most reliable), then fall back to note density.
  *
- * Returns the Syncle bucket the chart should populate.
+ * The 5-tier mapping mirrors osu!'s own difficulty hierarchy:
+ *   easy    → Easy / Beginner / Novice / Cup / Salad / Gentle / Noob
+ *   normal  → Normal / Basic / Medium / Regular / Platter / Intermediate
+ *   hard    → Hard / Advanced / Rain
+ *   insane  → Insane / Hyper / Heavy / Another / Crazy
+ *   expert  → Expert / Extra / Master / Lunatic / Overdose / Extreme /
+ *             Edge / Deathmoon / SHD
  */
 function classifyDifficulty(version: string, nps: number): ChartMode {
   const v = version.toLowerCase();
 
-  // Strong easy/beginner signals
-  if (/(beginner|easy|novice|gentle|noob|lite|casual|cup|salad)/.test(v)) {
-    return "easy";
-  }
-  // Normal-ish names
-  if (/(normal|basic|medium|\bnm\b|regular|intermediate|platter)/.test(v)) {
-    return "normal";
-  }
-  // Hard / advanced / expert / boss-tier names
+  // Order matters: most specific / hardest names first so a chart called
+  // "Insane Expert" classifies as expert instead of being shadowed by the
+  // earlier "insane" branch.
   if (
-    /(hard|advanced|\bhd\b|insane|expert|extra|another|lunatic|master|shd|extreme|overdose|crazy|rain|deathmoon|edge)/.test(
+    /(expert|extra|\blunatic\b|master|overdose|extreme|edge|deathmoon|\bshd\b)/.test(
       v,
     )
   ) {
+    return "expert";
+  }
+  if (/(insane|\bhyper\b|\bheavy\b|another|crazy)/.test(v)) {
+    return "insane";
+  }
+  if (/(hard|advanced|\bhd\b|rain)/.test(v)) {
     return "hard";
   }
+  if (/(normal|basic|medium|\bnm\b|regular|intermediate|platter)/.test(v)) {
+    return "normal";
+  }
+  if (/(beginner|easy|novice|gentle|noob|lite|casual|cup|salad)/.test(v)) {
+    return "easy";
+  }
 
-  // Unknown name → bucket by raw note density.
-  if (nps < 2.5) return "easy";
-  if (nps < 4.5) return "normal";
-  return "hard";
+  // Unknown name → bucket by raw note density. NPS thresholds are
+  // calibrated against the typical 4K density spread.
+  if (nps < 1.8) return "easy";
+  if (nps < 3.2) return "normal";
+  if (nps < 5.0) return "hard";
+  if (nps < 7.0) return "insane";
+  return "expert";
 }
 
 /* ---- local fallback ------------------------------------------------------ */
@@ -579,21 +638,47 @@ async function pickRandomLocal(): Promise<RawSession> {
 /* ---- finalize (per-mode quantization) ------------------------------------ */
 
 /**
- * For each Syncle mode, resolve to a concrete `{ notes, source }`:
- *   - If a mapper chart exists for the bucket, use it as-is.
- *   - Otherwise, quantize from the densest available mapper chart so the
- *     player still has a softer option to choose.
+ * Resolve every Syncle tier to concrete notes + availability + density,
+ * then return the result for the requested mode.
  *
- * Then compute availability:
- *   - hard always available
- *   - normal/easy available iff their note count is strictly less than the
- *     next-denser bucket (otherwise the button would play an identical
- *     chart, which is misleading).
+ * Bucket rules:
+ *   easy / normal / insane → mapper chart if present; else QUANTIZE from
+ *                            the densest source chart (`base`) at the
+ *                            tier's grid resolution:
+ *                              easy   → 1/1 beat (whole beats)
+ *                              normal → 1/2 beat (half beats)
+ *                              insane → 1/4 beat (16th notes)
+ *   hard                   → mapper chart if present; else the densest
+ *                            chart as-is (`hard` is our floor — always
+ *                            available so every song is at least playable)
+ *   expert                 → mapper chart ONLY. There's nothing in the
+ *                            .osz denser than `base` to thin from, so
+ *                            "synthesizing Expert" would mean playing
+ *                            `base` directly — which is what `hard`
+ *                            already does as fallback. We refuse to
+ *                            promote a chart the mapper labeled as
+ *                            anything-but-Expert into the Expert slot.
+ *
+ * Availability rules:
+ *   easy / normal → mapper chart present, OR quantization actually
+ *                   thinned the next-denser bucket (otherwise both
+ *                   buttons would play the same notes, which is
+ *                   misleading)
+ *   hard          → always
+ *   insane        → mapper chart present, OR the quantized result is
+ *                   strictly denser than Hard AND strictly less dense
+ *                   than the source. Both conditions matter: if the
+ *                   source already sits at our quantized Insane density
+ *                   the button would just replay the source; if Hard is
+ *                   already at that density the button would just
+ *                   replay Hard. Either way you get a redundant tier.
+ *   expert        → mapper chart present (no quantization fallback,
+ *                   see above)
  */
 function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
   const base = session.fallbackBase;
+  const baseCount = base.rawNotes.length;
 
-  // Resolve notes for every mode (used for note-count display + availability).
   const easyResolved =
     session.bucketCharts.easy?.rawNotes ??
     quantizeToGrid(base.rawNotes, base.bpm, base.offset, 1);
@@ -601,35 +686,83 @@ function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
     session.bucketCharts.normal?.rawNotes ??
     quantizeToGrid(base.rawNotes, base.bpm, base.offset, 2);
   const hardResolved = session.bucketCharts.hard?.rawNotes ?? base.rawNotes;
+  // Insane: prefer mapper chart, else thin the densest source to a
+  // 16th-note grid. This catches the common case where a .osz ships
+  // Easy/Normal/Hard/Expert but no mapper Insane — without this,
+  // players would see Insane greyed out even though we clearly have
+  // enough source density to synthesize an Insane-feeling tier.
+  const insaneResolved =
+    session.bucketCharts.insane?.rawNotes ??
+    quantizeToGrid(base.rawNotes, base.bpm, base.offset, 4);
+  const expertResolved = session.bucketCharts.expert?.rawNotes ?? [];
 
   const easyCount = easyResolved.length;
   const normalCount = normalResolved.length;
   const hardCount = hardResolved.length;
+  const insaneCount = insaneResolved.length;
+  const expertCount = expertResolved.length;
 
-  // Mapper-provided modes are always considered "available" (the mapper
-  // intentionally made them distinct), even if their note counts happen
-  // to coincide with another bucket. Quantized fallbacks must produce a
-  // strictly thinner chart than the next-denser bucket to be exposed.
-  const easyAvailable =
-    !!session.bucketCharts.easy || easyCount < normalCount;
+  const easyAvailable = !!session.bucketCharts.easy || easyCount < normalCount;
   const normalAvailable =
     !!session.bucketCharts.normal || normalCount < hardCount;
+  // Quantized Insane is meaningful only when it sits strictly between
+  // Hard and the source. If `insaneCount === hardCount` the button
+  // would replay Hard's notes; if `insaneCount === baseCount` it would
+  // replay whatever Hard already replays as fallback (or Expert if
+  // mapper-shipped). Either way: redundant tier → disable.
+  const insaneAvailable =
+    !!session.bucketCharts.insane ||
+    (insaneCount > hardCount && insaneCount < baseCount);
+  const expertAvailable = !!session.bucketCharts.expert;
 
+  // Pick the chart that matches the requested mode. For insane/expert with
+  // no mapper chart we fall back to `base` so audio metadata (bpm, offset,
+  // duration) is still valid — the caller is expected to honor
+  // `modes.available[mode]` and never pass an unavailable mode through.
   const notes =
-    mode === "easy" ? easyResolved : mode === "normal" ? normalResolved : hardResolved;
-  const chartForMode =
     mode === "easy"
-      ? session.bucketCharts.easy ?? base
+      ? easyResolved
       : mode === "normal"
-        ? session.bucketCharts.normal ?? base
-        : session.bucketCharts.hard ?? base;
+        ? normalResolved
+        : mode === "hard"
+          ? hardResolved
+          : mode === "insane"
+            ? insaneResolved
+            : expertResolved;
+  const chartForMode = session.bucketCharts[mode] ?? base;
+
+  // Per-tier duration: prefer the bucket's mapper chart duration (it can
+  // differ from the densest chart's, since mappers sometimes cut intros
+  // for easier diffs); else fall back to `base.duration`. Used so the NPS
+  // we surface to the UI matches what the player will actually feel.
+  const safeDiv = (n: number, d: number) => (d > 0 ? n / d : 0);
+  const dur = (m: ChartMode) =>
+    (session.bucketCharts[m] ?? base).duration;
 
   const modes: ModeAvailability = {
-    noteCounts: { easy: easyCount, normal: normalCount, hard: hardCount },
+    noteCounts: {
+      easy: easyCount,
+      normal: normalCount,
+      hard: hardCount,
+      insane: insaneCount,
+      expert: expertCount,
+    },
     available: {
       easy: easyAvailable,
       normal: normalAvailable,
       hard: true,
+      insane: insaneAvailable,
+      expert: expertAvailable,
+    },
+    // Zero out NPS for unavailable tiers so the UI doesn't show a stale
+    // density for a button it can't even click. Available tiers get the
+    // real density from their resolved chart + that bucket's duration.
+    npsByMode: {
+      easy: easyAvailable ? safeDiv(easyCount, dur("easy")) : 0,
+      normal: normalAvailable ? safeDiv(normalCount, dur("normal")) : 0,
+      hard: safeDiv(hardCount, dur("hard")),
+      insane: insaneAvailable ? safeDiv(insaneCount, dur("insane")) : 0,
+      expert: expertAvailable ? safeDiv(expertCount, dur("expert")) : 0,
     },
   };
 

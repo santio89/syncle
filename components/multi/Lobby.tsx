@@ -18,7 +18,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
-import { displayMode, probeSongModes } from "@/lib/game/chart";
+import {
+  displayMode,
+  MODE_ORDER,
+  probeSongModes,
+} from "@/lib/game/chart";
 import type {
   CatalogItem,
   RoomSnapshot,
@@ -26,7 +30,8 @@ import type {
 } from "@/lib/multi/protocol";
 import { MAX_PLAYERS_PER_ROOM, NAME_MAX_LEN } from "@/lib/multi/protocol";
 
-const MODES: ChartMode[] = ["easy", "normal", "hard"];
+const MODES_TOP: ChartMode[] = ["easy", "normal", "hard"];
+const MODES_BOTTOM: ChartMode[] = ["insane", "expert"];
 
 export function Lobby({
   code,
@@ -381,43 +386,44 @@ function HostPane({
         </ul>
       </div>
 
-      {/* Difficulty + start */}
-      <div className="mt-4 grid grid-cols-3 gap-1">
-        {MODES.map((m) => {
-          // Before a song is picked, every button is enabled (purely a
-          // local default). Once a song is picked, `modeProbe` decides;
-          // while the probe is in flight everything stays disabled.
-          const available = !selected ? true : !!modeProbe?.available[m];
-          const isActive = mode === m;
-          const showSpinner = !!selected && probing && !modeProbe;
-          const disabled = !!selected && (probing || !available);
-          const reason = !selected
-            ? undefined
-            : probing
-              ? "Reading the song's difficulty list…"
-              : !available
-                ? "This song doesn't have a chart for this difficulty."
-                : undefined;
-          return (
-            <button
+      {/* Difficulty + start. Picker is a 3+2 grid mirroring the Syncle
+          tier ladder; insane/expert sit on the bottom row to read as
+          "extras" you only see lit up when the mapper shipped them.
+
+          Availability rules:
+            - no song picked yet  → every tier appears enabled (it's just
+              the host's local default before a song is in play)
+            - song picked, probe pending → every tier disabled (cursor:
+              wait) so the host doesn't accidentally start a round before
+              we know what the .osz actually offers
+            - probe resolved      → only tiers the song ships are clickable */}
+      <div className="mt-4 space-y-1">
+        <div className="grid grid-cols-3 gap-1">
+          {MODES_TOP.map((m) => (
+            <HostModeButton
               key={m}
-              onClick={() => available && !probing && setMode(m)}
-              disabled={disabled}
-              title={reason}
-              className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
-                isActive && available
-                  ? "border-accent bg-accent text-ink-900"
-                  : !available && selected && !probing
-                    ? "border-bone-50/15 text-bone-50/30 line-through cursor-not-allowed"
-                    : disabled
-                      ? "border-bone-50/15 text-bone-50/30 cursor-wait"
-                      : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
-              }`}
-            >
-              {showSpinner && isActive ? "…" : m === "easy" ? "easy ★" : m === "normal" ? "medium ★★" : "hard ★★★"}
-            </button>
-          );
-        })}
+              mode={m}
+              selected={mode === m}
+              probe={modeProbe}
+              probing={probing}
+              hasSelectedSong={!!selected}
+              onPick={setMode}
+            />
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-1">
+          {MODES_BOTTOM.map((m) => (
+            <HostModeButton
+              key={m}
+              mode={m}
+              selected={mode === m}
+              probe={modeProbe}
+              probing={probing}
+              hasSelectedSong={!!selected}
+              onPick={setMode}
+            />
+          ))}
+        </div>
       </div>
 
       {probeError && (
@@ -452,18 +458,71 @@ function HostPane({
  * chart with no thinning).
  */
 function firstAvailableMode(modes: ModeAvailability): ChartMode {
-  for (const m of MODES) {
+  for (const m of MODE_ORDER) {
     if (modes.available[m]) return m;
   }
+  // `hard` is always available in finalize() (densest fallback never
+  // fails) so this is just a defensive last-resort terminator.
   return "hard";
+}
+
+/**
+ * One difficulty button in the host's picker. Centralizes the "is it
+ * enabled / styled / what label?" logic so the top and bottom row stay
+ * visually consistent and the JSX up in HostPane reads like a layout,
+ * not a state machine.
+ */
+function HostModeButton({
+  mode,
+  selected,
+  probe,
+  probing,
+  hasSelectedSong,
+  onPick,
+}: {
+  mode: ChartMode;
+  selected: boolean;
+  probe: ModeAvailability | null;
+  probing: boolean;
+  hasSelectedSong: boolean;
+  onPick: (m: ChartMode) => void;
+}) {
+  const available = !hasSelectedSong ? true : !!probe?.available[mode];
+  const showSpinner = hasSelectedSong && probing && !probe;
+  const disabled = hasSelectedSong && (probing || !available);
+  const reason = !hasSelectedSong
+    ? undefined
+    : probing
+      ? "Reading the song's difficulty list…"
+      : !available
+        ? `This song doesn't ship a ${displayMode(mode)} chart.`
+        : undefined;
+  return (
+    <button
+      onClick={() => available && !probing && onPick(mode)}
+      disabled={disabled}
+      title={reason}
+      className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+        selected && available
+          ? "border-accent bg-accent text-ink-900"
+          : !available && hasSelectedSong && !probing
+            ? "border-bone-50/15 text-bone-50/30 line-through cursor-not-allowed"
+            : disabled
+              ? "border-bone-50/15 text-bone-50/30 cursor-wait"
+              : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
+      }`}
+    >
+      {showSpinner && selected ? "…" : displayMode(mode)}
+    </button>
+  );
 }
 
 function availableModesLabel(modes: ModeAvailability): string {
   const tags: string[] = [];
-  if (modes.available.easy) tags.push(displayMode("easy"));
-  if (modes.available.normal) tags.push(displayMode("normal"));
-  if (modes.available.hard) tags.push(displayMode("hard"));
-  return `has: ${tags.join(" / ")}`;
+  for (const m of MODE_ORDER) {
+    if (modes.available[m]) tags.push(displayMode(m));
+  }
+  return tags.length ? `has: ${tags.join(" / ")}` : "no playable diffs";
 }
 
 /* ------------------------------------------------------------------------ */

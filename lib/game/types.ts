@@ -105,7 +105,7 @@ export interface SongMeta {
   audioUrl: string;
   /** Total duration in seconds (best effort). */
   duration: number;
-  difficulty: "easy" | "normal" | "hard" | "expert";
+  difficulty: "easy" | "normal" | "hard" | "insane" | "expert";
 }
 
 export interface PlayerStats {

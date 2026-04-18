@@ -4,7 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { loadSong, displayMode } from "@/lib/game/chart";
+import {
+  loadSong,
+  displayMode,
+  MODE_ORDER,
+  type ChartMode,
+  type ModeAvailability,
+} from "@/lib/game/chart";
 import { SongMeta } from "@/lib/game/types";
 import { bestKey, RunBest, loadBest } from "@/lib/game/best";
 import { LifetimeStats, loadStats } from "@/lib/game/stats";
@@ -16,23 +22,41 @@ function formatDuration(sec: number): string {
 }
 
 /**
- * Coarse song-intensity label derived from the EASY chart's note density.
+ * Pick the difficulty name to put on the "Now playing" card.
  *
- * Three tiers to match the player-facing difficulty buckets (easy / medium /
- * hard). This is a song-character hint — it does NOT change when the player
- * picks a different mode in the selector below.
+ * Rule: the **lowest enabled tier in the picker** — i.e. the leftmost
+ * button you'd see lit up after opening the song. This keeps the card
+ * and the picker in lockstep:
+ *
+ *   - card says EASY  → EASY is enabled in the picker
+ *   - card says HARD  → easy + medium are disabled, HARD is the
+ *                       leftmost button you can click
+ *   - card says EXPERT→ everything below expert is disabled (brutal
+ *                       song, no mercy)
+ *
+ * We deliberately use `available` (which counts our quantization
+ * fallbacks) rather than `mapperProvided`. Showing HARD on a song where
+ * the picker still offered EASY as a clickable button — just because
+ * our easy chart was quantized rather than mapper-shipped — is more
+ * confusing than honest.
+ *
+ * Returns the *display* string ("medium" not "normal") so the badge can
+ * render it directly without remapping.
  */
-function difficultyLabel(noteCount: number, durationSec: number): string {
-  if (durationSec <= 0) return "—";
-  const nps = noteCount / durationSec;
-  if (nps < 1.5) return "EASY";
-  if (nps < 3) return "MEDIUM";
-  return "HARD";
+function lowestAvailableDifficulty(
+  modes: ModeAvailability,
+): "easy" | "medium" | "hard" | "insane" | "expert" | "—" {
+  for (const m of MODE_ORDER) {
+    if (modes.available[m]) return displayMode(m);
+  }
+  // Defensive: hard is guaranteed available in finalize() (densest
+  // fallback never fails), so this only fires if `modes` arrives empty.
+  return "—";
 }
 
 type LoadState =
   | { status: "loading" }
-  | { status: "ready"; meta: SongMeta; noteCount: number }
+  | { status: "ready"; meta: SongMeta; noteCount: number; modes: ModeAvailability }
   | { status: "error"; message: string };
 
 export default function HomePage() {
@@ -52,11 +76,16 @@ export default function HomePage() {
     loadSong()
       .then((s) => {
         if (cancelled) return;
-        setLoad({ status: "ready", meta: s.meta, noteCount: s.notes.length });
+        setLoad({
+          status: "ready",
+          meta: s.meta,
+          noteCount: s.notes.length,
+          modes: s.modes,
+        });
         // Highest score this device has ever set on this song, across all
         // difficulties — gives the player a target to chase on this refresh.
         let highest: RunBest | null = null;
-        for (const m of ["easy", "normal", "hard"] as const) {
+        for (const m of MODE_ORDER) {
           const b = loadBest(bestKey(s.meta.id, m));
           if (b && (!highest || b.score > highest.score)) highest = b;
         }
@@ -228,16 +257,27 @@ export default function HomePage() {
                   </>
                 )}
               </div>
-              {load.status === "ready" && (
-                <div className="flex shrink-0 flex-row gap-2 font-mono text-xs sm:flex-col sm:items-end sm:gap-1">
-                  <span className="border-2 border-bone-50 px-2 py-0.5">
-                    {formatDuration(load.meta.duration)}
-                  </span>
-                  <span className="border-2 border-accent px-2 py-0.5 text-accent">
-                    {difficultyLabel(load.noteCount, load.meta.duration)}
-                  </span>
-                </div>
-              )}
+              {load.status === "ready" &&
+                (() => {
+                  // Card label = the leftmost tier you'd see enabled
+                  // in the picker after opening the song. So the card
+                  // and the picker are always in lockstep — no more
+                  // "card says HARD but EASY is clickable" surprise.
+                  const tier = lowestAvailableDifficulty(load.modes);
+                  return (
+                    <div className="flex shrink-0 flex-row gap-2 font-mono text-xs sm:flex-col sm:items-end sm:gap-1">
+                      <span className="border-2 border-bone-50 px-2 py-0.5">
+                        {formatDuration(load.meta.duration)}
+                      </span>
+                      <span
+                        className="border-2 border-accent px-2 py-0.5 uppercase leading-none text-accent"
+                        title={`Easiest tier available on this song: ${tier}`}
+                      >
+                        {tier}
+                      </span>
+                    </div>
+                  );
+                })()}
             </div>
 
             <div className="mt-4 flex items-end gap-3 sm:mt-5">

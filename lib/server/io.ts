@@ -437,7 +437,16 @@ class RoomRegistry {
     if (room.hostId !== sessionId) throw new RoomError("NOT_HOST", "Only host can start");
     if (room.phase !== "lobby") throw new RoomError("BAD_PHASE", "Not in lobby");
     if (!room.selectedSong) throw new RoomError("NO_SONG", "Pick a song first");
-    if (mode !== "easy" && mode !== "normal" && mode !== "hard") {
+    // Whitelist the 5 Syncle tiers. Keeps the wire format strict so a
+    // malicious / outdated client can't smuggle a bogus mode string into
+    // a room snapshot, and stays in lockstep with the ChartMode union.
+    if (
+      mode !== "easy" &&
+      mode !== "normal" &&
+      mode !== "hard" &&
+      mode !== "insane" &&
+      mode !== "expert"
+    ) {
       throw new RoomError("BAD_MODE", "Invalid difficulty");
     }
     room.phase = "loading";
