@@ -1,100 +1,69 @@
 "use client";
 
 /**
- * Multiplayer entry: pick a name, then either create a new room or join one
- * by code. After the action succeeds we navigate to /multi/<code>.
+ * Multiplayer entry. Deliberately split:
  *
- * No socket connection is established here directly — `useRoomSocket(null)`
- * opens the connection and we drive the create/join handshake through it.
- * Once we get the room code back from the server, router.push hands off to
- * the room page which re-uses the existing sessionStorage entry to rejoin
- * cleanly under the new URL.
+ *   - This file is the lightweight shell (header, intro copy, "How it works"
+ *     steps, gradient bg). It contains no socket.io code, so the route
+ *     chunk stays small and the page paints instantly when the user clicks
+ *     "multi" from the homepage.
+ *
+ *   - `MultiEntryClient` owns the socket + form. We pull it in via
+ *     `next/dynamic({ ssr: false })`, which puts socket.io-client and its
+ *     transitive deps in their own chunk. While that chunk loads we render
+ *     the `MultiEntryFallback` skeleton in place of the form so the page
+ *     layout doesn't jump.
+ *
+ * Net effect: route navigation feels instant; the actual server handshake
+ * (and any cold-start hint) shows up inside the page where the user can see
+ * progress, instead of blocking the navigation itself.
  */
 
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
 
 import { GradientBg } from "@/components/GradientBg";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
-import { useRoomSocket } from "@/hooks/useRoomSocket";
-import { ROOM_CODE_LENGTH, isValidRoomCode } from "@/lib/multi/protocol";
 
-const NAME_STORAGE_KEY = "syncle.multi.name";
+// CRITICAL: keep the fallback inline in this file rather than importing it
+// from MultiEntryClient. A static import (even of just the fallback symbol)
+// would pull socket.io-client into the route's initial chunk through
+// MultiEntryClient's module-top imports, defeating the whole code-split.
+const MultiEntryClient = dynamic(
+  () => import("@/components/multi/MultiEntryClient"),
+  {
+    ssr: false,
+    loading: () => <MultiEntryFallback />,
+  },
+);
+
+function MultiEntryFallback() {
+  return (
+    <>
+      <p className="inline-flex w-fit items-center gap-2 border-2 border-yellow-400/70 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-yellow-400/90">
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-yellow-400" />
+        Loading multiplayer…
+      </p>
+      <div className="brut-card space-y-4 p-5 sm:p-6">
+        <div className="space-y-2">
+          <div className="h-3 w-28 bg-bone-50/10" />
+          <div className="h-10 w-full border-2 border-bone-50/15" />
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="h-12 border-2 border-bone-50/15" />
+          <div className="flex flex-col gap-2">
+            <div className="h-10 border-2 border-bone-50/15" />
+            <div className="h-12 border-2 border-bone-50/15" />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 export default function MultiEntryPage() {
   const router = useRouter();
-  const { conn, actions } = useRoomSocket(null);
-
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState<"create" | "join" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // After ~3s of staying in "connecting" we surface the cold-start hint.
-  // Free Render dynos sleep after 15min idle and take ~30s to wake up.
-  const [showColdStartHint, setShowColdStartHint] = useState(false);
-  useEffect(() => {
-    if (conn === "connected") {
-      setShowColdStartHint(false);
-      return;
-    }
-    if (conn !== "connecting" && conn !== "reconnecting") return;
-    const t = setTimeout(() => setShowColdStartHint(true), 3_000);
-    return () => clearTimeout(t);
-  }, [conn]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const stored = window.localStorage.getItem(NAME_STORAGE_KEY);
-      if (stored) setName(stored);
-    } catch {
-      /* localStorage may be disabled */
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      if (name.trim()) window.localStorage.setItem(NAME_STORAGE_KEY, name.trim());
-    } catch {
-      /* ignore */
-    }
-  }, [name]);
-
-  const trimmedName = name.trim();
-  const cleanCode = code.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, ROOM_CODE_LENGTH);
-  const canSubmit = useMemo(
-    () => trimmedName.length > 0 && conn === "connected" && !busy,
-    [trimmedName, conn, busy],
-  );
-  const canJoin = canSubmit && isValidRoomCode(cleanCode);
-
-  const handleCreate = async () => {
-    if (!canSubmit) return;
-    setBusy("create");
-    setError(null);
-    const res = await actions.create(trimmedName);
-    if (!res.ok) {
-      setError(res.message);
-      setBusy(null);
-      return;
-    }
-    router.push(`/multi/${res.code}`);
-  };
-
-  const handleJoin = async () => {
-    if (!canJoin) return;
-    setBusy("join");
-    setError(null);
-    const res = await actions.join(cleanCode, trimmedName);
-    if (!res.ok) {
-      setError(res.message);
-      setBusy(null);
-      return;
-    }
-    router.push(`/multi/${cleanCode}`);
-  };
 
   return (
     <main className="relative min-h-screen overflow-hidden">
@@ -143,104 +112,7 @@ export default function MultiEntryPage() {
           </p>
         </div>
 
-        <ConnectionPill conn={conn} />
-
-        {showColdStartHint && (
-          <div className="brut-card-accent flex gap-3 px-4 py-3 text-[11px] leading-relaxed text-bone-50/80">
-            <span
-              aria-hidden
-              className="mt-[3px] inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent"
-            />
-            <div className="flex-1 space-y-1">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-accent">
-                ░ Waking the multiplayer server
-              </p>
-              <p>
-                The realtime server sleeps when idle and takes around{" "}
-                <strong className="text-bone-50">30 seconds</strong> to spin
-                back up on the first connection. This happens once — every
-                player who joins after that connects instantly. Single-player
-                isn't affected.
-              </p>
-            </div>
-          </div>
-        )}
-
-        <div className="brut-card space-y-4 p-5 sm:p-6">
-          <label className="block">
-            <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
-              Display name
-            </span>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value.slice(0, 20))}
-              placeholder="player"
-              maxLength={20}
-              autoComplete="off"
-              spellCheck={false}
-              className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-sm text-bone-50 outline-none focus:border-accent transition-colors"
-            />
-            <p className="mt-1 font-mono text-[9px] uppercase tracking-widest text-bone-50/40">
-              Up to 20 characters, no formatting.
-            </p>
-          </label>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <button
-              onClick={handleCreate}
-              disabled={!canSubmit}
-              className="brut-btn-accent flex items-center justify-center gap-2 px-4 py-3 disabled:opacity-50"
-            >
-              {busy === "create"
-                ? "Creating…"
-                : conn !== "connected"
-                  ? "Waking server…"
-                  : "+ Create room"}
-            </button>
-
-            <div className="flex flex-col gap-2">
-              <input
-                type="text"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="ROOM CODE"
-                inputMode="text"
-                maxLength={ROOM_CODE_LENGTH}
-                autoComplete="off"
-                spellCheck={false}
-                className="border-2 border-bone-50/20 bg-transparent px-3 py-2 text-center font-mono uppercase tracking-[0.4em] text-bone-50 outline-none focus:border-accent transition-colors"
-              />
-              <button
-                onClick={handleJoin}
-                disabled={!canJoin}
-                className="brut-btn group inline-flex items-center justify-center gap-2 px-4 py-3 disabled:opacity-50"
-              >
-                {busy === "join" ? (
-                  <span>Joining…</span>
-                ) : conn !== "connected" ? (
-                  <span>Waking server…</span>
-                ) : (
-                  <>
-                    <span>Join</span>
-                    <ArrowIcon
-                      direction="right"
-                      size={14}
-                      strokeWidth={2.75}
-                      className="transition-transform duration-200 group-hover:translate-x-0.5"
-                    />
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {error && (
-            <div className="border-2 border-rose-500 p-2 font-mono text-xs text-rose-400">
-              {error}
-            </div>
-          )}
-        </div>
+        <MultiEntryClient />
 
         <section className="space-y-3">
           <p className="font-mono text-[10px] uppercase tracking-[0.35em] text-bone-50/45">
@@ -287,35 +159,5 @@ function Step({
         <p className="text-[11px] leading-snug text-bone-50/60">{children}</p>
       </div>
     </li>
-  );
-}
-
-function ConnectionPill({ conn }: { conn: string }) {
-  const label = conn === "connecting"
-    ? "Connecting to multiplayer server…"
-    : conn === "connected"
-      ? "Connected"
-      : conn === "reconnecting"
-        ? "Reconnecting…"
-        : conn === "disconnected"
-          ? "Disconnected"
-          : "Idle";
-  const color =
-    conn === "connected"
-      ? "border-accent text-accent"
-      : conn === "reconnecting" || conn === "connecting"
-        ? "border-yellow-400/70 text-yellow-400/90"
-        : "border-rose-500 text-rose-400";
-  return (
-    <p
-      className={`inline-flex w-fit items-center gap-2 border-2 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest ${color}`}
-    >
-      <span
-        className={`inline-block h-1.5 w-1.5 rounded-full ${
-          conn === "connected" ? "bg-accent" : conn === "disconnected" ? "bg-rose-400" : "bg-yellow-400 animate-pulse"
-        }`}
-      />
-      {label}
-    </p>
   );
 }

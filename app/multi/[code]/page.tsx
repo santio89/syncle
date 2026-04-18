@@ -208,8 +208,13 @@ export default function MultiRoomPage() {
           />
           <span>Back</span>
         </button>
-        <div className="flex items-center gap-3">
-          <code className="border-2 border-bone-50/30 px-2 py-1 font-mono text-[11px] tracking-[0.4em] text-bone-50/85">
+        {/* Center cluster: room code + connection state. The ConnectionPill
+            label collapses to a dot-only badge on <sm so the row fits
+            alongside the back button + theme toggle on a 320px viewport
+            without the room code wrapping or being squeezed. Tracking on
+            the code chip is also tightened slightly on mobile. */}
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <code className="shrink-0 border-2 border-bone-50/30 px-1.5 py-0.5 font-mono text-[10px] tracking-[0.25em] text-bone-50/85 sm:px-2 sm:py-1 sm:text-[11px] sm:tracking-[0.4em]">
             {code}
           </code>
           <ConnectionPill conn={conn} />
@@ -396,9 +401,16 @@ function ConnectionPill({ conn }: { conn: string }) {
           ? "Reconnecting…"
           : "Disconnected";
   return (
-    <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`} />
-      {text}
+    <span
+      className="inline-flex min-w-0 items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-bone-50/60"
+      title={text}
+    >
+      <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+      {/* Hide the verbose label on phones so the room code + back button
+          + theme toggle don't fight for space; the colored dot still
+          communicates the state, and the title attribute exposes the
+          full text on hover/long-press for assistive contexts. */}
+      <span className="hidden truncate sm:inline">{text}</span>
     </span>
   );
 }

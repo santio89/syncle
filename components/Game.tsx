@@ -1321,8 +1321,8 @@ function HUD({
             full text shows in the native title tooltip on hover. */}
         {songTitle && (
           <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
-            <p className="font-mono text-[8px] uppercase tracking-[0.3em] text-bone-50/45 sm:text-[9px]">
-              ░ Now playing
+            <p className="truncate font-mono text-[8px] uppercase tracking-widest text-bone-50/45 sm:text-[9px]">
+              ♪ Now playing
             </p>
             <p
               className="truncate font-mono text-[10px] font-bold text-bone-50/90 sm:text-[11px]"
