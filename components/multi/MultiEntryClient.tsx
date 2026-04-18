@@ -240,6 +240,11 @@ export default function MultiEntryClient() {
           <CreatePane
             roomName={roomName}
             onRoomName={setRoomName}
+            // Pass the live display name down so the room-name input can
+            // suggest a friendly default placeholder ("alice's room") that
+            // tracks whatever the user is typing above. Falls back to the
+            // generic "player's room" when the name field is still empty.
+            displayName={name}
             visibility={visibility}
             onVisibility={setVisibility}
             onSubmit={handleCreate}
@@ -333,6 +338,7 @@ function TabBar({
 function CreatePane({
   roomName,
   onRoomName,
+  displayName,
   visibility,
   onVisibility,
   onSubmit,
@@ -342,6 +348,9 @@ function CreatePane({
 }: {
   roomName: string;
   onRoomName: (n: string) => void;
+  /** Live display name from the parent — used to compose a friendly
+   *  placeholder for the optional room-name field. */
+  displayName: string;
   visibility: "public" | "private";
   onVisibility: (v: "public" | "private") => void;
   onSubmit: () => void;
@@ -349,6 +358,16 @@ function CreatePane({
   disabled: boolean;
   conn: string;
 }) {
+  // Trim so trailing whitespace from the display-name input doesn't
+  // leak into the placeholder ("santi  's room"). When the name is
+  // empty we fall back to "player's room" so the field still
+  // demonstrates the format the user is expected to follow.
+  const trimmedName = displayName.trim();
+  const namePart = trimmedName.length > 0 ? trimmedName : "player";
+  // Cap at the room-name max so an extremely long display name
+  // doesn't overflow the placeholder visually (the actual value the
+  // user types is also capped by `maxLength` on the input itself).
+  const placeholder = `${namePart}'s room`.slice(0, ROOM_NAME_MAX_LEN);
   return (
     <div className="space-y-4">
       <label className="block">
@@ -362,7 +381,7 @@ function CreatePane({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !disabled) onSubmit();
           }}
-          placeholder="room"
+          placeholder={placeholder}
           maxLength={ROOM_NAME_MAX_LEN}
           autoComplete="off"
           spellCheck={false}
