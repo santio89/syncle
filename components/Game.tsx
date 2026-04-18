@@ -1295,7 +1295,7 @@ function StartCard({
       <button
         onClick={onStart}
         disabled={loading || !ready}
-        className="brut-btn-accent mt-6 flex w-full items-center justify-center gap-2 px-6 py-4 text-[1.05rem] sm:text-[1.18rem] disabled:opacity-50"
+        className="brut-btn-accent group mt-6 flex w-full items-center justify-center gap-2 px-6 py-4 text-[1.05rem] sm:text-[1.18rem] disabled:opacity-50"
       >
         {loading || !ready ? (
           <>
@@ -1303,7 +1303,22 @@ function StartCard({
             <span>{loading ? "Loading audio..." : "Loading chart..."}</span>
           </>
         ) : (
-          <span>{best ? "▶ Try again" : "▶ Start"}</span>
+          <>
+            <span>{best ? "Try again" : "Start"}</span>
+            {/* Play triangle moved AFTER the label and given the same
+                slide-on-hover treatment as the arrow icons elsewhere
+                (Back / Join room). Wrapped in a span so we can apply
+                a transform — the unicode glyph itself is positionable
+                only via its container. `inline-block` is required for
+                translate-x to take effect (transforms are no-ops on
+                inline elements). */}
+            <span
+              aria-hidden
+              className="inline-block transition-transform duration-200 group-hover:translate-x-0.5"
+            >
+              ▶
+            </span>
+          </>
         )}
       </button>
       <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">

@@ -120,12 +120,15 @@ function PlayerRoster({
         ))}
       </ul>
 
+      {/* Rename action sits under the player list. The "Your name"
+          caption used to live here but it was redundant — the
+          player's own row in the list above already says "you" next
+          to their name, and the "rename" verb is self-evident. The
+          top border keeps the visual break between "who's in the
+          room" and "your own controls". */}
       <div className="mt-4 border-t-2 border-bone-50/10 pt-3">
-        <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
-          Your name
-        </p>
         {editing ? (
-          <div className="mt-1 flex gap-2">
+          <div className="flex gap-2">
             <input
               autoFocus
               value={draft}
@@ -150,7 +153,7 @@ function PlayerRoster({
               setDraft("");
               setEditing(true);
             }}
-            className="mt-1 inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 hover:text-accent"
+            className="inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 hover:text-accent"
           >
             <span>rename</span>
           </button>
@@ -436,17 +439,32 @@ function HostPane({
       <button
         onClick={handleStart}
         disabled={!canStart}
-        className="brut-btn-accent mt-3 w-full px-4 py-3 disabled:opacity-50"
+        className="brut-btn-accent group mt-3 flex w-full items-center justify-center gap-2 px-4 py-3 disabled:opacity-50"
       >
-        {starting
-          ? "Starting…"
-          : probing
-            ? "Reading chart…"
-            : selected && !modeReady
-              ? "Pick an available difficulty"
-              : "▶ Start match"}
+        {starting ? (
+          <span>Starting…</span>
+        ) : probing ? (
+          <span>Reading chart…</span>
+        ) : selected && !modeReady ? (
+          <span>Pick an available difficulty</span>
+        ) : (
+          <>
+            <span>Start match</span>
+            {/* Play triangle after the label, with the same slide-on-
+                hover treatment as the arrow icons (Back / Join room)
+                elsewhere. Only rendered in the "ready to start" state
+                — the loading / error states don't get an icon since
+                they're not interactive cues. */}
+            <span
+              aria-hidden
+              className="inline-block transition-transform duration-200 group-hover:translate-x-0.5"
+            >
+              ▶
+            </span>
+          </>
+        )}
       </button>
-      <p className="mt-2 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
+      <p className="mt-4 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
         Everyone has 30s to download + decode the song
       </p>
     </div>
