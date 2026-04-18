@@ -247,19 +247,17 @@ export default function MultiEntryPage() {
             ░ How it works
           </p>
           <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Step n={1} title="Open a room">
-              Pick a name and create a room. You get a 6-character code.
+            <Step n={1} title="Create">
+              Pick a name, create a room, get a 6-character code.
             </Step>
-            <Step n={2} title="Share the code">
-              Friends paste it on this page to join. Up to 50 per room.
+            <Step n={2} title="Invite">
+              Share the code. Up to 50 players per room.
             </Step>
-            <Step n={3} title="Host picks a song">
-              Choose any track from the catalog and a difficulty. Everyone
-              loads the same chart in parallel.
+            <Step n={3} title="Pick">
+              Host chooses song and difficulty. Everyone loads it.
             </Step>
-            <Step n={4} title="Race in real time">
-              Each player runs their own canvas. A live sidebar shows scores;
-              highest at the end wins.
+            <Step n={4} title="Race">
+              Same chart, live scoreboard. Highest score wins.
             </Step>
           </ol>
         </section>
