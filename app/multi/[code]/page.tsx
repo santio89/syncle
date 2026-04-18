@@ -489,8 +489,24 @@ function RoomBody({
         return null;
     }
   })();
+  // The countdown / playing phases hand off to <MultiGame>, whose root
+  // is `<div class="relative h-full w-full">` — that `h-full` only
+  // resolves to a real pixel height if every wrapper between it and the
+  // flex-1 game shell also carries an explicit height. Without it, the
+  // canvas measures 0×0 (the HUD overlays still paint because they hang
+  // off larger ancestors, but the highway itself is invisible — the
+  // exact symptom of the "missing game area" bug after a viewport
+  // resize). Applying `h-full w-full` for those two phases keeps the
+  // chain intact; the lobby / loading / results phases stay in their
+  // default auto-height card layout because they're form-style screens
+  // that scroll with the page rather than fill it.
+  const isCanvasPhase =
+    snapshot.phase === "countdown" || snapshot.phase === "playing";
   return (
-    <div key={snapshot.phase} className="phase-shell">
+    <div
+      key={snapshot.phase}
+      className={`phase-shell${isCanvasPhase ? " h-full w-full" : ""}`}
+    >
       {inner}
     </div>
   );
