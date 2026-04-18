@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
+import { StatusBadge } from "@/components/StatusBadge";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   loadSong,
@@ -197,7 +198,31 @@ export default function HomePage() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
-          <div className="brut-card-accent relative p-4 sm:p-5 md:col-span-2">
+          <div
+            className="brut-card-accent relative overflow-hidden p-4 sm:p-5 md:col-span-2"
+            style={
+              load.status === "ready" && load.meta.coverUrl
+                ? {
+                    // Beatmap cover as ambient background. We layer a
+                    // dark left-to-right gradient over the image so the
+                    // title/artist column on the left always has enough
+                    // contrast — some covers are blown-out anime
+                    // keyart, others are black album sleeves; the
+                    // gradient handles both. Fading to lighter on the
+                    // right lets the cover breathe through near the
+                    // duration badge.
+                    //
+                    // If the URL 404s the browser silently falls back
+                    // to the card's own translucent surface color from
+                    // `.brut-card-accent` — no broken-image icon, no
+                    // layout shift, no JS error handling needed.
+                    backgroundImage: `linear-gradient(90deg, rgba(4,5,8,0.95) 0%, rgba(4,5,8,0.75) 50%, rgba(4,5,8,0.4) 100%), url(${load.meta.coverUrl})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }
+                : undefined
+            }
+          >
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
               <div
                 className="min-w-0 flex-1"
@@ -205,14 +230,17 @@ export default function HomePage() {
                   load.status === "ready"
                     ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}${
                         load.meta.year ? `\nYear: ${load.meta.year}` : ""
-                      }`
+                      }${load.meta.creator ? `\nMapper: ${load.meta.creator}` : ""}`
                     : undefined
                 }
               >
-                <p className="font-mono text-xs uppercase tracking-widest text-accent">
-                  Now playing
+                <p className="flex flex-wrap items-center gap-2 font-mono text-xs uppercase tracking-widest text-accent">
+                  <span>Now playing</span>
                   {load.status === "ready" && (
-                    <span className="ml-2 text-bone-50/40">· osu! 4K</span>
+                    <span className="text-bone-50/40">· osu! 4K</span>
+                  )}
+                  {load.status === "ready" && load.meta.status && (
+                    <StatusBadge status={load.meta.status} size="xs" />
                   )}
                 </p>
 

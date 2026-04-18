@@ -180,9 +180,11 @@ function quantizeToGrid(
  *     source mapper chart's count.
  *   - Expert is mapper-only (no tier above to source from)
  *
- * Per-tier divisor recipes: easy /1, normal /2, hard adaptive /3-/4-/6,
- * insane adaptive /4-/6-/8. Lower tiers chord-collapse (1-finger chill);
- * upper tiers chord-preserve (chord patterns are part of the feel).
+ * Per-tier divisor recipes (see `RECIPES` below): easy and normal use
+ * a single coarse-grid chord-collapse; hard and insane try chord-
+ * preserve at multiple divisors first, falling back to chord-collapse
+ * on sparse sources where chord-preserve doesn't thin enough to clear
+ * the strict "between neighbors" availability check.
  */
 export interface ModeAvailability {
   noteCounts: Record<ChartMode, number>;
@@ -301,6 +303,16 @@ interface RawSession {
     artist: string;
     year?: number;
     audioUrl: string;
+    /**
+     * Public URL for the beatmap cover art (osu CDN for remote songs;
+     * local /public asset for fallback songs that ship one). Used as
+     * background art on the homepage card and the in-game StartCard.
+     */
+    coverUrl?: string;
+    /** Beatmapset moderation status — "ranked", "loved", etc. */
+    status?: string;
+    /** Mapper username — used as a credit line in the UI. */
+    creator?: string;
   };
   delivery: "local" | "remote";
   audioBytes?: ArrayBuffer;
@@ -466,7 +478,10 @@ async function pickRandomRemote(
         }, downloading…`,
       );
       const extracted = await fetchAndExtractAll(pick.beatmapsetId, { onProgress });
-      return rawSessionFromExtracted(extracted);
+      return rawSessionFromExtracted(extracted, {
+        status: pick.status,
+        creator: pick.creator,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(
@@ -484,7 +499,10 @@ async function pickRandomRemote(
   );
 }
 
-function rawSessionFromExtracted(ext: ExtractedSongFull): RawSession {
+function rawSessionFromExtracted(
+  ext: ExtractedSongFull,
+  apiMeta: { status?: string; creator?: string } = {},
+): RawSession {
   // Parse every chart in the .osz; toss any that fail to parse as 4K mania.
   const parsedCharts: Array<{ chart: ExtractedChart; raw: RawChart }> = [];
   for (const c of ext.charts) {
@@ -548,6 +566,13 @@ function rawSessionFromExtracted(ext: ExtractedSongFull): RawSession {
       title: parsedCharts[0].chart.meta.title,
       artist: parsedCharts[0].chart.meta.artist,
       audioUrl: "",
+      // osu CDN serves a few size variants per beatmapset under
+      // /covers/. `cover@2x.jpg` is ~1920×360, big enough to look crisp
+      // when used as a card background even on retina screens. Public,
+      // no-auth, aggressively cached.
+      coverUrl: `https://assets.ppy.sh/beatmaps/${ext.beatmapsetId}/covers/cover@2x.jpg`,
+      status: apiMeta.status,
+      creator: apiMeta.creator,
     },
     delivery: "remote",
     audioBytes: ext.audioBytes,
@@ -659,19 +684,63 @@ async function pickRandomLocal(): Promise<RawSession> {
 
 /**
  * Per-tier quantization recipe used when no mapper chart fills the
- * bucket. Lower tiers use a fixed coarse grid + chord-collapse (we want
- * a chill 1-finger feel); upper tiers use a list of candidate divisors
- * with chord-preservation (we want chord patterns to survive, and the
- * "right" divisor depends on how dense the source happens to be).
+ * bucket. Each recipe is a list of `(divisor, preserveChords)` attempts
+ * tried in order — `resolveTier` walks the list and returns the first
+ * attempt whose note count lands strictly between the previous
+ * available tier and the source.
+ *
+ * Why a list instead of a single divisor:
+ *
+ *   1. Different sources sit on different native grids (a "Lunatic"
+ *      mapper chart might be at /16 spacing while a sparse "Insane"
+ *      sits at /4). A fixed divisor that thins one wouldn't thin the
+ *      other.
+ *
+ *   2. Chord-preserve thinning *only* removes notes that collide on
+ *      the same `(cell, lane)`. For dense sources (heavy stream / jack
+ *      patterns) that's plenty. For sparse sources where notes are
+ *      already spread across distinct cells, NO chord-preserve divisor
+ *      thins anything — result count == source count, tier disabled.
+ *
+ *      Solution: append chord-COLLAPSE attempts after the chord-preserve
+ *      ones. Chord-collapse always thins on any source with chord
+ *      stacks (collapses them to single notes regardless of grid). Tier
+ *      feel suffers slightly (Hard with no chord patterns is more like
+ *      a fast Medium) but the picker stays populated, which the player
+ *      cares about more than the editorial nuance.
+ *
+ * Recipe attempts are ordered "least destructive first":
+ *   - Try chord-preserve at coarsest divisor → finest divisor first,
+ *     since coarsest produces the most thinning when it works at all.
+ *   - Only then drop chord preservation as a last resort.
  */
-const RECIPES: Record<
-  Exclude<ChartMode, "expert">,
-  { divisors: Array<1 | 2 | 3 | 4 | 6 | 8>; preserveChords: boolean }
-> = {
-  easy: { divisors: [1], preserveChords: false },
-  normal: { divisors: [2], preserveChords: false },
-  hard: { divisors: [3, 4, 6], preserveChords: true },
-  insane: { divisors: [4, 6, 8], preserveChords: true },
+type Recipe = {
+  divisor: 1 | 2 | 3 | 4 | 6 | 8;
+  preserveChords: boolean;
+};
+const RECIPES: Record<Exclude<ChartMode, "expert">, Recipe[]> = {
+  // Easy / Normal use a single fixed coarse grid + chord-collapse.
+  // No fallbacks needed: chord-collapse at /1 or /2 produces such
+  // aggressive thinning that even a single-note-no-chord source
+  // (extremely rare) drops to ~max-1-note-per-cell density.
+  easy:   [{ divisor: 1, preserveChords: false }],
+  normal: [{ divisor: 2, preserveChords: false }],
+  hard: [
+    { divisor: 3, preserveChords: true },
+    { divisor: 4, preserveChords: true },
+    { divisor: 6, preserveChords: true },
+    // Chord-collapse fallbacks: kicked in for sparse Expert sources
+    // (8-10 nps) where chord-preserve doesn't find collisions.
+    { divisor: 4, preserveChords: false },
+    { divisor: 6, preserveChords: false },
+  ],
+  insane: [
+    { divisor: 4, preserveChords: true },
+    { divisor: 6, preserveChords: true },
+    { divisor: 8, preserveChords: true },
+    { divisor: 6, preserveChords: false },
+    { divisor: 8, preserveChords: false },
+  ],
 };
 
 /**
@@ -822,6 +891,9 @@ function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
     duration: chartForMode.duration,
     audioUrl: session.meta.audioUrl,
     difficulty: mode,
+    coverUrl: session.meta.coverUrl,
+    status: session.meta.status,
+    creator: session.meta.creator,
   };
   return {
     meta,
@@ -887,15 +959,15 @@ function resolveTier(
   const source = nearestMapperAbove(tier, buckets);
   if (!source) return emptyTier();
 
-  const recipe = RECIPES[tier];
+  const recipes = RECIPES[tier];
   const sourceCount = source.rawNotes.length;
-  for (const d of recipe.divisors) {
+  for (const { divisor, preserveChords } of recipes) {
     const result = quantizeToGrid(
       source.rawNotes,
       source.bpm,
       source.offset,
-      d,
-      recipe.preserveChords,
+      divisor,
+      preserveChords,
     );
     if (result.length > prevAvailableCount && result.length < sourceCount) {
       return {

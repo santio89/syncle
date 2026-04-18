@@ -30,6 +30,7 @@ import { recordRun } from "@/lib/game/stats";
 import { loadVolume, saveVolume } from "@/lib/game/settings";
 import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
+import { StatusBadge } from "@/components/StatusBadge";
 
 type Phase =
   | "idle"
@@ -994,17 +995,42 @@ function StartCard({
   const nps =
     meta && meta.duration > 0 ? (chartLength / meta.duration).toFixed(1) : "—";
   return (
-    <div className="brut-card w-full max-w-xl p-6 sm:p-8">
+    <div
+      className="brut-card relative w-full max-w-xl overflow-hidden p-6 sm:p-8"
+      style={
+        ready && meta!.coverUrl
+          ? {
+              // Same cover-as-ambient-background trick the homepage
+              // uses — the gradient stack is what makes it readable.
+              // Vertical here (rather than left-weighted) because
+              // StartCard text spans the full width: title at top,
+              // start button at bottom. Both ends need extra darkness;
+              // the middle can let the cover breathe through.
+              //
+              // 404s naturally fall back to the card's surface color
+              // from `.brut-card` — nothing to handle in JS.
+              backgroundImage: `linear-gradient(180deg, rgba(4,5,8,0.92) 0%, rgba(4,5,8,0.75) 35%, rgba(4,5,8,0.85) 65%, rgba(4,5,8,0.96) 100%), url(${meta!.coverUrl})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }
+          : undefined
+      }
+    >
       <div className="flex items-baseline justify-between gap-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
-          {mirror ? "Random pick" : "Now playing"}
-        </p>
+        <div className="flex flex-wrap items-baseline gap-2">
+          <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-accent">
+            {mirror ? "Random pick" : "Now playing"}
+          </p>
+          {ready && meta!.status && (
+            <StatusBadge status={meta!.status} size="xs" />
+          )}
+        </div>
         {ready && songSource && (
           <span
             className="font-mono text-[9px] uppercase tracking-widest text-accent/70"
             title={
               mirror
-                ? `Pulled from ${mirror} at runtime`
+                ? `Pulled from ${mirror} at runtime${meta!.creator ? ` · mapped by ${meta!.creator}` : ""}`
                 : "Loaded from a real osu!mania 4K beatmap"
             }
           >
@@ -1214,8 +1240,13 @@ function StartCard({
  * Single difficulty button in the StartCard picker. Pulled out so the
  * top row (easy/medium/hard) and the bottom row (insane/expert) share
  * exactly the same styling + interaction logic and the picker JSX stays
- * skim-able. Disabled state lines through the label so it reads as
- * "unavailable on this song" rather than "currently inactive".
+ * skim-able.
+ *
+ * Style precedence is INTENTIONAL: `!enabled` beats `selected`. While
+ * the chart is still loading every tier reports `enabled=false`, but
+ * `chartMode` already holds the default (`easy`) — without this
+ * ordering the default tier would paint in accent blue and read as
+ * "ready to play" before the picker actually has any data.
  */
 function ModeButton({
   mode,
@@ -1238,11 +1269,11 @@ function ModeButton({
           : `This song doesn't ship a ${displayMode(mode)} chart.`
       }
       className={`font-mono text-[10px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
-        selected
-          ? "border-accent bg-accent text-ink-900"
-          : enabled
-            ? "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
-            : "border-bone-50/10 text-bone-50/25 cursor-not-allowed"
+        !enabled
+          ? "border-bone-50/10 text-bone-50/25 cursor-not-allowed"
+          : selected
+            ? "border-accent bg-accent text-ink-900"
+            : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
       }`}
     >
       {displayMode(mode)}

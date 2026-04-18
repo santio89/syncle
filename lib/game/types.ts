@@ -106,6 +106,21 @@ export interface SongMeta {
   /** Total duration in seconds (best effort). */
   duration: number;
   difficulty: "easy" | "normal" | "hard" | "insane" | "expert";
+  /**
+   * Public URL for the beatmap cover art — osu CDN for remote songs,
+   * potentially a /public asset for local fallbacks. Optional: local
+   * fallbacks that don't ship art will leave this undefined and the
+   * UI is expected to render plainly.
+   */
+  coverUrl?: string;
+  /**
+   * Beatmapset moderation status from the search API ("ranked",
+   * "loved", "qualified", "approved"). Surfaced as a small badge in
+   * the UI. Undefined for local songs.
+   */
+  status?: string;
+  /** Mapper username (e.g. "AlexDunk"). Credit line in the UI. */
+  creator?: string;
 }
 
 export interface PlayerStats {

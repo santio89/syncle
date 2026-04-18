@@ -294,6 +294,20 @@ export interface RandomBeatmapPick {
   /** Loose hint — actual title comes from the parsed .osu later. */
   title?: string;
   artist?: string;
+  /**
+   * Mapper username (e.g. "AlexDunk"). Comes from the search API's
+   * `creator` field. Undefined when the source mirror doesn't expose it
+   * or when we fall back to a local song.
+   */
+  creator?: string;
+  /**
+   * Beatmapset moderation status: "ranked" | "loved" | "qualified" |
+   * "approved" | "graveyard" | "wip" | "pending". Search APIs filter by
+   * status before returning to us, so this echoes what we asked for —
+   * but storing it lets the UI surface "RANKED" / "LOVED" badges
+   * without a second round trip. Undefined for local songs.
+   */
+  status?: string;
   source: string;
 }
 
@@ -349,6 +363,18 @@ export async function pickRandomManiaBeatmapsetId(
         beatmapsetId: pick.id,
         title: typeof pick.title === "string" ? pick.title : undefined,
         artist: typeof pick.artist === "string" ? pick.artist : undefined,
+        creator: typeof pick.creator === "string" ? pick.creator : undefined,
+        // Both nerinyan and osu.direct return `status` as a lowercase
+        // string ("ranked", "loved", ...). Defensive cast in case a
+        // future mirror returns a numeric `ranked` instead.
+        status:
+          typeof pick.status === "string"
+            ? pick.status
+            : typeof pick.ranked === "number" && pick.ranked === 4
+              ? "loved"
+              : typeof pick.ranked === "number" && pick.ranked >= 1
+                ? "ranked"
+                : undefined,
         source: src.name,
       };
     } catch (e: any) {
