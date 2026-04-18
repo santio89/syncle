@@ -813,6 +813,8 @@ export default function Game() {
             onPause={pause}
             paused={phase === "paused"}
             fps={fps}
+            songTitle={displayMeta?.title ?? null}
+            songArtist={displayMeta?.artist ?? null}
           />
         )}
 
@@ -1177,7 +1179,7 @@ function StartCard({
         )}
       </button>
       <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
-        Replay as many times as you want — only your best counts
+        Replay as many times as you want!
       </p>
     </div>
   );
@@ -1250,6 +1252,8 @@ function HUD({
   onPause,
   paused,
   fps,
+  songTitle,
+  songArtist,
 }: {
   stats: PlayerStats;
   metronome: boolean;
@@ -1260,6 +1264,8 @@ function HUD({
   onPause: () => void;
   paused: boolean;
   fps: number;
+  songTitle: string | null;
+  songArtist: string | null;
 }) {
   const accuracy = computeAccuracy(stats);
   const total = stats.totalNotes;
@@ -1307,6 +1313,33 @@ function HUD({
       </div>
 
       <div className="brut-card flex w-[140px] flex-col gap-1 px-2.5 py-2 sm:w-[200px] sm:px-4 sm:py-3">
+        {/* "Now playing" strip — single source of truth for which song is on
+            screen during gameplay (the StartCard hands off and disappears,
+            so without this the player has nothing to remind them what's
+            currently rolling). Title/artist are truncated with `min-w-0` +
+            `truncate` so the brutalist border stays sharp at every width;
+            full text shows in the native title tooltip on hover. */}
+        {songTitle && (
+          <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
+            <p className="font-mono text-[8px] uppercase tracking-[0.3em] text-bone-50/45 sm:text-[9px]">
+              ░ Now playing
+            </p>
+            <p
+              className="truncate font-mono text-[10px] font-bold text-bone-50/90 sm:text-[11px]"
+              title={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
+            >
+              {songTitle}
+            </p>
+            {songArtist && (
+              <p
+                className="truncate font-mono text-[9px] text-bone-50/50 sm:text-[10px]"
+                title={songArtist}
+              >
+                {songArtist}
+              </p>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-1 sm:gap-2">
           <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
             Rock meter
@@ -1364,7 +1397,11 @@ function HUD({
             step={0.01}
             value={volume}
             onChange={(e) => onVolume(parseFloat(e.target.value))}
-            className="pointer-events-auto h-1 flex-1 cursor-pointer accent-accent"
+            // min-w-0 is critical: <input type="range"> has a UA-set
+            // intrinsic min-width (~120px) that overrides flex-shrink, so
+            // without it the slider pokes past the card's right edge on
+            // narrow viewports (mobile rock-meter card is only ~140px).
+            className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
             aria-label="Music volume"
           />
           <span className="hidden sm:inline font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">

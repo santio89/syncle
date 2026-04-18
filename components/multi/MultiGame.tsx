@@ -599,6 +599,8 @@ function CanvasPane({
               metronome={metronome}
               onToggleMetronome={() => setMetronome((m) => !m)}
               fps={fps}
+              songTitle={loaded?.meta.title ?? snapshot.selectedSong?.title ?? null}
+              songArtist={loaded?.meta.artist ?? snapshot.selectedSong?.artist ?? null}
             />
           </div>
         </div>
@@ -910,6 +912,8 @@ function HealthPanel({
   metronome,
   onToggleMetronome,
   fps,
+  songTitle,
+  songArtist,
 }: {
   stats: PlayerStats;
   volume: number;
@@ -917,6 +921,8 @@ function HealthPanel({
   metronome: boolean;
   onToggleMetronome: () => void;
   fps: number;
+  songTitle: string | null;
+  songArtist: string | null;
 }) {
   const healthColor =
     stats.health > 0.6
@@ -926,6 +932,32 @@ function HealthPanel({
         : "#ff3b6b";
   return (
     <div className="brut-card flex w-full flex-col gap-1 px-2.5 py-2 sm:px-4 sm:py-3">
+      {/* "Now playing" strip — see Game.tsx HUD for the rationale (single
+          on-screen reminder of what song is rolling once the lobby card is
+          gone). In multi we prefer the locally-loaded chart's metadata
+          when available, falling back to the room snapshot's `selectedSong`
+          so the strip is populated even before the audio buffer is ready. */}
+      {songTitle && (
+        <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
+          <p className="font-mono text-[8px] uppercase tracking-[0.3em] text-bone-50/45 sm:text-[9px]">
+            ░ Now playing
+          </p>
+          <p
+            className="truncate font-mono text-[10px] font-bold text-bone-50/90 sm:text-[11px]"
+            title={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
+          >
+            {songTitle}
+          </p>
+          {songArtist && (
+            <p
+              className="truncate font-mono text-[9px] text-bone-50/50 sm:text-[10px]"
+              title={songArtist}
+            >
+              {songArtist}
+            </p>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-1 sm:gap-2">
         <p className="font-mono text-[9px] uppercase tracking-widest text-bone-50/60 sm:text-[10px]">
           Rock meter
@@ -967,7 +999,10 @@ function HealthPanel({
           step={0.01}
           value={volume}
           onChange={(e) => onVolume(parseFloat(e.target.value))}
-          className="pointer-events-auto h-1 flex-1 cursor-pointer accent-accent"
+          // See Game.tsx HUD for why min-w-0 is required here — the UA
+          // intrinsic min-width on <input type="range"> would otherwise
+          // overflow the card on narrow viewports.
+          className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
           aria-label="Music volume"
         />
         <span className="hidden sm:inline font-mono text-[9px] tabular-nums text-bone-50/40 w-7 text-right">
