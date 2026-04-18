@@ -443,6 +443,31 @@ export const MAX_CHAT_HISTORY = 100;
 export const CHAT_RATE_LIMIT = 6;
 export const CHAT_RATE_WINDOW_MS = 8_000;
 
+/* -------------------------------------------------------------------------- */
+/* Match start timing                                                         */
+/* -------------------------------------------------------------------------- */
+/**
+ * Visible "3 / 2 / 1" overlay duration. The countdown overlay is what
+ * the player actually reads — it should match what they see in solo
+ * (3 s) so the muscle memory carries over.
+ */
+export const MATCH_OVERLAY_MS = 3_000;
+/**
+ * Silent runway between the overlay disappearing and the song actually
+ * starting. The highway scrolls empty during this window so the player
+ * has a beat (literally) to settle their hands on the keys before notes
+ * start arriving. Matches single-player's `LEAD_IN_SECONDS`.
+ */
+export const MATCH_LEAD_IN_MS = 2_000;
+/**
+ * Total wall-clock delay between the server entering the `countdown`
+ * phase and the audio actually playing — i.e. how far in the future
+ * `room.startsAt` is set. Sum of the visible overlay + the silent
+ * runway. Server uses this to schedule its `phase:playing` transition;
+ * clients use it to know when to start the audio buffer.
+ */
+export const MATCH_COUNTDOWN_LEAD_MS = MATCH_OVERLAY_MS + MATCH_LEAD_IN_MS;
+
 export function isValidRoomCode(code: string): boolean {
   if (typeof code !== "string") return false;
   if (code.length !== ROOM_CODE_LENGTH) return false;

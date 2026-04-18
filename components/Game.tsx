@@ -1260,6 +1260,8 @@ function StartCard({
               enabled={modeAvailability.available[m]}
               selected={chartMode === m}
               onPick={onChangeMode}
+              noteCount={modeAvailability.noteCounts[m]}
+              nps={modeAvailability.npsByMode[m]}
             />
           ))}
         </div>
@@ -1271,6 +1273,8 @@ function StartCard({
               enabled={modeAvailability.available[m]}
               selected={chartMode === m}
               onPick={onChangeMode}
+              noteCount={modeAvailability.noteCounts[m]}
+              nps={modeAvailability.npsByMode[m]}
             />
           ))}
         </div>
@@ -1394,11 +1398,17 @@ function ModeButton({
   enabled,
   selected,
   onPick,
+  noteCount,
+  nps,
 }: {
   mode: ChartMode;
   enabled: boolean;
   selected: boolean;
   onPick: (m: ChartMode) => void;
+  /** Note count for this tier, or 0 if unavailable / not yet quantized. */
+  noteCount: number;
+  /** Notes-per-second for this tier, or 0 if unavailable. */
+  nps: number;
 }) {
   const stars = modeStars(mode);
   return (
@@ -1407,7 +1417,12 @@ function ModeButton({
       disabled={!enabled}
       data-tooltip={
         enabled
-          ? `${displayMode(mode).toUpperCase()} · ${stars} / 5 intensity`
+          ? // Players asked for the actionable spec (chart density) on
+            // hover instead of the cosmetic intensity rating — the tier
+            // name is already on the button label and the stars are
+            // visible underneath, so the tooltip's job is to surface
+            // the one piece of info the button itself can't show.
+            `${noteCount.toLocaleString()} notes · ${nps.toFixed(1)} nps`
           : `Couldn't fit a ${displayMode(mode)} chart for this song's density profile.`
       }
       className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
@@ -1466,12 +1481,31 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function DifficultyTag({ mode }: { mode: ChartMode }) {
-  const stars = modeStars(mode);
+function DifficultyTag({
+  mode,
+  noteCount,
+  nps,
+}: {
+  mode: ChartMode;
+  /** Total notes in the active chart, or null pre-load. */
+  noteCount: number | null;
+  /** Notes-per-second for the active chart, or null pre-load. */
+  nps: number | null;
+}) {
+  // Hover surfaces chart density (notes + nps) — same convention as
+  // the lobby picker. Falls back to the stale "intensity stars"
+  // string only if we're somehow asked to render before the chart
+  // metadata is available, which keeps the tag useful even in the
+  // edge case where the HUD paints one frame ahead of the chart
+  // load.
+  const tooltip =
+    noteCount != null && nps != null && Number.isFinite(nps)
+      ? `${noteCount.toLocaleString()} notes · ${nps.toFixed(1)} nps`
+      : `${displayMode(mode).toUpperCase()} · ${modeStars(mode)} / 5 intensity`;
   return (
     <span
       className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
-      data-tooltip={`Difficulty: ${displayMode(mode)} (${stars} / 5 intensity)`}
+      data-tooltip={tooltip}
     >
       {displayMode(mode)}
     </span>
@@ -1648,7 +1682,15 @@ function HUD({
               <p className="truncate font-mono text-[8.2px] uppercase tracking-widest text-bone-50/45 sm:text-[9.2px]">
                 ♪ Now playing
               </p>
-              <DifficultyTag mode={chartMode} />
+              <DifficultyTag
+                mode={chartMode}
+                noteCount={stats.totalNotes > 0 ? stats.totalNotes : null}
+                nps={
+                  songDuration && songDuration > 0 && stats.totalNotes > 0
+                    ? stats.totalNotes / songDuration
+                    : null
+                }
+              />
             </div>
             <p
               className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"

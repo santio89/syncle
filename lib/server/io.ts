@@ -26,6 +26,7 @@ import {
   ClientToServerEvents,
   FinalStats,
   LiveScore,
+  MATCH_COUNTDOWN_LEAD_MS,
   MAX_CHAT_HISTORY,
   MAX_PLAYERS_PER_ROOM,
   NoticeKind,
@@ -57,8 +58,16 @@ const PLAYER_GRACE_MS = 60_000;
 const EMPTY_ROOM_TTL_MS = 10 * 60_000;
 /** Max wait for everyone to call `client:ready` after host hits start. */
 const LOADING_DEADLINE_MS = 30_000;
-/** Grace between "everyone ready" and the wall-clock t0 for audio. */
-const COUNTDOWN_LEAD_MS = 4_000;
+/**
+ * Grace between "everyone ready" and the wall-clock t0 for audio.
+ * Sourced from the shared protocol constant so the server's
+ * `phase:countdown` → `phase:playing` window matches exactly the
+ * length of the client's "3 / 2 / 1" overlay (3 s) plus the silent
+ * lead-in runway (2 s) — total 5 s. If you change the timing here,
+ * change `MATCH_OVERLAY_MS` / `MATCH_LEAD_IN_MS` in
+ * `lib/multi/protocol.ts` instead so client + server stay in lockstep.
+ */
+const COUNTDOWN_LEAD_MS = MATCH_COUNTDOWN_LEAD_MS;
 /** Score broadcast cadence (ms). 200 ms = 5 Hz, plenty smooth for a sidebar. */
 const SCOREBOARD_TICK_MS = 200;
 

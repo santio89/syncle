@@ -959,13 +959,17 @@ function HostModeButton({
         ? `Couldn't fit a ${displayMode(mode)} chart for this song's density profile.`
         : undefined;
   const stars = modeStars(mode);
+  // Density tooltip mirrors the single-player picker — players asked
+  // to see "X notes · Y nps" instead of the cosmetic intensity rating
+  // (the tier name + ★ ramp are already rendered on the button).
+  const noteCount = probe?.noteCounts[mode] ?? 0;
+  const nps = probe?.npsByMode[mode] ?? 0;
+  const densityTooltip = `${noteCount.toLocaleString()} notes · ${nps.toFixed(1)} nps`;
   return (
     <button
       onClick={() => enabled && onPick(mode)}
       disabled={disabled}
-      data-tooltip={
-        reason ?? `${displayMode(mode).toUpperCase()} · ${stars} / 5 intensity`
-      }
+      data-tooltip={reason ?? densityTooltip}
       className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
         selected && available
           ? "border-accent bg-accent text-ink-900"

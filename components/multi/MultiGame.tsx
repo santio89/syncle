@@ -53,7 +53,12 @@ import {
   PlayerStats,
   TOTAL_LANES,
 } from "@/lib/game/types";
-import type { LiveScore, RoomSnapshot, ScoreboardEntry } from "@/lib/multi/protocol";
+import {
+  MATCH_LEAD_IN_MS,
+  type LiveScore,
+  type RoomSnapshot,
+  type ScoreboardEntry,
+} from "@/lib/multi/protocol";
 
 const KEY_TO_LANE: Record<string, number> = {
   KeyD: 0, ArrowLeft: 0,
@@ -63,6 +68,17 @@ const KEY_TO_LANE: Record<string, number> = {
 };
 
 const SCORE_TICK_MS = 200; // 5 Hz
+
+/**
+ * Same value as the server's `MATCH_LEAD_IN_MS` but expressed in
+ * seconds for the in-render math (songTime is in seconds). Used to (a)
+ * hide the "3 / 2 / 1" overlay this many seconds before audio starts so
+ * the player gets a silent runway, and (b) flip the highway from
+ * `emptyState` to the real chart inside that window so notes whose
+ * onset falls inside `leadTime` (1.2 s) can spawn naturally instead of
+ * popping in at the strike line the instant the song begins.
+ */
+const MATCH_LEAD_IN_SECONDS = MATCH_LEAD_IN_MS / 1000;
 
 export function MultiGame({
   snapshot,
@@ -137,6 +153,16 @@ function CanvasPane({
   const finishedRef = useRef<boolean>(false);
   /** Combo on the previous frame — see Game.tsx for the rationale. */
   const prevComboRef = useRef<number>(0);
+  /**
+   * Flips true the first time the schedule effect successfully calls
+   * `audio.start()`. Before that flip, `audioRef.current?.songTime()`
+   * returns `ctx.currentTime - 0` (positive, growing) because
+   * `startedAtCtxTime` defaults to 0 — useless as a chart clock. The
+   * highway-gating logic in the rAF loop reads this ref to know when
+   * `songTime()` is trustworthy for the "should we draw the real
+   * chart yet?" decision during the silent lead-in window.
+   */
+  const audioStartedRef = useRef<boolean>(false);
 
   const [stats, setStats] = useState<PlayerStats | null>(null);
   // Throttled song-progress fraction (0..1) for the rock-meter card's
@@ -211,6 +237,11 @@ function CanvasPane({
     // decoding (matters when the host picks a fresh song after a results
     // screen).
     setAudioReady(false);
+    // Re-arm the "audio actually started" flag too — a fresh chart in
+    // the same room means the next `audio.start()` call is the new
+    // ground truth for songTime, and until then the highway gating
+    // logic shouldn't trust the engine's clock.
+    audioStartedRef.current = false;
     const prep = async () => {
       let buffered = false;
       try {
@@ -291,6 +322,12 @@ function CanvasPane({
           const offset = -delayMs / 1000;
           audio.start(0.05, 0.85, offset);
         }
+        // Mark the audio engine's clock as trustworthy now that
+        // `start()` has anchored `startedAtCtxTime` to the right
+        // moment. The rAF loop reads this when deciding whether to
+        // believe `songTime()` for highway gating during the silent
+        // lead-in window.
+        audioStartedRef.current = true;
       } catch {
         // Belt-and-suspenders: in the unlikely case start() still throws
         // (e.g. context suspended by the browser), we'll re-fire once the
@@ -304,14 +341,26 @@ function CanvasPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioReady, loaded, snapshot.startsAt, snapshot.songStartedAt]);
 
-  // Countdown overlay tick
+  // Countdown overlay tick.
+  //
+  // The server's `startsAt` is when audio actually fires; the visible
+  // "3 / 2 / 1" overlay should END `MATCH_LEAD_IN_MS` BEFORE that so
+  // the player sees:
+  //   - first 3 s → overlay counts down 3, 2, 1
+  //   - next  2 s → overlay gone, highway scrolls empty (lead-in)
+  //   - then       → audio starts + notes start arriving
+  // Subtracting the lead-in here is what gives us the silent runway
+  // without changing the audio schedule (the schedule effect below
+  // still aims for `startsAt` exactly, so server + client + everyone
+  // else's audio remain phase-locked).
   useEffect(() => {
     if (snapshot.phase !== "countdown" || !snapshot.startsAt) {
       setCountdownLabel(null);
       return;
     }
+    const overlayDeadline = snapshot.startsAt - MATCH_LEAD_IN_MS;
     const tick = () => {
-      const remaining = (snapshot.startsAt! - Date.now()) / 1000;
+      const remaining = (overlayDeadline - Date.now()) / 1000;
       if (remaining <= 0) {
         setCountdownLabel(null);
         return;
@@ -570,16 +619,38 @@ function CanvasPane({
       renderOptsRef.current.offset = songMeta?.offset ?? 0;
       renderOptsRef.current.laneHeld = heldRef.current;
 
-      // Render the highway empty during countdown. Even with the audio
-      // race fixed, charts that start with notes inside `leadTime` (1.2s)
-      // would briefly pop a few notes onto the screen behind the "3 / 2 /
-      // 1" overlay. Drawing the empty state here keeps the countdown
-      // visually pristine: lane gates + grid + held-key glows still
-      // animate (those read off `rs`, not the chart), only chart notes
-      // are suppressed until phase flips to "playing".
+      // Highway gating across the match-start window:
+      //
+      //   [overlay]  songTime < -LEAD_IN  → emptyState
+      //              "3 / 2 / 1" is on screen; chart notes that fall
+      //              inside the renderer's `leadTime` (1.2s) would
+      //              otherwise flash through the overlay's translucent
+      //              backing.
+      //
+      //   [lead-in]  -LEAD_IN ≤ songTime < 0 → real state
+      //              Overlay is gone, audio not yet playing, but we
+      //              WANT the highway showing the real chart so any
+      //              note at t<leadTime can spawn at the top of the
+      //              highway and slide down naturally — that's what
+      //              gives the player the "board sliding as I prepare"
+      //              feel they're after instead of notes popping in
+      //              at the strike line the instant the song begins.
+      //
+      //   [playing]  songTime ≥ 0 → real state (steady-state).
+      //
+      // Falls back to emptyState whenever the audio engine isn't
+      // armed yet (audio not loaded / `audio.start()` not yet called),
+      // because before `start()` runs `songTime()` returns
+      // `ctx.currentTime` (positive, growing) which would draw notes
+      // from random points in the chart.
+      const audioArmed = audioStartedRef.current;
+      const inLeadInOrPlaying =
+        audioArmed && songTime >= -MATCH_LEAD_IN_SECONDS;
       const drawState =
         currentPhase === "countdown"
-          ? emptyStateRef.current
+          ? inLeadInOrPlaying
+            ? (state ?? emptyStateRef.current)
+            : emptyStateRef.current
           : (state ?? emptyStateRef.current);
       drawFrame(
         ctx,
@@ -1063,7 +1134,16 @@ function HealthPanel({
                 cares; the lobby picker still shows the full ★ ramp. */}
             <span
               className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
-              data-tooltip={`Difficulty: ${displayMode(chartMode)} (${tierStars} / 5 intensity)`}
+              data-tooltip={
+                // Chart density on hover — same convention as the
+                // lobby picker and single-player HUD. Falls back to
+                // the intensity-stars string only if note count or
+                // duration aren't known yet (the tag still paints
+                // briefly during the load → countdown handoff).
+                stats.totalNotes > 0 && songDuration && songDuration > 0
+                  ? `${stats.totalNotes.toLocaleString()} notes · ${(stats.totalNotes / songDuration).toFixed(1)} nps`
+                  : `Difficulty: ${displayMode(chartMode)} (${tierStars} / 5 intensity)`
+              }
             >
               {displayMode(chartMode)}
             </span>
