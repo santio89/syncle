@@ -438,7 +438,7 @@ export default function HomePage() {
         <Link
           href="/multi"
           className="group inline-flex items-center gap-2 text-bone-50/60 hover:text-accent transition-colors"
-          title="Play with up to 50 friends in a room"
+          title="Multiplayer"
         >
           {/* MultiIcon bumped from 11→14 (and the trailing arrow from
               12→14 to keep the row balanced) — at 11px the four

@@ -17,7 +17,7 @@ export function MultiButton({ className = "" }: { className?: string }) {
       href="/multi"
       className={`icon-btn ${className}`}
       aria-label="Multiplayer"
-      title="Multiplayer · up to 50 players per room"
+      title="Multiplayer"
     >
       <MultiIcon />
     </Link>
