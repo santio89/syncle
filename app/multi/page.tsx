@@ -21,6 +21,7 @@
 
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { GradientBg } from "@/components/GradientBg";
 import { HomeButton } from "@/components/HomeButton";
@@ -65,6 +66,11 @@ function MultiEntryFallback() {
 
 export default function MultiEntryPage() {
   const router = useRouter();
+  // Collapsed by default — the form is what the user came to interact
+  // with, the steps are reference-only. A closed accordion keeps the
+  // page focused on Create/Join/Browse and lets curious players expand
+  // the explainer if they want it.
+  const [howOpen, setHowOpen] = useState(false);
 
   return (
     <main className="relative min-h-screen overflow-hidden">
@@ -121,24 +127,60 @@ export default function MultiEntryPage() {
 
         <MultiEntryClient />
 
+        {/* "How it works" — collapsible explainer. The header doubles as
+            an accordion toggle; the steps grid sits inside a
+            grid-template-rows transition (0fr ↔ 1fr) so the height
+            animation is content-aware without needing scrollHeight
+            measurement, and opacity rides alongside it for a soft fade.
+            Closed by default since most repeat visitors don't need the
+            recap. */}
         <section className="mt-4 space-y-3">
-          <p className="font-mono text-[10.5px] uppercase tracking-[0.35em] text-bone-50/45">
-            ░ How it works
-          </p>
-          <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Step n={1} title="Create">
-              Pick a name, create a room, get a 6-character code.
-            </Step>
-            <Step n={2} title="Invite">
-              Share the code. Up to 50 players per room.
-            </Step>
-            <Step n={3} title="Pick">
-              Host chooses song and difficulty. Everyone loads it.
-            </Step>
-            <Step n={4} title="Race">
-              Same chart, live scoreboard. Highest score wins.
-            </Step>
-          </ol>
+          <button
+            type="button"
+            onClick={() => setHowOpen((v) => !v)}
+            aria-expanded={howOpen}
+            aria-controls="how-it-works-panel"
+            className="group flex w-full items-center justify-between gap-3 font-mono text-[10.5px] uppercase tracking-[0.35em] text-bone-50/45 transition-colors hover:text-bone-50/80"
+          >
+            <span>░ How it works</span>
+            <ArrowIcon
+              direction="down"
+              size={11}
+              strokeWidth={2.5}
+              className={`transition-transform duration-300 ease-out ${
+                howOpen ? "rotate-180" : "rotate-0"
+              }`}
+            />
+          </button>
+          <div
+            id="how-it-works-panel"
+            className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
+              howOpen
+                ? "grid-rows-[1fr] opacity-100"
+                : "grid-rows-[0fr] opacity-0"
+            }`}
+            // `inert` on the collapsed panel takes the steps out of tab
+            // order and screen-reader flow while the dropdown is closed,
+            // so keyboard / AT users don't land on hidden content.
+            inert={!howOpen}
+          >
+            <div className="overflow-hidden">
+              <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Step n={1} title="Create">
+                  Pick a name, create a room, get a 6-character code.
+                </Step>
+                <Step n={2} title="Invite">
+                  Share the code. Up to 50 players per room.
+                </Step>
+                <Step n={3} title="Pick">
+                  Host chooses song and difficulty. Everyone loads it.
+                </Step>
+                <Step n={4} title="Race">
+                  Same chart, live scoreboard. Highest score wins.
+                </Step>
+              </ol>
+            </div>
+          </div>
         </section>
       </div>
     </main>

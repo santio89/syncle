@@ -20,22 +20,30 @@ import type { ChartMode } from "@/lib/game/chart";
 import {
   AckResult,
   CatalogItem,
+  CHAT_RATE_LIMIT,
+  CHAT_RATE_WINDOW_MS,
+  ChatMessage,
   ClientToServerEvents,
   FinalStats,
   LiveScore,
+  MAX_CHAT_HISTORY,
   MAX_PLAYERS_PER_ROOM,
   NoticeKind,
   PlayerSnapshot,
+  PublicRoomEntry,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
   RoomPhase,
   RoomSnapshot,
+  RoomVisibility,
   ScoreboardEntry,
   ServerToClientEvents,
   SongRef,
   Standing,
   isValidRoomCode,
+  sanitizeChatText,
   sanitizeName,
+  sanitizeRoomName,
 } from "@/lib/multi/protocol";
 import { fetchCatalog } from "./catalog";
 
@@ -65,14 +73,26 @@ interface InternalPlayer {
   isHost: boolean;
   joinedAt: number;
   ready: boolean;
+  /** Lobby-level "ready to play" flag — see PlayerSnapshot doc. */
+  lobbyReady: boolean;
+  /** Host-set chat silence flag. */
+  muted: boolean;
   live: LiveScore;
   final: FinalStats | null;
   postChoice: "stay" | "leave" | null;
   graceTimer: NodeJS.Timeout | null;
+  /**
+   * Sliding window of recent chat send timestamps (ms). Used to enforce
+   * CHAT_RATE_LIMIT per CHAT_RATE_WINDOW_MS without allocating a new
+   * structure per message — we just push + filter on every send.
+   */
+  chatTimestamps: number[];
 }
 
 interface InternalRoom {
   code: string;
+  name: string;
+  visibility: RoomVisibility;
   createdAt: number;
   hostId: string;
   phase: RoomPhase;
@@ -81,6 +101,10 @@ interface InternalRoom {
   selectedMode: ChartMode | null;
   startsAt: number | null;
   songStartedAt: number | null;
+  /** Rolling chat backlog, oldest first, capped at MAX_CHAT_HISTORY. */
+  chat: ChatMessage[];
+  /** Monotonically-incrementing chat message id (room-scoped). */
+  nextChatId: number;
   catalog: CatalogItem[] | null;
   catalogFetchedAt: number | null;
   emptyTtlTimer: NodeJS.Timeout | null;
@@ -192,6 +216,8 @@ class RoomRegistry {
         online: p.socketId !== null,
         joinedAt: p.joinedAt,
         ready: p.ready,
+        lobbyReady: p.lobbyReady,
+        muted: p.muted,
         live: p.live,
         final: p.final,
         postChoice: p.postChoice,
@@ -200,13 +226,57 @@ class RoomRegistry {
     players.sort((a, b) => a.joinedAt - b.joinedAt);
     return {
       code: room.code,
+      name: room.name,
+      visibility: room.visibility,
       hostId: room.hostId,
       phase: room.phase,
       selectedSong: room.selectedSong,
       startsAt: room.startsAt,
       songStartedAt: room.songStartedAt,
       players,
+      chat: room.chat,
     };
+  }
+
+  /**
+   * Compact public-room representation for the browser listing. Skipped
+   * when the room is private or empty (an empty room ID is just stale
+   * cruft from someone bouncing).
+   */
+  publicEntryOf(room: InternalRoom): PublicRoomEntry | null {
+    if (room.visibility !== "public") return null;
+    if (room.players.size === 0) return null;
+    const host = room.players.get(room.hostId);
+    return {
+      code: room.code,
+      name: room.name,
+      hostName: host?.name ?? "—",
+      playerCount: room.players.size,
+      maxPlayers: MAX_PLAYERS_PER_ROOM,
+      phase: room.phase,
+      selectedSong: room.selectedSong
+        ? `${room.selectedSong.artist} — ${room.selectedSong.title}`
+        : null,
+      createdAt: room.createdAt,
+    };
+  }
+
+  listPublicRooms(): PublicRoomEntry[] {
+    const out: PublicRoomEntry[] = [];
+    for (const room of this.rooms.values()) {
+      const entry = this.publicEntryOf(room);
+      if (entry) out.push(entry);
+    }
+    // Most-populated first, then youngest first as a tiebreaker so a
+    // freshly-spun-up "0 players" room ends up at the bottom even
+    // briefly. The publicEntryOf filter already excludes empty rooms,
+    // but the sort still helps with one-player rooms vs five-player
+    // rooms in the same browser window.
+    out.sort(
+      (a, b) =>
+        b.playerCount - a.playerCount || b.createdAt - a.createdAt,
+    );
+    return out;
   }
 
   standingsOf(room: InternalRoom): { standings: Standing[]; winnerId: string } {
@@ -238,11 +308,18 @@ class RoomRegistry {
     throw new RoomError("CODE_EXHAUSTED", "Could not allocate a fresh room code");
   }
 
-  createRoom(socketId: string, name: string): { code: string; sessionId: string } {
+  createRoom(
+    socketId: string,
+    displayName: string,
+    roomName: string,
+    visibility: RoomVisibility,
+  ): { code: string; sessionId: string } {
     const code = this.generateCode();
     const sessionId = randomUUID();
     const room: InternalRoom = {
       code,
+      name: roomName,
+      visibility,
       createdAt: Date.now(),
       hostId: sessionId,
       phase: "lobby",
@@ -251,6 +328,8 @@ class RoomRegistry {
       selectedMode: null,
       startsAt: null,
       songStartedAt: null,
+      chat: [],
+      nextChatId: 1,
       catalog: null,
       catalogFetchedAt: null,
       emptyTtlTimer: null,
@@ -259,14 +338,17 @@ class RoomRegistry {
     room.players.set(sessionId, {
       id: sessionId,
       socketId,
-      name,
+      name: displayName,
       isHost: true,
       joinedAt: Date.now(),
       ready: false,
+      lobbyReady: false,
+      muted: false,
       live: emptyLive(),
       final: null,
       postChoice: null,
       graceTimer: null,
+      chatTimestamps: [],
     });
     this.rooms.set(code, room);
     this.socketIndex.set(socketId, { code, sessionId });
@@ -295,10 +377,13 @@ class RoomRegistry {
       isHost: false,
       joinedAt: Date.now(),
       ready: false,
+      lobbyReady: false,
+      muted: false,
       live: emptyLive(),
       final: null,
       postChoice: null,
       graceTimer: null,
+      chatTimestamps: [],
     });
     this.socketIndex.set(socketId, { code, sessionId });
     return { sessionId };
@@ -417,6 +502,42 @@ class RoomRegistry {
       artist: String(s.artist ?? "Unknown").slice(0, 80),
       source: String(s.source ?? "host").slice(0, 32),
     };
+    // Picking a fresh song invalidates the room's ready quorum — any
+    // pre-clicked "I'm ready" was for the previous selection. Clearing
+    // here keeps the host's "everyone ready" indicator honest: every
+    // player has to re-affirm they want THIS song before the host's
+    // start button lights green.
+    for (const p of room.players.values()) p.lobbyReady = false;
+  }
+
+  /**
+   * Track the host's current difficulty pick on the room state.
+   *
+   * Stored continuously (not just at start-time) so the server has a
+   * canonical record of "what the host currently has highlighted" for
+   * future server-side checks (e.g. validating that the picked tier is
+   * available on the chosen song). The host still has to explicitly
+   * click "Start match" to begin loading — there's no auto-start path
+   * that consumes this.
+   */
+  setMode(code: string, sessionId: string, mode: unknown): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) return;
+    if (room.phase !== "lobby") return;
+    if (
+      mode !== "easy" &&
+      mode !== "normal" &&
+      mode !== "hard" &&
+      mode !== "insane" &&
+      mode !== "expert"
+    ) {
+      return;
+    }
+    room.selectedMode = mode;
+    // No snapshot emit — mode is host-local UI state most of the time
+    // (the host's own picker is what's authoritative). We don't want a
+    // fan-out on every difficulty button click.
   }
 
   async ensureCatalog(code: string, refresh: boolean): Promise<CatalogItem[]> {
@@ -455,6 +576,10 @@ class RoomRegistry {
     room.songStartedAt = null;
     for (const p of room.players.values()) {
       p.ready = false;
+      // Lobby-ready is the gate INTO loading — once we're in loading
+      // it's served its purpose and the next return-to-lobby starts
+      // every player at "not ready" again.
+      p.lobbyReady = false;
       p.live = emptyLive();
       p.final = null;
       p.postChoice = null;
@@ -633,14 +758,156 @@ class RoomRegistry {
       throw new RoomError("NOT_HOST", "Only host can do that");
     }
     if (room.phase !== "results") return;
+    this.returnToLobbyShared(room);
+  }
+
+  /**
+   * Any-player-can-call sibling of `hostReturnToLobby`. The new UX is
+   * that anyone clicking "Back to room" on the results screen pulls
+   * everyone back; players who already chose "leave main menu" are
+   * disconnected by now (their client called `room:leave` before
+   * navigating away) so this is just a phase flip.
+   *
+   * Idempotent: a second click during the same results window finds
+   * the room already in lobby and silently no-ops.
+   */
+  anyReturnToLobby(code: string, sessionId: string): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (!room.players.has(sessionId)) return;
+    if (room.phase !== "results") return;
+    this.returnToLobbyShared(room);
+  }
+
+  private returnToLobbyShared(room: InternalRoom): void {
     const leavers: string[] = [];
     for (const p of room.players.values()) {
       if (p.postChoice === "leave") leavers.push(p.id);
     }
-    for (const id of leavers) this.evict(code, id, "leave");
-    const fresh = this.rooms.get(code);
+    for (const id of leavers) this.evict(room.code, id, "leave");
+    const fresh = this.rooms.get(room.code);
     if (!fresh) return;
     this.transitionToLobby(fresh);
+  }
+
+  /* ---- lobby-ready ---- */
+
+  setLobbyReady(code: string, sessionId: string, ready: unknown): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.phase !== "lobby") return;
+    const p = room.players.get(sessionId);
+    if (!p) return;
+    const next = !!ready;
+    if (p.lobbyReady === next) return;
+    p.lobbyReady = next;
+    this.emitSnapshot(code);
+    // Note: there is intentionally NO auto-start here. By design, the
+    // host always has to click "Start match" themselves — the all-ready
+    // signal in the lobby UI just tells them they can do so without
+    // overriding anyone. This was changed back from auto-start because
+    // hosts wanted explicit control over the start moment (e.g. to
+    // wait for a late friend, swap songs, etc.) even after the room
+    // hits full ready quorum.
+  }
+
+  /* ---- moderation ---- */
+
+  kickPlayer(code: string, hostSession: string, target: unknown): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== hostSession) {
+      throw new RoomError("NOT_HOST", "Only host can kick");
+    }
+    if (typeof target !== "string") return;
+    if (target === hostSession) {
+      throw new RoomError("CANT_KICK_SELF", "Use 'leave' to step down");
+    }
+    const p = room.players.get(target);
+    if (!p) return;
+    // Tell the kicked socket FIRST so the client can show a polite
+    // splash before its socket is yanked from the room. Once we evict
+    // they leave the broadcast room and won't receive further events.
+    if (p.socketId) {
+      this.io.to(p.socketId).emit("room:kicked", {
+        reason: `You were kicked by the host`,
+      });
+    }
+    this.emitNotice(code, "kick", `${p.name || "someone"} was kicked`);
+    this.evict(code, target, "leave");
+  }
+
+  setMute(
+    code: string,
+    hostSession: string,
+    target: unknown,
+    muted: unknown,
+  ): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== hostSession) {
+      throw new RoomError("NOT_HOST", "Only host can mute");
+    }
+    if (typeof target !== "string") return;
+    if (target === hostSession) {
+      throw new RoomError("CANT_MUTE_SELF", "Hosts can't mute themselves");
+    }
+    const p = room.players.get(target);
+    if (!p) return;
+    const next = !!muted;
+    if (p.muted === next) return;
+    p.muted = next;
+    this.emitNotice(
+      code,
+      "mute",
+      `${p.name || "someone"} was ${next ? "muted" : "unmuted"}`,
+    );
+    this.emitSnapshot(code);
+  }
+
+  /* ---- chat ---- */
+
+  sendChat(code: string, sessionId: string, raw: unknown): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    const p = room.players.get(sessionId);
+    if (!p) return;
+    if (p.muted) return;
+    const payload = raw as { text?: unknown } | null;
+    const text = sanitizeChatText(payload?.text);
+    if (!text) return;
+    // Sliding-window rate limit. Filter timestamps older than the
+    // window, then check against CHAT_RATE_LIMIT. A spammer hitting
+    // the cap is silently dropped — no error event so they can't
+    // probe the limiter for timing leaks.
+    const now = Date.now();
+    p.chatTimestamps = p.chatTimestamps.filter(
+      (t) => now - t < CHAT_RATE_WINDOW_MS,
+    );
+    if (p.chatTimestamps.length >= CHAT_RATE_LIMIT) return;
+    p.chatTimestamps.push(now);
+    const msg: ChatMessage = {
+      id: room.nextChatId++,
+      at: now,
+      kind: "user",
+      authorId: p.id,
+      authorName: p.name || "anon",
+      text,
+    };
+    this.pushChat(room, msg);
+  }
+
+  /** Push a chat message into the room's rolling history + broadcast. */
+  private pushChat(room: InternalRoom, msg: ChatMessage): void {
+    room.chat.push(msg);
+    if (room.chat.length > MAX_CHAT_HISTORY) {
+      // Drop the oldest in-place rather than slicing for a fresh array
+      // on every message — splice mutates and keeps the same reference,
+      // which lets React diffs use the cap-bounded list as a stable
+      // identity signal across tics.
+      room.chat.splice(0, room.chat.length - MAX_CHAT_HISTORY);
+    }
+    this.io.to(`room:${room.code}`).emit("chat:message", msg);
   }
 
   private transitionToLobby(room: InternalRoom): void {
@@ -649,11 +916,19 @@ class RoomRegistry {
       room.loadingTimer = null;
     }
     room.phase = "lobby";
+    // `selectedMode` is cleared so the host's next tap on a difficulty
+    // button re-fires `host:setMode` and the server doesn't carry a
+    // stale mode hint into the new round.
     room.selectedMode = null;
     room.startsAt = null;
     room.songStartedAt = null;
     for (const p of room.players.values()) {
       p.ready = false;
+      // Coming back from results / loading ALWAYS clears lobby-ready
+      // so nobody is auto-starting the next round just because they
+      // were ready for the last one. Keeps the "I want to play this"
+      // signal explicit per-round.
+      p.lobbyReady = false;
       p.live = emptyLive();
       p.final = null;
       p.postChoice = null;
@@ -699,11 +974,32 @@ export function wireSocketServer(io: IO): void {
 
     socket.on("room:create", (payload, ack) => {
       try {
-        const name = sanitizeName(payload?.name) || "Player";
-        const { code, sessionId } = reg.createRoom(socket.id, name);
+        const displayName = sanitizeName(payload?.displayName) || "Player";
+        // Empty room name → fall back to "$NICKNAME's room" so the
+        // browser listing always has SOMETHING readable. Visibility
+        // defaults to "private" for backwards compat with older
+        // clients that didn't ship the visibility flag.
+        const roomNameRaw = sanitizeRoomName(payload?.name);
+        const roomName = roomNameRaw || `${displayName}'s room`;
+        const visibility: RoomVisibility =
+          payload?.visibility === "public" ? "public" : "private";
+        const { code, sessionId } = reg.createRoom(
+          socket.id,
+          displayName,
+          roomName,
+          visibility,
+        );
         socket.join(`room:${code}`);
         ack?.(ackOk({ code, sessionId }));
         reg.emitSnapshot(code);
+      } catch (e) {
+        ack?.(ackErr(e));
+      }
+    });
+
+    socket.on("rooms:listPublic", (_payload, ack) => {
+      try {
+        ack?.(ackOk({ rooms: reg.listPublicRooms() }));
       } catch (e) {
         ack?.(ackErr(e));
       }
@@ -822,6 +1118,62 @@ export function wireSocketServer(io: IO): void {
       } catch (e) {
         socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
       }
+    });
+
+    /* ---- back-to-lobby (any player) ---- */
+
+    socket.on("room:returnToLobby", () => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      reg.anyReturnToLobby(ref.code, ref.sessionId);
+    });
+
+    /* ---- ready / mode (lobby gates) ---- */
+
+    socket.on("room:setReady", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      reg.setLobbyReady(ref.code, ref.sessionId, payload?.ready);
+    });
+
+    // Continuous host mode tracking. Host's picker fires this on every
+    // difficulty button click so the server-side `selectedMode` stays
+    // in lockstep with the host's UI; the server uses this as the
+    // canonical record of which tier the room is queued for.
+    socket.on("host:setMode", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      reg.setMode(ref.code, ref.sessionId, payload?.mode);
+    });
+
+    /* ---- moderation ---- */
+
+    socket.on("host:kick", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      try {
+        reg.kickPlayer(ref.code, ref.sessionId, payload?.sessionId);
+      } catch (e) {
+        socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
+      }
+    });
+
+    socket.on("host:mute", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      try {
+        reg.setMute(ref.code, ref.sessionId, payload?.sessionId, payload?.muted);
+      } catch (e) {
+        socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
+      }
+    });
+
+    /* ---- chat ---- */
+
+    socket.on("chat:send", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      reg.sendChat(ref.code, ref.sessionId, payload);
     });
 
     /* ---- gameplay ---- */

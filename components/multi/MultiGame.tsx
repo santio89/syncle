@@ -139,6 +139,11 @@ function CanvasPane({
   const prevComboRef = useRef<number>(0);
 
   const [stats, setStats] = useState<PlayerStats | null>(null);
+  // Throttled song-progress fraction (0..1) for the rock-meter card's
+  // progress bar. Mirrors the single-player Game.tsx pattern — written
+  // alongside `setStats` from inside the rAF loop so it ticks at the
+  // same ~10Hz cadence (smooth without re-rendering every vblank).
+  const [songProgress, setSongProgress] = useState<number>(0);
   const [countdownLabel, setCountdownLabel] = useState<number | null>(null);
   // Audio + perf controls — same model as single-player. Metronome stays
   // user-toggleable here too (it only affects the LOCAL click track; the
@@ -416,21 +421,38 @@ function CanvasPane({
     let fpsAccumFrames = 0;
     const songMeta = loaded?.meta;
 
+    // Drift-corrected pacing for the optional FPS cap. See Game.tsx
+    // for the long-form rationale; in short, we advance the schedule
+    // by exactly one interval (not by `now`) so vblank rounding error
+    // cancels out across frames. Keeps "lock 60" at 60 fps on a
+    // 200Hz display instead of rounding up to the next vblank
+    // multiple (= 50 fps), and "lock 30" at 30 instead of ~28.5.
+    let pacedNext = performance.now();
+    let pacedLastLock: FpsLock | undefined = undefined;
+
     const loop = () => {
       const now = performance.now();
-      // Optional render frame-rate cap. Mirrors single-player Game.tsx —
-      // we still wake on every vblank but skip the draw + tick body
-      // until the per-frame budget elapses. Score upload + finished
-      // detection live inside the gated body, but the room is driven
-      // by server-authoritative timestamps so missing a couple of
-      // intermediate ticks per second never affects the actual sync.
       const lockedFps = fpsLockRef.current;
+      // Score upload + finished detection live inside the gated body,
+      // but the room is driven by server-authoritative timestamps so
+      // missing a couple of intermediate ticks per second never
+      // affects the actual sync. Audio runs off AudioContext, not
+      // rAF, so capping render rate is safe.
       if (lockedFps != null) {
-        const budgetMs = 1000 / lockedFps - 1.5;
-        if (now - last < budgetMs) {
+        const interval = 1000 / lockedFps;
+        if (pacedLastLock !== lockedFps) {
+          pacedNext = now;
+          pacedLastLock = lockedFps;
+        }
+        if (now < pacedNext) {
           rafRef.current = requestAnimationFrame(loop);
           return;
         }
+        pacedNext += interval;
+        if (pacedNext < now) pacedNext = now + interval;
+      } else if (pacedLastLock !== null) {
+        pacedNext = now;
+        pacedLastLock = null;
       }
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
@@ -563,6 +585,13 @@ function CanvasPane({
 
       if (state && now - lastHud > 100) {
         setStats({ ...state.stats });
+        if (songMeta && songMeta.duration > 0) {
+          // Clamp to [0..1] — `songTime` runs negative during the
+          // server-synced lead-in and can briefly exceed `duration`
+          // while the audio buffer drains at the tail.
+          const frac = songTime / songMeta.duration;
+          setSongProgress(frac < 0 ? 0 : frac > 1 ? 1 : frac);
+        }
         lastHud = now;
       }
 
@@ -639,6 +668,8 @@ function CanvasPane({
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               songTitle={loaded?.meta.title ?? snapshot.selectedSong?.title ?? null}
               songArtist={loaded?.meta.artist ?? snapshot.selectedSong?.artist ?? null}
+              songDuration={loaded?.meta.duration ?? null}
+              songProgress={songProgress}
               chartMode={mode}
             />
           </div>
@@ -902,6 +933,17 @@ function ScoreboardSidebar({
 /* HUD bits                                                                 */
 /* ------------------------------------------------------------------------ */
 
+/** mm:ss formatter for the song-progress label. Defined locally so
+ * the HUD doesn't depend on a shared util — also matches the helper
+ * in single-player Game.tsx so output formatting stays in lockstep. */
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function PerformancePanel({ stats }: { stats: PlayerStats }) {
   const accuracy = computeAccuracy(stats);
   return (
@@ -955,6 +997,8 @@ function HealthPanel({
   onCycleFpsLock,
   songTitle,
   songArtist,
+  songDuration,
+  songProgress,
   chartMode,
 }: {
   stats: PlayerStats;
@@ -967,6 +1011,10 @@ function HealthPanel({
   onCycleFpsLock: () => void;
   songTitle: string | null;
   songArtist: string | null;
+  /** Track duration in seconds, or null until the chart is loaded. */
+  songDuration: number | null;
+  /** Fractional song progress 0..1, throttled in the rAF loop. */
+  songProgress: number;
   chartMode: ChartMode;
 }) {
   const tierStars = modeStars(chartMode);
@@ -994,17 +1042,16 @@ function HealthPanel({
             <p className="truncate font-mono text-[8.2px] uppercase tracking-widest text-bone-50/45 sm:text-[9.2px]">
               ♪ Now playing
             </p>
+            {/* Difficulty tag is name-only (no star strip) — matches
+                single-player HUD. The card row is space-tight and the
+                stars were taking more width than the name itself.
+                Hover surfaces the intensity rating for anyone who
+                cares; the lobby picker still shows the full ★ ramp. */}
             <span
-              className="inline-flex shrink-0 items-center gap-1 border border-accent/60 px-1 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
+              className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
               title={`Difficulty: ${displayMode(chartMode)} (${tierStars} / 5 intensity)`}
             >
-              <span>{displayMode(chartMode)}</span>
-              <span aria-hidden className="leading-none tracking-[0.15em]">
-                {"★".repeat(tierStars)}
-                <span className="opacity-30">
-                  {"★".repeat(5 - tierStars)}
-                </span>
-              </span>
+              {displayMode(chartMode)}
             </span>
           </div>
           <p
@@ -1020,6 +1067,37 @@ function HealthPanel({
             >
               {songArtist}
             </p>
+          )}
+          {/* Live song progress strip — slim, accent-fill, mm:ss
+              elapsed/total on the right. Mirrors the single-player
+              HUD so multiplayer feels consistent. The fill source
+              `songProgress` is throttled to ~10Hz from the rAF loop,
+              and the audio clock (server-synced via `startsAt`) is
+              the underlying truth, so all clients see the bar
+              advance in lockstep within audio-sync tolerance. */}
+          {songDuration && songDuration > 0 && (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <div
+                className="relative h-[3px] flex-1 border border-bone-50/25 bg-bone-50/5"
+                role="progressbar"
+                aria-label="Song progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(songProgress * 100)}
+              >
+                <div
+                  className="absolute inset-y-0 left-0 bg-accent transition-[width] duration-200 ease-linear"
+                  style={{ width: `${Math.min(100, Math.max(0, songProgress * 100))}%` }}
+                />
+              </div>
+              <span className="shrink-0 font-mono text-[8.2px] tabular-nums text-bone-50/45 sm:text-[9.2px]">
+                {formatDuration(songProgress * songDuration)}
+                <span className="text-bone-50/30">
+                  {" / "}
+                  {formatDuration(songDuration)}
+                </span>
+              </span>
+            </div>
           )}
         </div>
       )}

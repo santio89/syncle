@@ -324,6 +324,34 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Phase shell — the wrapper around each multiplayer-room phase (lobby,
+ * loading, results) gets a 220ms opacity ramp so swapping phases reads
+ * as a soft fade-in instead of a hard cut. Combined with the React
+ * `key={phase}` remount, this also re-fires the animation on *every*
+ * phase change, even the ones where the surrounding chrome is identical.
+ *
+ * `prefers-reduced-motion` users get an instant swap. We don't animate
+ * transform here — opacity-only animations are GPU-cheap and don't
+ * interact badly with the chat panel's own scroll position.
+ * ------------------------------------------------------------------------- */
+@keyframes phaseFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.phase-shell {
+  animation: phaseFadeIn 0.22s ease-out both;
+}
+.animate-fade-in {
+  animation: phaseFadeIn 0.22s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .phase-shell,
+  .animate-fade-in {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Header icon button base
  *
  * Square 38×38 button used for every "tertiary" header control: theme

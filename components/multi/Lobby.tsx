@@ -1,16 +1,31 @@
 "use client";
 
 /**
- * Multiplayer lobby. Two stacked cards:
+ * Multiplayer lobby. Three regions on a wide screen:
  *
- *   1. Player roster — everyone in the room with host crown / online dot.
- *      You can rename yourself in place; everyone else's name is read-only.
+ *   1. Roster (left column, top)
+ *      - Everyone in the room with host crown / online dot.
+ *      - Your own row sprouts a [READY] toggle.
+ *      - Host's view of other rows sprouts [mute] / [kick] icon buttons.
+ *      - Muted players show a small "muted" pill.
  *
- *   2. Host pane — only rendered with controls for the host. Picks a song
- *      from the catalog (loaded on demand via `host:catalogRequest`), then
- *      a difficulty, then "Start" kicks the loading phase. Non-hosts see a
- *      "waiting for the host" placeholder with the currently selected song
- *      preview if any.
+ *   2. Chat (left column, bottom)
+ *      - Live chat for everyone in the room. Reusable component, also
+ *        used during the loading + results phases.
+ *
+ *   3. Host pane / Guest pane (right column)
+ *      - Host: song picker, difficulty buttons, start button.
+ *      - Guest: "waiting on host" placeholder + selected-song preview.
+ *
+ * Start contract:
+ *   - The host always clicks "Start match" themselves — there is no
+ *     auto-start. The all-ready quorum bar is purely informational; it
+ *     tells the host "you can start now without overriding anyone",
+ *     but the actual moment of starting is a deliberate host action so
+ *     they can wait for late friends, swap songs, etc.
+ *   - The host's currently-highlighted difficulty is mirrored to the
+ *     server via `actions.setMode` on every picker tap so the server
+ *     has a canonical record of the queued tier.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,10 +43,14 @@ import {
 } from "@/lib/game/chart";
 import type {
   CatalogItem,
+  ChatMessage,
+  PlayerSnapshot,
   RoomSnapshot,
   SongRef,
 } from "@/lib/multi/protocol";
 import { MAX_PLAYERS_PER_ROOM, NAME_MAX_LEN } from "@/lib/multi/protocol";
+
+import { ChatPanel } from "./ChatPanel";
 
 const MODES_TOP: ChartMode[] = ["easy", "normal", "hard"];
 const MODES_BOTTOM: ChartMode[] = ["insane", "expert"];
@@ -39,19 +58,56 @@ const MODES_BOTTOM: ChartMode[] = ["insane", "expert"];
 export function Lobby({
   code,
   snapshot,
+  meId,
   isHost,
+  chat,
   actions,
 }: {
   code: string;
   snapshot: RoomSnapshot;
+  meId: string;
   isHost: boolean;
+  chat: ChatMessage[];
   actions: RoomActions;
 }) {
+  const me = snapshot.players.find((p) => p.id === meId);
+  // Online-or-offline doesn't matter for "is this player ready" (offline
+  // players aren't included in the all-ready quorum) but we still want
+  // to render them in the roster so the host can see them and decide
+  // whether to wait or kick.
+  const onlinePlayers = snapshot.players.filter((p) => p.online);
+  const allReady =
+    onlinePlayers.length > 0 && onlinePlayers.every((p) => p.lobbyReady);
+
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_minmax(0,1.2fr)]">
-      <PlayerRoster snapshot={snapshot} actions={actions} />
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(280px,1fr)_minmax(0,1.4fr)]">
+      {/* Left column: roster + chat stacked. */}
+      <div className="flex flex-col gap-4">
+        <PlayerRoster
+          snapshot={snapshot}
+          meId={meId}
+          iAmHost={isHost}
+          actions={actions}
+          allReady={allReady}
+        />
+        <div className="min-h-[20rem]">
+          <ChatPanel
+            chat={chat}
+            meId={meId}
+            meIsMuted={!!me?.muted}
+            onSend={actions.sendChat}
+          />
+        </div>
+      </div>
+
+      {/* Right column: host or guest pane. */}
       {isHost ? (
-        <HostPane snapshot={snapshot} actions={actions} code={code} />
+        <HostPane
+          snapshot={snapshot}
+          actions={actions}
+          code={code}
+          allReady={allReady}
+        />
       ) : (
         <GuestPane snapshot={snapshot} />
       )}
@@ -65,17 +121,19 @@ export function Lobby({
 
 function PlayerRoster({
   snapshot,
+  meId,
+  iAmHost,
   actions,
+  allReady,
 }: {
   snapshot: RoomSnapshot;
+  meId: string;
+  iAmHost: boolean;
   actions: RoomActions;
+  allReady: boolean;
 }) {
+  const me = snapshot.players.find((p) => p.id === meId);
   const [editing, setEditing] = useState(false);
-  // Find "me" by socket session: we don't have direct access here, but the
-  // host pane already knows isHost. Cleanest is to render every player as
-  // read-only and let the user rename via the dedicated input below.
-  // Players are already sorted by joinedAt on the server.
-
   const [draft, setDraft] = useState("");
 
   const commit = useCallback(() => {
@@ -84,8 +142,13 @@ function PlayerRoster({
     setEditing(false);
   }, [draft, actions]);
 
+  const readyCount = snapshot.players.filter(
+    (p) => p.online && p.lobbyReady,
+  ).length;
+  const onlineCount = snapshot.players.filter((p) => p.online).length;
+
   return (
-    <div className="brut-card flex h-full flex-col p-5 sm:p-6">
+    <div className="brut-card flex flex-col p-5 sm:p-6">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Players
@@ -95,40 +158,52 @@ function PlayerRoster({
         </span>
       </div>
 
-      <ul className="mt-3 flex-1 space-y-1.5">
+      {/* Ready quorum bar — visible to everyone so the host has a
+          clear at-a-glance signal of "is anyone going to be overridden
+          if I start now?". Bar fills with accent as players ready up;
+          when full it pulses to cue the host that they can start
+          without anyone playing catch-up. */}
+      <ReadyQuorumBar
+        ready={readyCount}
+        total={onlineCount}
+        allReady={allReady}
+      />
+
+      <ul className="mt-3 space-y-1.5">
         {snapshot.players.map((p) => (
-          <li
+          <RosterRow
             key={p.id}
-            className="flex items-center gap-2 border-2 border-bone-50/10 px-3 py-2"
-          >
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${
-                p.online ? "bg-accent" : "bg-bone-50/30"
-              }`}
-              title={p.online ? "Online" : "Disconnected"}
-            />
-            <span className="flex-1 truncate font-mono text-[0.92rem] text-bone-50/90">
-              {p.name || "—"}
-            </span>
-            {p.isHost && (
-              <span
-                className="font-mono text-[9.5px] uppercase tracking-widest text-accent"
-                title="Room host"
-              >
-                ★ host
-              </span>
-            )}
-          </li>
+            player={p}
+            isMe={p.id === meId}
+            iAmHost={iAmHost}
+            actions={actions}
+          />
         ))}
       </ul>
 
-      {/* Rename action sits under the player list. The "Your name"
-          caption used to live here but it was redundant — the
-          player's own row in the list above already says "you" next
-          to their name, and the "rename" verb is self-evident. The
-          top border keeps the visual break between "who's in the
-          room" and "your own controls". */}
-      <div className="mt-4 border-t-2 border-bone-50/10 pt-3">
+      {/* "You" controls strip: ready toggle + rename. The ready button
+          is the BIG ACTION here — uppercase, accent-filled when on,
+          dashed-outline when off, with a clear label so a new player
+          knows what it does without hovering. */}
+      <div className="mt-4 space-y-3 border-t-2 border-bone-50/10 pt-3">
+        {me && (
+          <button
+            onClick={() => actions.setReady(!me.lobbyReady)}
+            className={`w-full px-4 py-3 font-mono text-[0.86rem] uppercase tracking-[0.3em] transition-colors ${
+              me.lobbyReady
+                ? "border-2 border-accent bg-accent text-ink-900 shadow-[6px_6px_0_rgb(var(--shadow-accent))]"
+                : "border-2 border-dashed border-bone-50/40 text-bone-50/80 hover:border-accent hover:text-accent"
+            }`}
+            title={
+              me.lobbyReady
+                ? "Click to un-ready"
+                : "Mark yourself ready so the host knows you're set"
+            }
+          >
+            {me.lobbyReady ? "✓ Ready" : "Mark ready"}
+          </button>
+        )}
+
         {editing ? (
           <div className="flex gap-2">
             <input
@@ -152,7 +227,7 @@ function PlayerRoster({
         ) : (
           <button
             onClick={() => {
-              setDraft("");
+              setDraft(me?.name ?? "");
               setEditing(true);
             }}
             className="inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 hover:text-accent"
@@ -165,6 +240,195 @@ function PlayerRoster({
   );
 }
 
+function ReadyQuorumBar({
+  ready,
+  total,
+  allReady,
+}: {
+  ready: number;
+  total: number;
+  allReady: boolean;
+}) {
+  if (total === 0) return null;
+  const pct = Math.round((ready / total) * 100);
+  return (
+    <div className="mt-3 space-y-1">
+      <div className="flex items-baseline justify-between font-mono text-[9.5px] uppercase tracking-widest text-bone-50/55">
+        <span>
+          {allReady
+            ? "All ready — host can start"
+            : "Ready quorum"}
+        </span>
+        <span className={allReady ? "text-accent" : "text-bone-50/70"}>
+          {ready} / {total}
+        </span>
+      </div>
+      <div className="relative h-1.5 border-2 border-bone-50/15 bg-transparent">
+        <div
+          className={`h-full transition-all duration-300 ease-out ${
+            allReady ? "bg-accent animate-pulse" : "bg-accent/70"
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function RosterRow({
+  player,
+  isMe,
+  iAmHost,
+  actions,
+}: {
+  player: PlayerSnapshot;
+  isMe: boolean;
+  iAmHost: boolean;
+  actions: RoomActions;
+}) {
+  // Host actions surface on hover for desktop and via a small toolbar
+  // for keyboard / touch. They're omitted entirely on the host's own
+  // row (hosts don't kick or mute themselves).
+  const showHostActions = iAmHost && !player.isHost;
+  const dotClass = player.online
+    ? player.lobbyReady
+      ? "bg-accent"
+      : "bg-accent/40"
+    : "bg-bone-50/30";
+  return (
+    <li className="group flex items-center gap-2 border-2 border-bone-50/10 px-3 py-2">
+      <span
+        className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`}
+        title={
+          !player.online
+            ? "Disconnected"
+            : player.lobbyReady
+              ? "Ready"
+              : "Online — not ready"
+        }
+      />
+      <span
+        className={`flex-1 truncate font-mono text-[0.92rem] ${
+          player.online ? "text-bone-50/90" : "text-bone-50/40"
+        }`}
+      >
+        {player.name || "—"}
+        {isMe && (
+          <span className="ml-1 font-mono text-[9.5px] uppercase tracking-widest text-accent">
+            you
+          </span>
+        )}
+      </span>
+
+      {/* Status pills (mute, ready, host) — small, uppercase, mono. */}
+      <span className="flex shrink-0 items-center gap-1.5">
+        {player.muted && (
+          <span
+            className="border border-rose-500/60 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-rose-400"
+            title="Chat muted by host"
+          >
+            muted
+          </span>
+        )}
+        {player.lobbyReady && (
+          <span
+            className="border border-accent/70 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-widest text-accent"
+            title="Ready to play"
+          >
+            ready
+          </span>
+        )}
+        {player.isHost && (
+          <span
+            className="font-mono text-[9.5px] uppercase tracking-widest text-accent"
+            title="Room host"
+          >
+            ★ host
+          </span>
+        )}
+      </span>
+
+      {showHostActions && (
+        <span className="ml-1 flex shrink-0 items-center gap-1 opacity-60 transition-opacity group-hover:opacity-100">
+          <HostIconButton
+            label={player.muted ? "Unmute" : "Mute"}
+            onClick={() => actions.mute(player.id, !player.muted)}
+          >
+            {player.muted ? <UnmuteIcon /> : <MuteIcon />}
+          </HostIconButton>
+          <HostIconButton
+            label="Kick"
+            danger
+            onClick={() => actions.kick(player.id)}
+          >
+            <KickIcon />
+          </HostIconButton>
+        </span>
+      )}
+    </li>
+  );
+}
+
+function HostIconButton({
+  label,
+  danger,
+  onClick,
+  children,
+}: {
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`inline-flex h-7 w-7 items-center justify-center border-2 transition-colors ${
+        danger
+          ? "border-rose-500/40 text-rose-400 hover:border-rose-500 hover:bg-rose-500/15"
+          : "border-bone-50/20 text-bone-50/70 hover:border-accent hover:text-accent"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* SVG icons (kept inline so we don't pollute components/icons/ for one-off use) */
+/* ------------------------------------------------------------------------ */
+
+function KickIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square">
+      <line x1="2" y1="2" x2="10" y2="10" />
+      <line x1="10" y1="2" x2="2" y2="10" />
+    </svg>
+  );
+}
+
+function MuteIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square">
+      <path d="M2 4.5h2L7 2v8L4 7.5H2z" />
+      <line x1="9" y1="3.5" x2="11.5" y2="6" />
+      <line x1="11.5" y1="3.5" x2="9" y2="6" />
+    </svg>
+  );
+}
+
+function UnmuteIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square">
+      <path d="M2 4.5h2L7 2v8L4 7.5H2z" />
+      <path d="M9 3.5c1 .8 1 4.2 0 5" />
+    </svg>
+  );
+}
+
 /* ------------------------------------------------------------------------ */
 /* Host pane                                                                */
 /* ------------------------------------------------------------------------ */
@@ -173,10 +437,12 @@ function HostPane({
   snapshot,
   actions,
   code,
+  allReady,
 }: {
   snapshot: RoomSnapshot;
   actions: RoomActions;
   code: string;
+  allReady: boolean;
 }) {
   const [catalog, setCatalog] = useState<CatalogItem[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -185,14 +451,10 @@ function HostPane({
   const [filter, setFilter] = useState("");
   const [starting, setStarting] = useState(false);
 
-  // Per-song probe: which difficulties does the currently-selected song
-  // actually have? `null` = unknown (probe in flight or not yet started),
-  // ModeAvailability = probe done, error = probe failed.
+  // Per-song probe — see previous comment block.
   const [modeProbe, setModeProbe] = useState<ModeAvailability | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
-  // Guard against late results from a previous selection clobbering newer
-  // state when the host clicks through several songs quickly.
   const probeReqId = useRef(0);
 
   const fetchCatalog = useCallback(
@@ -202,8 +464,9 @@ function HostPane({
       try {
         const items = await actions.requestCatalog(refresh);
         setCatalog(items);
-      } catch (e: any) {
-        setError(e?.message ?? "Failed to load catalog");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Failed to load catalog";
+        setError(msg);
       } finally {
         setLoading(false);
       }
@@ -228,9 +491,6 @@ function HostPane({
 
   const selected = snapshot.selectedSong;
 
-  // Probe mode availability whenever the selected song changes. The probe
-  // also warms the per-set cache used by `loadSongById`, so the host's
-  // eventual "Start match" loads instantly with no extra download.
   useEffect(() => {
     if (!selected) {
       setModeProbe(null);
@@ -247,9 +507,6 @@ function HostPane({
         if (probeReqId.current !== reqId) return;
         setModeProbe(modes);
         setProbing(false);
-        // Auto-correct: if the host had picked a mode that this song doesn't
-        // expose, snap to the first mode that IS available so "Start match"
-        // never sends an impossible difficulty to clients.
         setMode((current) => (modes.available[current] ? current : firstAvailableMode(modes)));
       })
       .catch((err) => {
@@ -259,7 +516,12 @@ function HostPane({
       });
   }, [selected]);
 
-  // Don't let the host start a match with a difficulty the song doesn't have.
+  // Mirror the host's mode pick to the server on every change so the
+  // server has a canonical record of the queued tier.
+  useEffect(() => {
+    actions.setMode(mode);
+  }, [mode, actions]);
+
   const modeReady = !!modeProbe?.available[mode];
   const canStart =
     !!selected &&
@@ -272,31 +534,27 @@ function HostPane({
     if (!canStart) return;
     setStarting(true);
     actions.startMatch(mode);
-    // Server will flip phase, which unmounts this pane.
   };
 
   const { copy, copied } = useCopyToClipboard();
 
   return (
     <div className="brut-card flex h-full flex-col p-5 sm:p-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
           <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             ░ Host controls
           </p>
-          <h3 className="mt-1 font-display text-[1.31rem] font-bold">
-            Pick the song.
-          </h3>
+          {/* Room name + visibility badge sits where the H3 used to be —
+              still tells the host what they're managing, but now also
+              communicates whether other people can find this room. */}
+          <div className="mt-1 flex flex-wrap items-baseline gap-2">
+            <h3 className="font-display text-[1.31rem] font-bold leading-tight">
+              {snapshot.name || "Room"}
+            </h3>
+            <VisibilityBadge visibility={snapshot.visibility} />
+          </div>
         </div>
-        {/* Room code IS the button label, with the copy glyph trailing
-            on the right. Shows the host the code at a glance and
-            doubles as the copy-to-clipboard action — one element, two
-            jobs. Tooltip carries the verb since the button no longer
-            spells it out. `font-mono` + tracking-wider keep the code
-            legible (matches the room-code styling used elsewhere).
-            CopyToast pops above the button on a successful write so
-            the host gets visible confirmation, since the button
-            content itself doesn't change on click. */}
         <div className="relative">
           <CopyToast visible={copied} />
           <button
@@ -318,12 +576,6 @@ function HostPane({
           <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
             Selected
           </p>
-          {/* Status line for the probe — only renders when we have
-              something to say (loading or error). The success case
-              used to print a "has: easy / medium / …" summary, but
-              the difficulty picker buttons below already convey that
-              (dashed style for unavailable tiers), so the label was
-              just duplicate noise. */}
           {selected && (probing || probeError) && (
             <p className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/45">
               {probing ? "checking difficulties…" : "probe failed"}
@@ -404,17 +656,6 @@ function HostPane({
         </ul>
       </div>
 
-      {/* Difficulty + start. Picker is a 3+2 grid mirroring the Syncle
-          tier ladder; insane/expert sit on the bottom row to read as
-          "extras" you only see lit up when the mapper shipped them.
-
-          Availability rules:
-            - no song picked yet  → every tier appears enabled (it's just
-              the host's local default before a song is in play)
-            - song picked, probe pending → every tier disabled (cursor:
-              wait) so the host doesn't accidentally start a round before
-              we know what the .osz actually offers
-            - probe resolved      → only tiers the song ships are clickable */}
       <div className="mt-4 space-y-1">
         <div className="grid grid-cols-3 gap-1">
           {MODES_TOP.map((m) => (
@@ -463,12 +704,7 @@ function HostPane({
           <span>Pick an available difficulty</span>
         ) : (
           <>
-            <span>Start match</span>
-            {/* Play triangle after the label, with the same slide-on-
-                hover treatment as the arrow icons (Back / Join room)
-                elsewhere. Only rendered in the "ready to start" state
-                — the loading / error states don't get an icon since
-                they're not interactive cues. */}
+            <span>{allReady ? "Start match" : "Start anyway"}</span>
             <span
               aria-hidden
               className="inline-block transition-transform duration-200 group-hover:translate-x-0.5"
@@ -479,20 +715,38 @@ function HostPane({
         )}
       </button>
       <p className="mt-4 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
-        Everyone has 30s to download + decode the song
+        {allReady
+          ? "Everyone is ready — start whenever you want"
+          : "Start now to override unready players · or wait for the quorum"}
       </p>
     </div>
   );
 }
 
-/**
- * Pick the first available mode in difficulty order. At least one tier
- * is always available because finalize() guarantees mapper-shipped
- * charts always count as available; the `"easy"` terminator is purely
- * defensive — if the loop below ever exits we'd be looking at a song
- * with zero parseable charts, which `rawSessionFromExtracted` already
- * rejects upstream.
- */
+function VisibilityBadge({
+  visibility,
+}: {
+  visibility: "public" | "private";
+}) {
+  const isPublic = visibility === "public";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 border-2 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-widest ${
+        isPublic
+          ? "border-accent/70 text-accent"
+          : "border-bone-50/30 text-bone-50/55"
+      }`}
+      title={
+        isPublic
+          ? "Public — appears in the room browser"
+          : "Private — only people with the code can join"
+      }
+    >
+      {isPublic ? "● public" : "○ private"}
+    </span>
+  );
+}
+
 function firstAvailableMode(modes: ModeAvailability): ChartMode {
   for (const m of MODE_ORDER) {
     if (modes.available[m]) return m;
@@ -500,12 +754,6 @@ function firstAvailableMode(modes: ModeAvailability): ChartMode {
   return "easy";
 }
 
-/**
- * One difficulty button in the host's picker. Centralizes the "is it
- * enabled / styled / what label?" logic so the top and bottom row stay
- * visually consistent and the JSX up in HostPane reads like a layout,
- * not a state machine.
- */
 function HostModeButton({
   mode,
   selected,
@@ -521,11 +769,6 @@ function HostModeButton({
   hasSelectedSong: boolean;
   onPick: (m: ChartMode) => void;
 }) {
-  // Match single-player ModeButton behavior: every tier is always
-  // rendered with its name + 5-star intensity row, just disabled until
-  // we know what the song ships. That keeps the picker grid stable
-  // (no buttons hiding / collapsing) and reads as "loading the menu"
-  // rather than "menu disappeared".
   const available = !hasSelectedSong ? true : !!probe?.available[mode];
   const disabled = hasSelectedSong && (probing || !available);
   const enabled = !disabled;
@@ -534,7 +777,7 @@ function HostModeButton({
     : probing
       ? "Reading the song's difficulty list…"
       : !available
-        ? `This song doesn't ship a ${displayMode(mode)} chart.`
+        ? `Couldn't fit a ${displayMode(mode)} chart for this song's density profile.`
         : undefined;
   const stars = modeStars(mode);
   return (
@@ -549,24 +792,12 @@ function HostModeButton({
           ? "border-accent bg-accent text-ink-900"
           : disabled
             ? probing
-              ? // Probing is transient ("waiting on the song probe");
-                // keep the solid outline + cursor-wait so the slot
-                // still feels live, just not yet pickable.
-                "border-bone-50/30 text-bone-50/50 cursor-wait"
-              : // Permanently unavailable (this song doesn't ship the
-                // tier and can't synthesize it): dashed outline + much
-                // dimmer text. Mirrors the single-player ModeButton so
-                // the same visual language tells the player "off, not
-                // loading" everywhere a difficulty picker exists.
-                "border-dashed border-bone-50/20 text-bone-50/35 cursor-not-allowed"
+              ? "border-bone-50/30 text-bone-50/50 cursor-wait"
+              : "border-dashed border-bone-50/20 text-bone-50/35 cursor-not-allowed"
             : "border-bone-50/30 text-bone-50/60 hover:border-bone-50/60"
       }`}
     >
       <span>{displayMode(mode)}</span>
-      {/* Fixed 5-slot star row keeps every button the same width, so
-          easy and expert don't visually shift the picker grid. Stars
-          fade further on a permanently unavailable tier so they don't
-          out-shout the dimmed name. */}
       <span
         aria-hidden
         className={`text-[8.5px] leading-none tracking-[0.2em] ${disabled && !probing ? "opacity-60" : ""}`}
@@ -590,13 +821,17 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Waiting for host
         </p>
-        <h3 className="mt-1 font-display text-[1.31rem] font-bold">
-          Sit tight — host is picking.
-        </h3>
+        <div className="mt-1 flex flex-wrap items-baseline gap-2">
+          <h3 className="font-display text-[1.31rem] font-bold">
+            {snapshot.name || "Room"}
+          </h3>
+          <VisibilityBadge visibility={snapshot.visibility} />
+        </div>
         <p className="mt-2 max-w-md text-[0.92rem] text-bone-50/65">
-          The host of this room chooses the song and difficulty. As soon as
-          they hit start you&apos;ll get a 30s window to download it on your
-          end.
+          The host of this room chooses the song and difficulty. Hit{" "}
+          <span className="font-mono text-bone-50">Mark ready</span> to
+          tell the host you&apos;re good to go — when everyone&apos;s
+          ready, the match starts on its own.
         </p>
       </div>
 

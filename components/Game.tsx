@@ -110,6 +110,11 @@ export default function Game() {
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<number>(COUNTDOWN_SECONDS);
   const [stats, setStats] = useState<PlayerStats | null>(null);
+  // Throttled song-progress fraction (0..1) used by the rock-meter
+  // card's progress bar. Updated alongside `stats` from inside the
+  // rAF loop so it ticks at the same ~10Hz cadence — smooth enough to
+  // feel live without forcing a full React re-render every vblank.
+  const [songProgress, setSongProgress] = useState<number>(0);
   const [metronome, setMetronome] = useState<boolean>(true);
   const [chartLength, setChartLength] = useState<number>(0);
   const [songSource, setSongSource] = useState<"osu" | "fallback" | null>(null);
@@ -442,6 +447,7 @@ export default function Game() {
       const state = new GameState(loaded.notes);
       stateRef.current = state;
       setStats({ ...state.stats });
+      setSongProgress(0);
       lastScheduledBeatRef.current = -1;
 
       setPhase("countdown");
@@ -498,6 +504,7 @@ export default function Game() {
     lastScheduledBeatRef.current = -1;
     songRef.current = { meta: PLACEHOLDER_META, notes: [] };
     setStats(null);
+    setSongProgress(0);
     setNewBest(false);
     setPhase("idle");
   }, []);
@@ -635,21 +642,52 @@ export default function Game() {
     let fpsAccumFrames = 0;
     let fpsAccumStart = last;
 
+    // Drift-corrected pacing for the optional FPS cap. We track the
+    // *target wall-clock* of the next frame (`pacedNext`) and only
+    // render once the current vblank has reached it. After each
+    // accepted frame we advance by exactly one interval — NOT to
+    // `now` — so the rounding error from "fired one vblank too late"
+    // cancels out the next "one vblank too early" instead of
+    // accumulating. Without this, a 60Hz cap on a 200Hz monitor would
+    // round to every 4th vblank (= 50 fps), and 30 fps would round to
+    // every 7th (= ~28.5 fps).
+    //
+    // `pacedLastLock` lets us reset the schedule when the user toggles
+    // between off / 30 / 60, so flipping caps doesn't cause a brief
+    // burst of frames trying to "catch up" from a stale anchor.
+    let pacedNext = performance.now();
+    let pacedLastLock: FpsLock | undefined = undefined;
+
     const loop = () => {
       const now = performance.now();
-      // Optional render frame-rate cap. We still wake on every vblank
-      // (rAF), but skip the draw + game-tick work until the per-frame
-      // budget has elapsed. Tolerance of 1.5ms absorbs vblank jitter so
-      // a 60-cap on a 200Hz monitor settles at ~60fps instead of ~50.
-      // The audio engine runs off its own AudioContext clock so capping
-      // render frames does NOT desync hits or metronome timing.
       const lockedFps = fpsLockRef.current;
+      // Optional render frame-rate cap. We still wake on every vblank
+      // (rAF), but defer the draw + game-tick work until the paced
+      // schedule has elapsed. The audio engine runs off its own
+      // AudioContext clock so capping render frames does NOT desync
+      // hits or metronome timing.
       if (lockedFps != null) {
-        const budgetMs = 1000 / lockedFps - 1.5;
-        if (now - last < budgetMs) {
+        const interval = 1000 / lockedFps;
+        if (pacedLastLock !== lockedFps) {
+          // Lock just changed (off→N or M→N). Anchor on `now` so the
+          // first frame at the new cap is immediate, not bursty.
+          pacedNext = now;
+          pacedLastLock = lockedFps;
+        }
+        if (now < pacedNext) {
           rafRef.current = requestAnimationFrame(loop);
           return;
         }
+        // Advance by exactly one interval. If we fell more than one
+        // full interval behind (tab switch, GC pause, alt-tab), snap
+        // forward so we don't fire a flurry of catch-up frames.
+        pacedNext += interval;
+        if (pacedNext < now) pacedNext = now + interval;
+      } else if (pacedLastLock !== null) {
+        // Lock just turned off — reset the anchor so the next time
+        // someone re-enables a cap it doesn't think it's way behind.
+        pacedNext = now;
+        pacedLastLock = null;
       }
       // Clamp dt to 100ms so a tab-switch / pause doesn't yank particles
       // hundreds of pixels in a single frame on the first frame back.
@@ -763,6 +801,15 @@ export default function Game() {
 
       if (state && now - lastHudUpdate > 100) {
         setStats({ ...state.stats });
+        // Song progress fraction. We clamp to [0..1] because `songTime`
+        // can briefly run a hair past `duration` while the audio
+        // engine drains the trailing buffer (and is negative during
+        // the pre-roll countdown). Either case shouldn't render as a
+        // "negative" or "overflowing" bar — just pin to the rails.
+        if (songMeta.duration > 0) {
+          const frac = songTime / songMeta.duration;
+          setSongProgress(frac < 0 ? 0 : frac > 1 ? 1 : frac);
+        }
         lastHudUpdate = now;
       }
 
@@ -872,6 +919,8 @@ export default function Game() {
             onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
+            songDuration={displayMeta?.duration ?? null}
+            songProgress={songProgress}
             chartMode={chartMode}
           />
         )}
@@ -1359,7 +1408,7 @@ function ModeButton({
       title={
         enabled
           ? `${displayMode(mode).toUpperCase()} · ${stars} / 5 intensity`
-          : `This song doesn't ship a ${displayMode(mode)} chart.`
+          : `Couldn't fit a ${displayMode(mode)} chart for this song's density profile.`
       }
       className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
         !enabled
@@ -1396,27 +1445,35 @@ function ModeButton({
 }
 
 /**
- * Compact `EASY ★★` style badge used in the in-game HUD to remind the
- * player which tier they picked at the lobby. Mirrors the picker's
- * label format (name + filled-vs-hollow stars) so the player can map
- * the badge back to the picker button without re-reading legend text.
+ * Compact `EASY` style badge used in the in-game HUD to remind the
+ * player which tier they picked at the lobby. Just the tier name —
+ * no stars. The rock-meter card is space-tight (sits next to the
+ * song title in the same row) and a 5-star strip was eating most of
+ * the available width on narrower viewports. Hover/focus title
+ * still surfaces the intensity rating for anyone who wants it.
  *
- * Visual: bordered + accent-tinted so it reads as a "tag" rather than
- * inline copy. Stays small enough not to fight the song title for the
- * eye in the rock-meter card.
+ * Visual: bordered + accent-tinted so it reads as a "tag" rather
+ * than inline copy.
  */
+/** mm:ss formatter for the song-progress label. Negative / NaN inputs
+ * (pre-roll countdown, missing duration) collapse to "0:00" so the
+ * label never flashes nonsense at the start of a run. */
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function DifficultyTag({ mode }: { mode: ChartMode }) {
   const stars = modeStars(mode);
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1 border border-accent/60 px-1 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
+      className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
       title={`Difficulty: ${displayMode(mode)} (${stars} / 5 intensity)`}
     >
-      <span>{displayMode(mode)}</span>
-      <span aria-hidden className="leading-none tracking-[0.15em]">
-        {"★".repeat(stars)}
-        <span className="opacity-30">{"★".repeat(5 - stars)}</span>
-      </span>
+      {displayMode(mode)}
     </span>
   );
 }
@@ -1502,6 +1559,8 @@ function HUD({
   onCycleFpsLock,
   songTitle,
   songArtist,
+  songDuration,
+  songProgress,
   chartMode,
 }: {
   stats: PlayerStats;
@@ -1517,6 +1576,10 @@ function HUD({
   onCycleFpsLock: () => void;
   songTitle: string | null;
   songArtist: string | null;
+  /** Track duration in seconds, or null if not yet known. */
+  songDuration: number | null;
+  /** Fractional song progress 0..1, throttled in the rAF loop. */
+  songProgress: number;
   chartMode: ChartMode;
 }) {
   const accuracy = computeAccuracy(stats);
@@ -1600,6 +1663,37 @@ function HUD({
               >
                 {songArtist}
               </p>
+            )}
+            {/* Song progress strip — slim, accent-tinted, shows
+                elapsed/total in mm:ss on the right. Sits under the
+                song row so it visually belongs to the "what's
+                playing" group rather than the rock-meter health
+                stats below. The fill animates in 200ms steps; the
+                source `songProgress` is throttled to ~10Hz from the
+                rAF loop, which is plenty smooth for a thin bar. */}
+            {songDuration && songDuration > 0 && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div
+                  className="relative h-[3px] flex-1 border border-bone-50/25 bg-bone-50/5"
+                  role="progressbar"
+                  aria-label="Song progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(songProgress * 100)}
+                >
+                  <div
+                    className="absolute inset-y-0 left-0 bg-accent transition-[width] duration-200 ease-linear"
+                    style={{ width: `${Math.min(100, Math.max(0, songProgress * 100))}%` }}
+                  />
+                </div>
+                <span className="shrink-0 font-mono text-[8.2px] tabular-nums text-bone-50/45 sm:text-[9.2px]">
+                  {formatDuration(songProgress * songDuration)}
+                  <span className="text-bone-50/30">
+                    {" / "}
+                    {formatDuration(songDuration)}
+                  </span>
+                </span>
+              </div>
             )}
           </div>
         )}

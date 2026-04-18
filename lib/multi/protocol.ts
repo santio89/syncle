@@ -21,6 +21,17 @@ import type { ChartMode } from "@/lib/game/chart";
 
 export type RoomPhase = "lobby" | "loading" | "countdown" | "playing" | "results";
 
+/**
+ * Room visibility:
+ *   - "public":  shows up in the room browser, anyone with the URL can join
+ *   - "private": code-only — never appears in the public listing
+ *
+ * Both flavors still use the same 6-char code internally; the distinction
+ * is purely about discoverability. Mirrors the public/private convention
+ * from arena shooters of the early-2000s era (Quake, Half-Life).
+ */
+export type RoomVisibility = "public" | "private";
+
 export interface SongRef {
   beatmapsetId: number;
   title: string;
@@ -30,6 +41,46 @@ export interface SongRef {
 }
 
 export interface CatalogItem extends SongRef {}
+
+/**
+ * Single chat line, broadcast to everyone in the room. Authored on the
+ * server (sets `at` and `id`) so clients can't spoof timestamps and
+ * IDs are guaranteed unique for React keying.
+ *
+ * `kind`:
+ *   - "user"   → player-authored message (most chat lines)
+ *   - "system" → server-authored notice rendered inline in chat
+ *                (e.g. "Alice was kicked", "Bob is now host"). Uses the
+ *                chat stream so the room narrative is in one place
+ *                instead of scattered across notices + chat.
+ */
+export interface ChatMessage {
+  id: number;
+  at: number;
+  kind: "user" | "system";
+  /** sessionId of author; "" for system messages. */
+  authorId: string;
+  /** Display name snapshot at send time (so renames don't rewrite history). */
+  authorName: string;
+  text: string;
+}
+
+/**
+ * Compact summary of a public room used by the browser listing. Keeping
+ * this distinct from RoomSnapshot lets the server fan out lightweight
+ * payloads to "lobby browsers" without leaking per-player state.
+ */
+export interface PublicRoomEntry {
+  code: string;
+  name: string;
+  hostName: string;
+  playerCount: number;
+  maxPlayers: number;
+  phase: RoomPhase;
+  /** Title — artist of the currently selected song, if any. */
+  selectedSong: string | null;
+  createdAt: number;
+}
 
 export interface PlayerHits {
   perfect: number;
@@ -69,6 +120,21 @@ export interface PlayerSnapshot {
   joinedAt: number;
   /** Per-player ready flag during the loading phase. */
   ready: boolean;
+  /**
+   * Lobby-level "I'm ready to play whatever the host picks" flag.
+   * Distinct from `ready` (which is the per-round "chart downloaded +
+   * decoded" state). When every online player has `lobbyReady=true`
+   * AND the host has selected a song, the server auto-fires the start
+   * (no need for the host to click anything).
+   */
+  lobbyReady: boolean;
+  /**
+   * Host-set silence flag. Muted players are still visible in the
+   * roster and can play, but the server drops their `chat:send`
+   * payloads silently. Surfaces in the UI as a strikethrough on the
+   * chat input + a "muted" pill in the roster row.
+   */
+  muted: boolean;
   /** Live score during the playing phase. Reset between rounds. */
   live: LiveScore;
   /** Set once the player submits final stats at end of song. */
@@ -79,6 +145,10 @@ export interface PlayerSnapshot {
 
 export interface RoomSnapshot {
   code: string;
+  /** Host-chosen room title shown in the browser + lobby header. */
+  name: string;
+  /** Discoverability — see RoomVisibility doc. */
+  visibility: RoomVisibility;
   hostId: string;
   phase: RoomPhase;
   selectedSong: SongRef | null;
@@ -87,6 +157,8 @@ export interface RoomSnapshot {
   /** Wall-clock ms when audio actually started (playing/results phases). */
   songStartedAt: number | null;
   players: PlayerSnapshot[];
+  /** Rolling chat backlog (server-trimmed to MAX_CHAT_HISTORY). */
+  chat: ChatMessage[];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -94,9 +166,21 @@ export interface RoomSnapshot {
 /* -------------------------------------------------------------------------- */
 
 export interface ClientToServerEvents {
-  /** Open a fresh room. Returns code + sessionId via ack. */
+  /**
+   * Open a fresh room.
+   *
+   * Payload fields:
+   *   - `name`        → display name of the room (shown in browser + header)
+   *   - `displayName` → the creating player's nickname
+   *   - `visibility`  → public/private (defaults to "private" server-side
+   *                     if missing for backwards-compat).
+   */
   "room:create": (
-    payload: { name: string },
+    payload: {
+      name?: string;
+      displayName: string;
+      visibility?: RoomVisibility;
+    },
     ack: (res: AckResult<{ code: string; sessionId: string }>) => void,
   ) => void;
 
@@ -121,6 +205,49 @@ export interface ClientToServerEvents {
 
   "room:setName": (payload: { name: string }) => void;
 
+  /**
+   * Toggle this player's lobby-ready flag. Allowed in the lobby phase
+   * only (silently ignored otherwise). When all online players become
+   * ready and the host has selected a song, the server auto-fires the
+   * start — no host click required.
+   */
+  "room:setReady": (payload: { ready: boolean }) => void;
+
+  /**
+   * Any player can send everyone back to the lobby from the results
+   * screen. The server transitions the whole room and the requester
+   * stays in their seat. Players who've already left (router push to
+   * /) are evicted on disconnect grace as usual. Idempotent — multiple
+   * clicks during the same results phase produce a single transition.
+   */
+  "room:returnToLobby": () => void;
+
+  /**
+   * List currently-discoverable public rooms. Returns a snapshot via
+   * ack. The browser polls this every few seconds rather than pushing
+   * server-side subscriptions, which keeps the lobby UI stateless.
+   */
+  "rooms:listPublic": (
+    payload: Record<string, never>,
+    ack: (res: AckResult<{ rooms: PublicRoomEntry[] }>) => void,
+  ) => void;
+
+  /**
+   * Send a chat message. Server enforces:
+   *   - sender is in a room and not muted
+   *   - text length ≤ CHAT_MAX_LEN after trim
+   *   - rate-limited to CHAT_RATE_LIMIT per CHAT_RATE_WINDOW_MS
+   * Rejected messages are silently dropped (no error event) so a
+   * spammer can't probe the rate-limiter for timing.
+   */
+  "chat:send": (payload: { text: string }) => void;
+
+  /** Host-only: kick a player out of the room. Cannot kick yourself. */
+  "host:kick": (payload: { sessionId: string }) => void;
+
+  /** Host-only: silence a player's chat. Toggle-style. */
+  "host:mute": (payload: { sessionId: string; muted: boolean }) => void;
+
   /** Host-only: ask the server for a fresh page of catalog candidates. */
   "host:catalogRequest": (
     payload: { refresh?: boolean },
@@ -129,6 +256,15 @@ export interface ClientToServerEvents {
 
   /** Host-only: announce the chosen song to the room (lobby phase). */
   "host:selectSong": (payload: SongRef) => void;
+
+  /**
+   * Host-only: continuously track which difficulty the host has
+   * selected in their picker, so the server can fire the right
+   * `startLoading` when the room hits the "all ready" quorum without
+   * the host clicking anything. Sent on every difficulty button tap;
+   * cheap (~30 bytes) and idempotent (server stores latest).
+   */
+  "host:setMode": (payload: { mode: ChartMode }) => void;
 
   /**
    * Host-only: kick the room into the loading phase. Server then waits for
@@ -140,7 +276,14 @@ export interface ClientToServerEvents {
   /** Host-only: cancel an in-progress loading phase, return to lobby. */
   "host:cancelLoading": () => void;
 
-  /** Host-only: send everyone back to the lobby after results. */
+  /**
+   * Host-only: send everyone back to the lobby after results.
+   *
+   * @deprecated Prefer `room:returnToLobby` which any player can invoke
+   * (the user-facing flow is "anyone clicks Back to room → everyone
+   * returns"). Kept for backwards compat in case an older client still
+   * has it wired; behaves identically.
+   */
   "host:returnToLobby": () => void;
 
   /** Per-client: chart parsed + audio decoded; ready to start. */
@@ -196,6 +339,22 @@ export interface ServerToClientEvents {
   /** A toast-style notification (e.g. "Alice joined", "Bob is loading…"). */
   "room:notice": (payload: { kind: NoticeKind; text: string }) => void;
 
+  /**
+   * Single new chat message append. Sent immediately on each
+   * `chat:send`, in addition to being echoed back into the rolling
+   * `RoomSnapshot.chat` array on the next snapshot tick. Clients
+   * append-on-event for sub-frame latency, then reconcile with the
+   * snapshot for late joiners + de-dup by id.
+   */
+  "chat:message": (payload: ChatMessage) => void;
+
+  /**
+   * Hard kick — the kicked player gets this then their socket leaves
+   * the room. Lets the client show a polite "You were kicked from the
+   * room" splash before redirecting, instead of looking like a crash.
+   */
+  "room:kicked": (payload: { reason: string }) => void;
+
   /** Recoverable error surfaced to the client UI. */
   error: (payload: { code: string; message: string }) => void;
 }
@@ -206,7 +365,9 @@ export type NoticeKind =
   | "host"
   | "ready"
   | "loadFailed"
-  | "info";
+  | "info"
+  | "kick"
+  | "mute";
 
 export interface ScoreboardEntry {
   id: string;
@@ -241,6 +402,18 @@ export const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const ROOM_CODE_LENGTH = 6;
 export const MAX_PLAYERS_PER_ROOM = 50;
 export const NAME_MAX_LEN = 20;
+/** Room display name (shown in browser + lobby header). */
+export const ROOM_NAME_MAX_LEN = 40;
+/** Single chat message length cap. Tuned to 240 — enough for a sentence
+ *  or short reaction without becoming a wall of text in the panel. */
+export const CHAT_MAX_LEN = 240;
+/** Server keeps the last N chat messages per room and includes them in
+ *  snapshots for late joiners + refreshes. 100 ≈ a few minutes of
+ *  active conversation, well under any practical bandwidth ceiling. */
+export const MAX_CHAT_HISTORY = 100;
+/** Per-player chat send rate limit. */
+export const CHAT_RATE_LIMIT = 6;
+export const CHAT_RATE_WINDOW_MS = 8_000;
 
 export function isValidRoomCode(code: string): boolean {
   if (typeof code !== "string") return false;
@@ -260,4 +433,38 @@ export function sanitizeName(raw: unknown): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, NAME_MAX_LEN);
+}
+
+/**
+ * Same hygiene as sanitizeName but with a longer cap — room titles need
+ * room to breathe ("Friday night brain melt" is 22 chars and still
+ * tight). Empty string after sanitization → caller picks a fallback
+ * (e.g. "$NICKNAME's room").
+ */
+export function sanitizeRoomName(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  // eslint-disable-next-line no-control-regex
+  return raw
+    .replace(/[\u0000-\u001f\u007f\u200b-\u200d\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, ROOM_NAME_MAX_LEN);
+}
+
+/**
+ * Sanitize a chat line. Same control-char strip as the name helpers but
+ * we DON'T collapse runs of whitespace because intentional double-spaces
+ * (e.g. ASCII art, code snippets) are part of how players express
+ * themselves. Newlines are normalized to single \n (multi-line chat
+ * rendered with `whitespace-pre-wrap`).
+ */
+export function sanitizeChatText(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f\u200b-\u200d\ufeff]/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, CHAT_MAX_LEN);
 }

@@ -9,31 +9,41 @@
 
 import { useEffect, useState } from "react";
 
+import type { RoomActions } from "@/hooks/useRoomSocket";
 import type { ChartMode } from "@/lib/game/chart";
 import { displayMode } from "@/lib/game/chart";
-import type { RoomSnapshot } from "@/lib/multi/protocol";
+import type { ChatMessage, RoomSnapshot } from "@/lib/multi/protocol";
+
+import { ChatPanel } from "./ChatPanel";
 
 export function LoadingScreen({
   snapshot,
+  chat,
+  meId,
   progress,
   error,
   isHost,
   mode,
   deadline,
   onCancel,
+  actions,
 }: {
   snapshot: RoomSnapshot;
+  chat: ChatMessage[];
+  meId: string;
   progress: string | null;
   error: string | null;
   isHost: boolean;
   mode: ChartMode | null;
   deadline: number | null;
   onCancel: () => void;
+  actions: RoomActions;
 }) {
   const total = snapshot.players.filter((p) => p.online).length;
   const ready = snapshot.players.filter((p) => p.online && p.ready).length;
   const song = snapshot.selectedSong;
   const remaining = useDeadlineCountdown(deadline);
+  const me = snapshot.players.find((p) => p.id === meId);
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.4fr)_1fr]">
@@ -117,46 +127,60 @@ export function LoadingScreen({
         )}
       </div>
 
-      {/* Per-player readiness grid */}
-      <div className="brut-card p-5 sm:p-6">
-        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
-          ░ Players
-        </p>
-        <ul className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-          {snapshot.players.map((p) => {
-            const status = !p.online
-              ? "offline"
-              : p.ready
-                ? "ready"
-                : "loading";
-            return (
-              <li
-                key={p.id}
-                className={`flex items-center gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
-                  status === "ready"
-                    ? "border-accent text-accent"
-                    : status === "offline"
-                      ? "border-bone-50/10 text-bone-50/30"
-                      : "border-bone-50/20 text-bone-50/70"
-                }`}
-              >
-                <span
-                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+      {/* Right column: per-player readiness grid + chat. Stacked so
+          the loading-progress crowd has somewhere to talk while the
+          download finishes (especially for slow players). Chat keeps
+          the same component as the lobby/results screens so a
+          conversation thread carries through the whole flow. */}
+      <div className="flex flex-col gap-4">
+        <div className="brut-card p-5 sm:p-6">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
+            ░ Players
+          </p>
+          <ul className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {snapshot.players.map((p) => {
+              const status = !p.online
+                ? "offline"
+                : p.ready
+                  ? "ready"
+                  : "loading";
+              return (
+                <li
+                  key={p.id}
+                  className={`flex items-center gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
                     status === "ready"
-                      ? "bg-accent"
+                      ? "border-accent text-accent"
                       : status === "offline"
-                        ? "bg-bone-50/20"
-                        : "bg-yellow-400 animate-pulse"
+                        ? "border-bone-50/10 text-bone-50/30"
+                        : "border-bone-50/20 text-bone-50/70"
                   }`}
-                />
-                <span className="flex-1 truncate">{p.name}</span>
-                <span className="font-mono text-[9.5px] uppercase tracking-widest opacity-70">
-                  {status}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+                >
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      status === "ready"
+                        ? "bg-accent"
+                        : status === "offline"
+                          ? "bg-bone-50/20"
+                          : "bg-yellow-400 animate-pulse"
+                    }`}
+                  />
+                  <span className="flex-1 truncate">{p.name}</span>
+                  <span className="font-mono text-[9.5px] uppercase tracking-widest opacity-70">
+                    {status}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        <div className="min-h-[16rem]">
+          <ChatPanel
+            chat={chat}
+            meId={meId}
+            meIsMuted={!!me?.muted}
+            onSend={actions.sendChat}
+          />
+        </div>
       </div>
     </div>
   );

@@ -1,39 +1,52 @@
 "use client";
 
 /**
- * End-of-match standings + post-game choice flow.
+ * End-of-match standings + post-game flow.
  *
  *   - Everyone sees the same sorted leaderboard.
- *   - Each player picks "keep playing" (back to lobby) or "leave" (back to
- *     the main menu) — choices are broadcast so others can see who's in.
- *   - The host can manually trigger "back to lobby" once they're satisfied;
- *     anyone who picked "leave" is evicted on that transition.
+ *   - Two big buttons: [Back to room] and [Back to main menu].
+ *     - "Back to room": any player who clicks it triggers a server-side
+ *       transition that pulls the WHOLE room back to the lobby. No host
+ *       confirmation needed (per the new UX brief — "everyone has to go
+ *       to the room anyway"). The clicker briefly shows a "Going back…"
+ *       state until the snapshot phase flips to "lobby".
+ *     - "Back to main menu": this player only — leaves the room and
+ *       routes home. Other players keep playing / chatting.
+ *   - Live chat sticks around so the room can talk over the standings.
  */
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import type { ResultsPayload, RoomActions } from "@/hooks/useRoomSocket";
-import type { RoomSnapshot, Standing } from "@/lib/multi/protocol";
+import type { ChatMessage, RoomSnapshot, Standing } from "@/lib/multi/protocol";
+
+import { ChatPanel } from "./ChatPanel";
 
 export function ResultsScreen({
   snapshot,
   results,
+  chat,
   me,
   isHost,
   actions,
 }: {
   snapshot: RoomSnapshot;
   results: ResultsPayload | null;
+  chat: ChatMessage[];
   me: string;
   isHost: boolean;
   actions: RoomActions;
 }) {
   const router = useRouter();
+  // While we're waiting for the server to flip the room phase back to
+  // "lobby" after a "Back to room" click, swap the button to a
+  // confirmation pill. We don't unmount this whole screen because the
+  // RoomBody phase shell will animate the swap in/out cleanly once
+  // the snapshot arrives.
+  const [returning, setReturning] = useState(false);
 
-  // Build standings from the snapshot if the server-emitted payload hasn't
-  // arrived yet (refresh into the results phase, etc).
   const standings: Standing[] = useMemo(() => {
     if (results?.standings?.length) return results.standings;
     return [...snapshot.players]
@@ -50,26 +63,25 @@ export function ResultsScreen({
       .map((s, i) => ({ ...s, rank: i + 1 }));
   }, [results, snapshot.players]);
 
-  const winnerId =
-    results?.winnerId ?? (standings[0]?.id ?? snapshot.hostId);
+  const winnerId = results?.winnerId ?? (standings[0]?.id ?? snapshot.hostId);
   const winner = standings.find((s) => s.id === winnerId);
+  const meRow = standings.find((s) => s.id === me);
 
-  const myChoice =
-    snapshot.players.find((p) => p.id === me)?.postChoice ?? null;
-  const stayCount = snapshot.players.filter(
-    (p) => p.online && p.postChoice === "stay",
-  ).length;
-  const onlineCount = snapshot.players.filter((p) => p.online).length;
+  const handleBackToRoom = useCallback(() => {
+    if (returning) return;
+    setReturning(true);
+    actions.returnToLobby();
+  }, [returning, actions]);
 
-  const handleStay = () => actions.sendChoice("stay");
-  const handleLeave = () => {
+  const handleLeave = useCallback(() => {
     actions.sendChoice("leave");
     actions.leave();
     router.push("/");
-  };
-  const handleHostLobby = () => actions.returnToLobby();
+  }, [actions, router]);
 
-  // ESC = leave shortcut.
+  // ESC = leave shortcut. Keep the same affordance as before — quick
+  // way out for users who don't want to wait on whatever the room is
+  // doing. Use a stable handler to avoid re-binding on every render.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === "Escape") {
@@ -79,157 +91,164 @@ export function ResultsScreen({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleLeave]);
+
+  const me_p = snapshot.players.find((p) => p.id === me);
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-      {/* Winner / your spot */}
-      <div className="brut-card-accent p-5 sm:p-7">
-        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
-          ░ Match complete
-        </p>
-        <h2 className="mt-2 font-display text-[1.97rem] font-bold leading-none sm:text-[2.36rem]">
-          {winner ? `${winner.name} wins.` : "No one finished."}
-        </h2>
-        {winner && (
-          <p className="mt-2 font-mono text-[0.92rem] text-bone-50/80">
-            {winner.score.toLocaleString()} ·{" "}
-            {winner.accuracy.toFixed(1)}% · ×{winner.maxCombo}
+      {/* Left column: hero summary + actions + chat. The chat sits
+          under the hero so people can talk over the standings without
+          jumping screens. */}
+      <div className="flex flex-col gap-4">
+        <div className="brut-card-accent p-5 sm:p-7">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
+            ░ Match complete
           </p>
-        )}
-
-        {standings.length > 0 && (
-          <div className="mt-5 border-2 border-bone-50/20 px-3 py-2">
-            <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
-              Your run
+          <h2 className="mt-2 font-display text-[1.97rem] font-bold leading-none sm:text-[2.36rem]">
+            {winner ? `${winner.name} wins.` : "No one finished."}
+          </h2>
+          {winner && (
+            <p className="mt-2 font-mono text-[0.92rem] text-bone-50/80">
+              {winner.score.toLocaleString()} ·{" "}
+              {winner.accuracy.toFixed(1)}% · ×{winner.maxCombo}
             </p>
-            <YourRunRow me={me} standings={standings} />
-          </div>
-        )}
+          )}
 
-        <div className="mt-5 flex flex-col gap-2">
-          <button
-            onClick={handleStay}
-            disabled={myChoice === "stay"}
-            className="brut-btn-accent px-4 py-3 disabled:opacity-60"
-          >
-            {myChoice === "stay" ? "✓ Staying for next round" : "↻ Keep playing"}
-          </button>
-          <button
-            onClick={handleLeave}
-            className="brut-btn group inline-flex items-center justify-center gap-2 px-4 py-3"
-          >
-            <ArrowIcon
-              direction="left"
-              size={14}
-              strokeWidth={2.75}
-              className="transition-transform duration-200 group-hover:-translate-x-0.5"
-            />
-            <span>Back to main menu</span>
-          </button>
+          {meRow && (
+            <div className="mt-5 border-2 border-bone-50/20 px-3 py-2">
+              <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
+                Your run
+              </p>
+              <p className="mt-1 font-mono text-[0.92rem] text-bone-50">
+                <span className="text-accent">#{meRow.rank}</span> ·{" "}
+                <span className="font-bold">
+                  {meRow.score.toLocaleString()}
+                </span>{" "}
+                · {meRow.accuracy.toFixed(1)}% · ×{meRow.maxCombo}
+              </p>
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-col gap-2">
+            <button
+              onClick={handleBackToRoom}
+              disabled={returning}
+              className="brut-btn-accent group flex items-center justify-center gap-2 px-4 py-3 disabled:opacity-70"
+              title={
+                returning
+                  ? "Waiting on the server to flip the phase…"
+                  : "Pull everyone back to the lobby"
+              }
+            >
+              {returning ? (
+                <>
+                  <span
+                    aria-hidden
+                    className="inline-block h-[0.86rem] w-[0.86rem] shrink-0 animate-spin rounded-full border-2 border-ink-900/30 border-t-ink-900"
+                  />
+                  <span>Going back to the room…</span>
+                </>
+              ) : (
+                <>
+                  <span>Back to room</span>
+                  <span
+                    aria-hidden
+                    className="inline-block transition-transform duration-200 group-hover:translate-x-0.5"
+                  >
+                    ↻
+                  </span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={handleLeave}
+              className="brut-btn group inline-flex items-center justify-center gap-2 px-4 py-3"
+            >
+              <ArrowIcon
+                direction="left"
+                size={14}
+                strokeWidth={2.75}
+                className="transition-transform duration-200 group-hover:-translate-x-0.5"
+              />
+              <span>Back to main menu</span>
+            </button>
+          </div>
+
+          {/* Soft "host hint" — hosts get the same Back-to-room button
+              as everyone else now (matches the new "any player can
+              trigger" UX). The hint is just a nudge that they can
+              start the next song after the transition. */}
+          {isHost && !returning && (
+            <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/45">
+              Host: pick the next song from the lobby once you&apos;re
+              back.
+            </p>
+          )}
+
+          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
+            ESC = leave to main menu
+          </p>
         </div>
 
-        {isHost && (
-          <button
-            onClick={handleHostLobby}
-            className="brut-btn-accent mt-3 w-full px-4 py-3"
-            title="Pull everyone (who chose to stay) back to the lobby for the next round"
-          >
-            ▶ Host: back to lobby ({stayCount}/{onlineCount} ready)
-          </button>
-        )}
-
-        <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
-          ESC = leave · host kicks off the next round
-        </p>
+        <div className="min-h-[18rem]">
+          <ChatPanel
+            chat={chat}
+            meId={me}
+            meIsMuted={!!me_p?.muted}
+            onSend={actions.sendChat}
+          />
+        </div>
       </div>
 
-      {/* Full leaderboard */}
+      {/* Right column: full leaderboard. */}
       <div className="brut-card p-5 sm:p-6">
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Final standings
         </p>
         <ol className="mt-3 space-y-1.5">
-          {standings.map((s) => {
-            const player = snapshot.players.find((p) => p.id === s.id);
-            const choice = player?.postChoice ?? null;
-            return (
-              <li
-                key={s.id}
-                className={`grid grid-cols-[28px_minmax(0,1fr)_auto_auto] items-baseline gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
-                  s.id === me
-                    ? "border-accent bg-accent/10"
-                    : s.rank === 1
-                      ? "border-accent/60"
-                      : "border-bone-50/15"
+          {standings.map((s) => (
+            <li
+              key={s.id}
+              className={`grid grid-cols-[28px_minmax(0,1fr)_auto] items-baseline gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
+                s.id === me
+                  ? "border-accent bg-accent/10"
+                  : s.rank === 1
+                    ? "border-accent/60"
+                    : "border-bone-50/15"
+              }`}
+            >
+              <span
+                className={`text-[11.5px] uppercase tracking-widest ${
+                  s.rank === 1
+                    ? "text-accent"
+                    : s.rank === 2
+                      ? "text-bone-50/85"
+                      : s.rank === 3
+                        ? "text-bone-50/65"
+                        : "text-bone-50/40"
                 }`}
               >
-                <span
-                  className={`text-[11.5px] uppercase tracking-widest ${
-                    s.rank === 1
-                      ? "text-accent"
-                      : s.rank === 2
-                        ? "text-bone-50/85"
-                        : s.rank === 3
-                          ? "text-bone-50/65"
-                          : "text-bone-50/40"
-                  }`}
-                >
-                  #{s.rank}
-                </span>
-                <span className="min-w-0 truncate text-bone-50">
-                  {s.name}
-                  {s.id === me && (
-                    <span className="ml-1 text-[9.5px] uppercase text-accent">
-                      you
-                    </span>
-                  )}
-                </span>
-                <span className="shrink-0 text-right tabular-nums text-bone-50">
-                  {s.score.toLocaleString()}
-                </span>
-                <span className="shrink-0 text-right text-[10.5px] tracking-widest text-bone-50/55">
-                  {choice === "stay"
-                    ? "stay"
-                    : choice === "leave"
-                      ? "left"
-                      : s.online
-                        ? "—"
-                        : "off"}
-                </span>
-              </li>
-            );
-          })}
+                #{s.rank}
+              </span>
+              <span className="min-w-0 truncate text-bone-50">
+                {s.name}
+                {s.id === me && (
+                  <span className="ml-1 text-[9.5px] uppercase text-accent">
+                    you
+                  </span>
+                )}
+              </span>
+              <span className="shrink-0 text-right tabular-nums text-bone-50">
+                {s.score.toLocaleString()}
+              </span>
+            </li>
+          ))}
         </ol>
         <p className="mt-3 border-t-2 border-bone-50/10 pt-2 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
           Stats are saved locally. Cloud sync arrives later.
         </p>
       </div>
     </div>
-  );
-}
-
-function YourRunRow({
-  me,
-  standings,
-}: {
-  me: string;
-  standings: Standing[];
-}) {
-  const mine = standings.find((s) => s.id === me);
-  if (!mine) {
-    return (
-      <p className="mt-1 font-mono text-[0.92rem] text-bone-50/40">
-        no run recorded
-      </p>
-    );
-  }
-  return (
-    <p className="mt-1 font-mono text-[0.92rem] text-bone-50">
-      <span className="text-accent">#{mine.rank}</span> ·{" "}
-      <span className="font-bold">{mine.score.toLocaleString()}</span> ·{" "}
-      {mine.accuracy.toFixed(1)}% · ×{mine.maxCombo}
-    </p>
   );
 }

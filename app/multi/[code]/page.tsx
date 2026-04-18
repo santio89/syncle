@@ -24,6 +24,7 @@ import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { InGameChatWidget } from "@/components/multi/InGameChatWidget";
 import { Lobby } from "@/components/multi/Lobby";
 import { LoadingScreen } from "@/components/multi/LoadingScreen";
 import { MultiGame } from "@/components/multi/MultiGame";
@@ -49,12 +50,32 @@ export default function MultiRoomPage() {
     scoreboard,
     notices,
     results,
+    chat,
     selectedMode,
     loadDeadline,
     lastError,
+    kicked,
     clearError,
     actions,
   } = useRoomSocket(valid ? code : null);
+
+  // Hard kick: redirect home with a one-shot toast. Sets a flag in
+  // sessionStorage so the homepage can render the "you got kicked"
+  // splash (handled by the homepage; if absent the user just lands
+  // home and the flag self-clears).
+  useEffect(() => {
+    if (!kicked) return;
+    try {
+      sessionStorage.setItem(
+        "syncle.kicked.notice",
+        kicked.reason || "You were kicked",
+      );
+    } catch {
+      /* ignore */
+    }
+    actions.leave();
+    router.push("/multi");
+  }, [kicked, actions, router]);
 
   // For users who hit /multi/ABCDEF cold without sessionStorage we render
   // a quick join form. Once they submit, the snapshot arrives and we drop
@@ -62,6 +83,27 @@ export default function MultiRoomPage() {
   const [pendingName, setPendingName] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+
+  // Tracks whether the user already has a session for THIS room cached in
+  // sessionStorage — set when they came in via Create or Join from the
+  // /multi entry page (which writes the sessionId before navigating).
+  // While true, we never show the manual JoinForm — `useRoomSocket`
+  // auto-rejoins on connect and the snapshot lands a beat later.
+  // Without this guard the JoinForm would briefly flash between the
+  // socket connecting and the rejoin's snapshot arriving, asking for a
+  // name even though the player just typed one and clicked "Create".
+  // If the auto-rejoin fails (room expired / kicked from server side)
+  // the hook clears the stored session and surfaces a `lastError`; the
+  // effect below re-reads storage on each error so we can gracefully
+  // fall back to the JoinForm.
+  const [hasStoredSession, setHasStoredSession] = useState<boolean>(() => {
+    if (typeof window === "undefined" || !valid) return false;
+    try {
+      return !!window.sessionStorage.getItem(`syncle.session.${code}`);
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -72,6 +114,21 @@ export default function MultiRoomPage() {
       /* ignore */
     }
   }, []);
+
+  // Re-evaluate whether the stored session is still around whenever a
+  // rejoin error fires (the hook deletes it on failure) or whenever
+  // we successfully obtain a `me` (so subsequent rejoin failures —
+  // e.g. server bounce — also trip the fallback correctly).
+  useEffect(() => {
+    if (typeof window === "undefined" || !valid) return;
+    try {
+      setHasStoredSession(
+        !!window.sessionStorage.getItem(`syncle.session.${code}`),
+      );
+    } catch {
+      setHasStoredSession(false);
+    }
+  }, [lastError, sessionId, code, valid]);
 
   // We "have a seat" once the server has sent us a snapshot containing our
   // sessionId. Otherwise we either (a) are mid-rejoin and waiting, or
@@ -170,9 +227,14 @@ export default function MultiRoomPage() {
     return <InvalidCodeScreen code={String(rawCode)} onBack={() => router.push("/multi")} />;
   }
 
-  // Show join form if we don't have a seat yet AND we're connected.
-  // (While conn is "connecting" we just show a spinner.)
-  const needsJoin = conn === "connected" && !me;
+  // Show join form only when:
+  //   - we're connected to the server,
+  //   - we don't have a seat in the room yet, AND
+  //   - we have NO stored session for this room (i.e. cold URL hit).
+  // For Create/Join flows from /multi the sessionId is already in
+  // sessionStorage, so the hook will rejoin automatically — there's no
+  // sense asking for a name a second time.
+  const needsJoin = conn === "connected" && !me && !hasStoredSession;
 
   // Gameplay phases need to break out of the page's max-width container so
   // the canvas can fill the whole viewport (minus the header), matching the
@@ -240,6 +302,9 @@ export default function MultiRoomPage() {
         // Full-bleed game area: canvas fills the rest of the viewport
         // (header + this flex-1 region = 100vh). MultiGame draws its own
         // overlays (score/combo top-left, scoreboard right) on top.
+        // The InGameChatWidget sits above as a sibling so it can float
+        // in the bottom-right without participating in the canvas
+        // layout.
         <div className="relative z-10 min-h-0 flex-1">
           {me && snapshot && (
             <RoomBody
@@ -247,6 +312,7 @@ export default function MultiRoomPage() {
               snapshot={snapshot}
               scoreboard={scoreboard}
               results={results}
+              chat={chat}
               me={me.id}
               isHost={me.isHost}
               actions={actions}
@@ -255,6 +321,14 @@ export default function MultiRoomPage() {
               loadError={loadError}
               loadDeadline={loadDeadline}
               selectedMode={selectedMode}
+            />
+          )}
+          {me && (
+            <InGameChatWidget
+              chat={chat}
+              meId={me.id}
+              meIsMuted={!!me.muted}
+              actions={actions}
             />
           )}
         </div>
@@ -271,7 +345,12 @@ export default function MultiRoomPage() {
             />
           )}
 
-          {conn !== "connected" && !needsJoin && <ConnectingCard conn={conn} />}
+          {/* Connecting card covers two cases:
+                1. socket isn't connected yet (initial handshake / reconnecting),
+                2. socket IS connected and we have a stored session for this
+                   room, so the hook is mid-rejoin — show "joining" UI rather
+                   than the JoinForm or a blank page. */}
+          {!needsJoin && !me && <ConnectingCard conn={conn} />}
 
           {me && snapshot && (
             <RoomBody
@@ -279,6 +358,7 @@ export default function MultiRoomPage() {
               snapshot={snapshot}
               scoreboard={scoreboard}
               results={results}
+              chat={chat}
               me={me.id}
               isHost={me.isHost}
               actions={actions}
@@ -311,7 +391,7 @@ export default function MultiRoomPage() {
 /* Body                                                                   */
 /* ---------------------------------------------------------------------- */
 
-import type { RoomSnapshot, ScoreboardEntry } from "@/lib/multi/protocol";
+import type { ChatMessage, RoomSnapshot, ScoreboardEntry } from "@/lib/multi/protocol";
 import type { ResultsPayload, RoomActions } from "@/hooks/useRoomSocket";
 
 function RoomBody({
@@ -319,6 +399,7 @@ function RoomBody({
   snapshot,
   scoreboard,
   results,
+  chat,
   me,
   isHost,
   actions,
@@ -332,6 +413,7 @@ function RoomBody({
   snapshot: RoomSnapshot;
   scoreboard: ScoreboardEntry[];
   results: ResultsPayload | null;
+  chat: ChatMessage[];
   me: string;
   isHost: boolean;
   actions: RoomActions;
@@ -341,56 +423,73 @@ function RoomBody({
   loadDeadline: number | null;
   selectedMode: ChartMode | null;
 }) {
-  switch (snapshot.phase) {
-    case "lobby":
-      return (
-        <Lobby
-          code={code}
-          snapshot={snapshot}
-          isHost={isHost}
-          actions={actions}
-        />
-      );
-    case "loading":
-      return (
-        <LoadingScreen
-          snapshot={snapshot}
-          progress={loadProgress}
-          error={loadError}
-          isHost={isHost}
-          mode={selectedMode}
-          deadline={loadDeadline}
-          onCancel={actions.cancelLoading}
-        />
-      );
-    case "countdown":
-    case "playing":
-      // We render MultiGame even if loadedChart is missing (e.g. for late
-      // joiners); the component shows a spinner until the chart arrives.
-      return (
-        <MultiGame
-          snapshot={snapshot}
-          scoreboard={scoreboard}
-          loaded={loadedChart}
-          loadError={loadError}
-          actions={actions}
-          me={me}
-          mode={selectedMode ?? "easy"}
-        />
-      );
-    case "results":
-      return (
-        <ResultsScreen
-          snapshot={snapshot}
-          results={results}
-          me={me}
-          isHost={isHost}
-          actions={actions}
-        />
-      );
-    default:
-      return null;
-  }
+  // Wrap each phase in a fade-in shell so transitions from one phase
+  // to another don't pop. The shell uses Tailwind's `animate-fade-in`
+  // (defined in globals.css) which is a 220ms opacity ramp — enough
+  // to feel intentional without slowing anyone down. The `key`
+  // attribute on the wrapper is the phase name so React fully unmounts
+  // / re-mounts on phase change, re-firing the animation.
+  const inner = (() => {
+    switch (snapshot.phase) {
+      case "lobby":
+        return (
+          <Lobby
+            code={code}
+            snapshot={snapshot}
+            meId={me}
+            isHost={isHost}
+            chat={chat}
+            actions={actions}
+          />
+        );
+      case "loading":
+        return (
+          <LoadingScreen
+            snapshot={snapshot}
+            chat={chat}
+            meId={me}
+            progress={loadProgress}
+            error={loadError}
+            isHost={isHost}
+            mode={selectedMode}
+            deadline={loadDeadline}
+            onCancel={actions.cancelLoading}
+            actions={actions}
+          />
+        );
+      case "countdown":
+      case "playing":
+        return (
+          <MultiGame
+            snapshot={snapshot}
+            scoreboard={scoreboard}
+            loaded={loadedChart}
+            loadError={loadError}
+            actions={actions}
+            me={me}
+            mode={selectedMode ?? "easy"}
+          />
+        );
+      case "results":
+        return (
+          <ResultsScreen
+            snapshot={snapshot}
+            results={results}
+            chat={chat}
+            me={me}
+            isHost={isHost}
+            actions={actions}
+          />
+        );
+      default:
+        return null;
+    }
+  })();
+  return (
+    <div key={snapshot.phase} className="phase-shell">
+      {inner}
+    </div>
+  );
 }
 
 /* ---------------------------------------------------------------------- */
@@ -428,24 +527,34 @@ function ConnectionPill({ conn }: { conn: string }) {
 }
 
 function ConnectingCard({ conn }: { conn: string }) {
+  // Three states map to three different copy lines so the user always
+  // knows what the spinner is waiting on. "connected" lands here only
+  // when we have a stored session for this room and the hook is
+  // mid-rejoin — the socket handshake itself is already done.
+  const label =
+    conn === "connected"
+      ? "Joining lobby…"
+      : conn === "reconnecting"
+        ? "Reconnecting to the room…"
+        : "Opening socket…";
   return (
     <div className="brut-card mx-auto w-full max-w-md p-5 sm:p-6">
       <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
-        ░ Connecting
+        ░ {conn === "connected" ? "Joining" : "Connecting"}
       </p>
       <div className="mt-3 flex items-center gap-3">
         <span className="inline-block h-[1.05rem] w-[1.05rem] shrink-0 animate-spin rounded-full border-2 border-bone-50/20 border-t-accent" />
         <p className="font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/80">
-          {conn === "reconnecting"
-            ? "Reconnecting to the room…"
-            : "Opening socket…"}
+          {label}
         </p>
       </div>
-      <p className="mt-3 text-[11.5px] leading-snug text-bone-50/55">
-        Free Render servers sleep when idle and take ~30 s to wake on the
-        first connection. Once you&rsquo;re in the room, everything else is
-        instant.
-      </p>
+      {conn !== "connected" && (
+        <p className="mt-3 text-[11.5px] leading-snug text-bone-50/55">
+          Free Render servers sleep when idle and take ~30 s to wake on the
+          first connection. Once you&rsquo;re in the room, everything else is
+          instant.
+        </p>
+      )}
     </div>
   );
 }

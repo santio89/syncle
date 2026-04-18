@@ -1110,38 +1110,85 @@ function resolveTier(
   if (tier === "expert") return emptyTier();
   if (source.nps < band.min) return emptyTier();
 
-  // 2a) Beat-grid pass for Easy / Normal — snaps notes to musical beats.
+  // 2a) Beat-grid passes for Easy / Normal — snaps notes to musical
+  //     beats. We try MULTIPLE divisors and use the first that lands in
+  //     band, instead of locking to a single divisor that may overshoot
+  //     on high-BPM sources (a /1 grid at BPM 280 gives 4.7 nps, way
+  //     above Easy's 3.5 max). The order biases toward the coarsest
+  //     grid that fits, which gives the most musical-feeling result.
   if (tier === "easy" || tier === "normal") {
-    const div = tier === "easy" ? 1 : 2;
-    const grid = quantizeToGrid(
-      source.rawNotes,
-      source.bpm,
-      source.offset,
-      div,
-      false,
-    );
-    if (inBand(grid.length, source.duration, band)) {
+    const divisors: Array<1 | 2 | 3 | 4> =
+      tier === "easy" ? [1, 2, 3] : [2, 3, 4];
+    for (const div of divisors) {
+      const grid = quantizeToGrid(
+        source.rawNotes,
+        source.bpm,
+        source.offset,
+        div,
+        false,
+      );
+      if (inBand(grid.length, source.duration, band)) {
+        return {
+          notes: grid,
+          count: grid.length,
+          available: true,
+          source,
+          mapperShipped: false,
+        };
+      }
+    }
+    // Fall through to subsample.
+  }
+
+  // 2b) Subsample pass — precise density targeting via tap-fraction
+  //     math. Tries the band target first (the calibrated "feels like
+  //     this tier" density) and then walks a few candidate targets
+  //     inside the band so we don't disable a tier just because the
+  //     calibrated target landed a hair outside on this particular
+  //     source. Holds are preserved across all of these.
+  const subTargets: number[] = [
+    band.target,
+    (band.min + band.target) / 2,
+    (band.target + band.max) / 2,
+    band.min,
+    band.max,
+  ];
+  for (const target of subTargets) {
+    const sub = subsampleToTargetNps(source, target);
+    if (sub && inBand(sub.length, source.duration, band)) {
       return {
-        notes: grid,
-        count: grid.length,
+        notes: sub,
+        count: sub.length,
         available: true,
         source,
         mapperShipped: false,
       };
     }
-    // Fall through to subsample.
   }
 
-  // 2b) Subsample pass — precise density targeting via tap-fraction math.
-  const sub = subsampleToTargetNps(source, band.target);
-  if (sub && inBand(sub.length, source.duration, band)) {
-    return {
-      notes: sub,
-      count: sub.length,
-      available: true,
-      source,
-      mapperShipped: false,
-    };
+  // 2c) Hold-thinning fallback for Easy / Normal. Fires when the source's
+  //     sustains are so dense they alone exceed the tier's band.max
+  //     (think Expert hold-spam → Easy: holds at 5 nps, Easy max 3.5).
+  //     Without this fallback, Easy and Medium would simply be DISABLED
+  //     on those songs, which is exactly the failure mode the user hit
+  //     ("u quantizied the others, but u didnt do the easy and medium
+  //     modes"). We only allow this for Easy/Normal because losing some
+  //     sustains is acceptable on the simplification-friendly tiers and
+  //     unacceptable on the Hard-and-up tiers where holds carry chart
+  //     identity.
+  if (tier === "easy" || tier === "normal") {
+    for (const target of subTargets) {
+      const thinned = thinHoldsAndSubsampleToTargetNps(source, target);
+      if (thinned && inBand(thinned.length, source.duration, band)) {
+        return {
+          notes: thinned,
+          count: thinned.length,
+          available: true,
+          source,
+          mapperShipped: false,
+        };
+      }
+    }
   }
 
   return emptyTier();
@@ -1155,6 +1202,13 @@ function resolveTier(
  *
  * Returns `null` if the source has no taps at all (rare — short pure-hold
  * sustain charts) since we have nothing to thin.
+ *
+ * Note: when `holdCount/duration > targetNps`, the result will simply be
+ * "all holds, zero taps" and the resulting density still exceeds target.
+ * That's intentional here — phrasing-preservation is the contract of this
+ * helper. Tiers that need to dip BELOW the holds-floor (e.g. Easy on a
+ * sustain-heavy Expert source) use `thinHoldsAndSubsampleToTargetNps`
+ * instead, which is allowed to drop sustains as a last resort.
  */
 function subsampleToTargetNps(
   chart: RawChart,
@@ -1171,6 +1225,96 @@ function subsampleToTargetNps(
   const targetTaps = Math.max(0, targetTotal - holdCount);
   const ratio = Math.min(1.0, targetTaps / tapCount);
   return subsampleNotes(chart.rawNotes, ratio);
+}
+
+/**
+ * Hold-permissive variant of {@link subsampleToTargetNps} — thins BOTH
+ * holds and taps to hit `targetNps`. Used as a last-resort fallback for
+ * Easy/Medium synthesis when the source is so hold-heavy that
+ * `holdCount/duration` alone already exceeds the tier's band.max.
+ *
+ * Why this is OK to do (despite our usual "never drop a sustain" rule):
+ *
+ *   - The hold-preserving subsample only fails on charts where sustains
+ *     are SO dense they form streams in their own right (think Expert
+ *     hold-spam patterns at 5+ nps). On those charts the sustains are no
+ *     longer "phrasing markers" — they're the chart's main density. A
+ *     player asking for Easy literally cannot play an Easy unless we
+ *     thin them.
+ *
+ *   - Refusing to thin would mean the song shows Easy and Medium as
+ *     unavailable, which is what the user actually complained about
+ *     ("u quantizied the others, but u didnt do the easy and medium
+ *     modes"). Silent loss of some holds is strictly better than a
+ *     dead button.
+ *
+ * Strategy:
+ *   1. Decide how many holds to keep so they contribute at most ~70% of
+ *      the target density (leaves headroom for some taps to land on
+ *      downbeats — a pure-holds Easy feels nothing like an Easy).
+ *   2. Bresenham-thin holds along the timeline to that count, preserving
+ *      time distribution rather than just slicing off the tail.
+ *   3. Top up to `targetTotal` with evenly-thinned taps.
+ *   4. Sort + reassign ids before returning.
+ *
+ * Returns `null` only on degenerate inputs (zero notes / zero duration).
+ */
+function thinHoldsAndSubsampleToTargetNps(
+  chart: RawChart,
+  targetNps: number,
+): Note[] | null {
+  if (chart.rawNotes.length === 0 || chart.duration <= 0) return null;
+  const isHold = (n: Note) => n.endT != null && n.endT > n.t + 0.05;
+  const holds: Note[] = [];
+  const taps: Note[] = [];
+  for (const n of chart.rawNotes) (isHold(n) ? holds : taps).push(n);
+  holds.sort((a, b) => a.t - b.t);
+  taps.sort((a, b) => a.t - b.t);
+
+  const targetTotal = Math.max(0, Math.round(targetNps * chart.duration));
+  if (targetTotal === 0) return null;
+
+  // Cap the hold quota at 70% of total target — keeps room for a real
+  // tap layer so the synthesized chart still feels like a tap-driven
+  // tier instead of a sustain-only soup.
+  const holdQuota = Math.min(holds.length, Math.floor(targetTotal * 0.7));
+
+  // Bresenham-keep `holdQuota` holds out of `holds.length`, evenly
+  // distributed across time so we don't carve a gap in any one section.
+  const keptHolds: Note[] = [];
+  if (holds.length === 0) {
+    // No holds in source — fall back to plain tap subsample.
+  } else if (holdQuota >= holds.length) {
+    keptHolds.push(...holds);
+  } else if (holdQuota > 0) {
+    const step = holds.length / holdQuota;
+    for (let i = 0; i < holdQuota; i++) {
+      const idx = Math.min(holds.length - 1, Math.floor((i + 0.5) * step));
+      keptHolds.push(holds[idx]);
+    }
+  }
+
+  // Top up to `targetTotal` with thinned taps.
+  const remainingForTaps = Math.max(0, targetTotal - keptHolds.length);
+  const keptTaps: Note[] = [];
+  if (remainingForTaps > 0 && taps.length > 0) {
+    const tapKeep = Math.min(taps.length, remainingForTaps);
+    if (tapKeep >= taps.length) {
+      keptTaps.push(...taps);
+    } else {
+      const step = taps.length / tapKeep;
+      for (let i = 0; i < tapKeep; i++) {
+        const idx = Math.min(taps.length - 1, Math.floor((i + 0.5) * step));
+        keptTaps.push(taps[idx]);
+      }
+    }
+  }
+
+  const out: Note[] = [...keptHolds, ...keptTaps];
+  if (out.length === 0) return null;
+  out.sort((a, b) => a.t - b.t);
+  out.forEach((n, i) => (n.id = i));
+  return out;
 }
 
 /** True iff `count` notes over `duration` seconds lands inside `band`. */
