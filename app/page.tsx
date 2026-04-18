@@ -207,52 +207,32 @@ export default function HomePage() {
             // subjects sit center/lower. The card height comes from
             // grid `stretch` matching the stats card on the right.
             className="brut-card-accent relative flex flex-col overflow-hidden p-4 sm:p-5 md:col-span-2"
-            // When a cover image is in play, lock this card to the
-            // dark-theme palette regardless of the page-wide theme.
-            // The cover artwork is a dark photographic surface, so
-            // light-mode's near-black `--fg` text inherits down and
-            // disappears against it (title and artist lines
-            // basically vanish on cream-themed users). Forcing
-            // `data-theme="dark"` on the card swaps every CSS theme
-            // var inside (`--fg`, `--surface`, borders, etc.) to the
-            // dark variants, matching the always-readable dark-mode
-            // look without having to override each child element's
-            // color one by one.
-            data-theme={
-              load.status === "ready" && load.meta.coverUrl
-                ? "dark"
-                : undefined
-            }
             style={
               load.status === "ready" && load.meta.coverUrl
                 ? {
-                    // Re-anchor `color` on the card itself so the
-                    // newly-overridden `--fg` (now dark-mode bone)
-                    // actually takes effect — descendants inherit
-                    // the resolved color value, not the CSS var, so
-                    // without this they'd still show body's
-                    // near-black light-mode color.
-                    color: "rgb(var(--fg))",
-                    // Beatmap cover as ambient background. We layer
-                    // TWO darkening passes over the image:
+                    // Theme-aware overlay. Tints the cover with the
+                    // page's BASE color (`--bg`: cream in light mode,
+                    // near-black in dark mode) so the dim layer
+                    // becomes a "lighter wash" or a "darker wash"
+                    // depending on theme — text below it always sits
+                    // on a surface tinted toward the active theme,
+                    // which means the regular themed `--fg` text
+                    // color (inherited from <body>) reads naturally
+                    // without needing to lock the card to one theme.
+                    //
+                    // Two layers:
                     //   1. Left-weighted directional gradient — the
                     //      title/artist column lives on the left, so
-                    //      it gets the heaviest dim. Right side stays
-                    //      lighter to let the cover breathe near the
-                    //      duration badge.
-                    //   2. Flat 0.35 dim across the whole card. This
-                    //      is the part that fixes the previous bug
-                    //      where bright anime keyart fought the white
-                    //      title for legibility — even with the
-                    //      directional gradient the cover's highlights
-                    //      would punch through. The flat layer pins a
-                    //      minimum contrast ceiling everywhere.
+                    //      it gets the heaviest wash. Right side
+                    //      stays lighter to let the cover breathe
+                    //      near the duration badge.
+                    //   2. Flat dim across the whole card so bright
+                    //      cover highlights can't punch through and
+                    //      fight the text for contrast.
                     //
                     // 404s silently fall back to the card's own
-                    // translucent surface from `.brut-card-accent` —
-                    // no broken-image icon, no layout shift, no JS
-                    // error handling needed.
-                    backgroundImage: `linear-gradient(90deg, rgba(4,5,8,0.90) 0%, rgba(4,5,8,0.65) 50%, rgba(4,5,8,0.30) 100%), linear-gradient(rgba(4,5,8,0.22), rgba(4,5,8,0.22)), url(${load.meta.coverUrl})`,
+                    // translucent surface from `.brut-card-accent`.
+                    backgroundImage: `linear-gradient(90deg, rgb(var(--bg) / 0.90) 0%, rgb(var(--bg) / 0.65) 50%, rgb(var(--bg) / 0.30) 100%), linear-gradient(rgb(var(--bg) / 0.22), rgb(var(--bg) / 0.22)), url(${load.meta.coverUrl})`,
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                   }
@@ -286,18 +266,29 @@ export default function HomePage() {
                       className="mt-1 block w-full truncate font-display text-[1.55rem] font-bold leading-tight sm:text-[1.95rem]"
                       style={
                         load.meta.coverUrl
-                          ? { textShadow: "0 2px 10px rgba(0,0,0,0.85)" }
+                          ? {
+                              // Halo using the page base color, so in
+                              // light mode it's a cream glow around
+                              // the dark title (lifts it off bright
+                              // cover highlights) and in dark mode
+                              // it's a black glow around the bone
+                              // title (same idea, inverted).
+                              textShadow: "0 2px 10px rgb(var(--bg) / 0.95)",
+                            }
                           : undefined
                       }
                     >
                       {load.meta.title}
                     </h2>
                     <p
-                      className="mt-0.5 block w-full truncate text-[0.92rem] text-bone-50/85"
+                      className="mt-0.5 block w-full truncate text-[0.92rem]"
                       style={
                         load.meta.coverUrl
-                          ? { textShadow: "0 1px 6px rgba(0,0,0,0.85)" }
-                          : undefined
+                          ? {
+                              color: "rgb(var(--fg) / 0.85)",
+                              textShadow: "0 1px 6px rgb(var(--bg) / 0.95)",
+                            }
+                          : { color: "rgb(var(--fg) / 0.85)" }
                       }
                     >
                       {load.meta.artist}

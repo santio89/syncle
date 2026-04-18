@@ -999,49 +999,31 @@ function StartCard({
   return (
     <div
       className="brut-card relative w-full max-w-xl overflow-hidden p-6 sm:p-8"
-      // When a cover image is in play, lock this card to the dark-theme
-      // palette regardless of the page-wide theme. The cover artwork is
-      // a dark photographic surface, so light-mode's near-black `--fg`
-      // text would inherit down and become unreadable (title, artist,
-      // keycap labels, difficulty button text, etc. all collapse to
-      // black-on-black). Forcing `data-theme="dark"` on the card swaps
-      // every CSS theme var inside (`--fg`, `--surface`, borders) to
-      // the dark variants — same look the user already confirmed reads
-      // perfectly in dark mode, applied uniformly.
-      data-theme={ready && meta!.coverUrl ? "dark" : undefined}
       style={
         ready && meta!.coverUrl
           ? {
-              // Re-anchor `color` on the card itself so the freshly
-              // re-scoped dark `--fg` actually applies. Descendants
-              // inherit the resolved color value (not the CSS var),
-              // so without this re-declaration they'd keep body's
-              // near-black light-mode color even though the card
-              // itself is in dark mode.
-              color: "rgb(var(--fg))",
-              // Two-layer stack on top of the cover:
-              //   1. Vertical gradient — heavy dim at the title band
-              //      (top) and the Start button band (bottom) where
-              //      raw text sits directly on the cover, lighter in
-              //      the middle 35–65% band where the inner panels
-              //      (DIFFICULTY / BEST / METRONOME / VOLUME) supply
-              //      their own `bg-ink-900/50` backing so the cover
-              //      can show through between them.
-              //   2. Flat 0.20 dim across the whole card — a gentle
-              //      contrast floor so even bright anime keyart
-              //      can't punch the brand-blue accents into illegible
-              //      white-on-white.
+              // Theme-aware overlay. Tints the cover with the page's
+              // BASE color (`--bg`: cream in light mode, near-black
+              // in dark mode) so the wash blends with whatever theme
+              // the user is on, and the regular themed `--fg` text
+              // (inherited from <body>) stays readable in either
+              // direction without locking the card to one theme.
               //
-              // Previous pass stacked 0.78–0.97 + 0.45 across the
-              // whole card and crushed darker photographic covers
-              // (e.g. dim photo art) to flat black — the user
-              // couldn't see the cover at all. This version keeps
-              // the title/Start bands locked in for readability but
-              // lets the artwork breathe through the middle, matching
-              // the homepage card's "ambient cover" feel. 404s fall
-              // back to the card's own surface from `.brut-card` —
-              // nothing to handle in JS.
-              backgroundImage: `linear-gradient(180deg, rgba(4,5,8,0.90) 0%, rgba(4,5,8,0.45) 30%, rgba(4,5,8,0.45) 70%, rgba(4,5,8,0.92) 100%), linear-gradient(rgba(4,5,8,0.25), rgba(4,5,8,0.25)), url(${meta!.coverUrl})`,
+              // Two layers:
+              //   1. Vertical gradient — heavier wash at the title
+              //      band (top) and the Start button band (bottom)
+              //      where raw text sits directly on the cover,
+              //      lighter in the middle 30–70% band where the
+              //      inner panels (DIFFICULTY / BEST / METRONOME /
+              //      VOLUME) supply their own translucent backing so
+              //      the cover can show through between them.
+              //   2. Flat dim across the whole card — a gentle
+              //      contrast floor so bright cover highlights can't
+              //      punch through and fight the text/buttons.
+              //
+              // 404s fall back to the card's own surface from
+              // `.brut-card` — nothing to handle in JS.
+              backgroundImage: `linear-gradient(180deg, rgb(var(--bg) / 0.90) 0%, rgb(var(--bg) / 0.45) 30%, rgb(var(--bg) / 0.45) 70%, rgb(var(--bg) / 0.92) 100%), linear-gradient(rgb(var(--bg) / 0.25), rgb(var(--bg) / 0.25)), url(${meta!.coverUrl})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
             }
@@ -1077,18 +1059,27 @@ function StartCard({
             className="mt-2 font-display text-[1.97rem] sm:text-[2.36rem] font-bold leading-none"
             style={
               meta!.coverUrl
-                ? { textShadow: "0 2px 10px rgba(0,0,0,0.85)" }
+                ? {
+                    // Halo using the page base color — cream glow in
+                    // light mode (lifts the dark title off bright
+                    // cover highlights), black glow in dark mode
+                    // (same idea, inverted).
+                    textShadow: "0 2px 10px rgb(var(--bg) / 0.95)",
+                  }
                 : undefined
             }
           >
             {meta!.title}
           </h2>
           <p
-            className="mt-1 text-[1.05rem] text-bone-50/85"
+            className="mt-1 text-[1.05rem]"
             style={
               meta!.coverUrl
-                ? { textShadow: "0 1px 6px rgba(0,0,0,0.85)" }
-                : undefined
+                ? {
+                    color: "rgb(var(--fg) / 0.85)",
+                    textShadow: "0 1px 6px rgb(var(--bg) / 0.95)",
+                  }
+                : { color: "rgb(var(--fg) / 0.85)" }
             }
           >
             {meta!.artist}
