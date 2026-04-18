@@ -1221,37 +1221,43 @@ function HUD({
   const total = stats.totalNotes;
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-6xl items-start justify-between gap-3 p-3 sm:p-5">
-      <div className="brut-card-accent px-4 py-3 min-w-[160px]">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
-          Score
-        </p>
-        <p className="font-display text-2xl sm:text-3xl font-bold leading-none">
-          {stats.score.toLocaleString()}
-        </p>
-        <p className="mt-1 font-mono text-[10px] text-bone-50/60">
-          {accuracy.toFixed(1)}% · {stats.notesPlayed}/{total}
-        </p>
-        {best && (
-          <p className="mt-1 font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
-            track best {best.score.toLocaleString()}
+      {/* Combined SCORE + COMBO panel. Same accented chrome as before, but
+          combo sits inside the same frame with a dividing rule, so the
+          left HUD reads as one cohesive "performance" block instead of
+          two competing cards. */}
+      <div className="brut-card-accent flex items-stretch gap-4 px-4 py-3">
+        <div className="min-w-[150px]">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+            Score
           </p>
-        )}
-      </div>
-
-      <div className="brut-card flex flex-col items-center px-4 py-3 min-w-[120px]">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
-          Combo
-        </p>
-        <p
-          className={`font-display text-3xl sm:text-4xl font-bold leading-none ${
-            stats.combo > 0 ? "text-accent" : "text-bone-50/40"
-          }`}
-        >
-          {stats.combo}
-        </p>
-        <p className="mt-1 font-mono text-xs font-bold text-accent">
-          ×{stats.multiplier}
-        </p>
+          <p className="font-display text-2xl sm:text-3xl font-bold leading-none">
+            {stats.score.toLocaleString()}
+          </p>
+          <p className="mt-1 font-mono text-[10px] text-bone-50/60">
+            {accuracy.toFixed(1)}% · {stats.notesPlayed}/{total}
+          </p>
+          {best && (
+            <p className="mt-1 font-mono text-[9px] uppercase tracking-widest text-bone-50/50">
+              track best {best.score.toLocaleString()}
+            </p>
+          )}
+        </div>
+        <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
+        <div className="flex min-w-[80px] flex-col items-center justify-center">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-bone-50/60">
+            Combo
+          </p>
+          <p
+            className={`font-display text-3xl sm:text-4xl font-bold leading-none tabular-nums ${
+              stats.combo > 0 ? "text-accent" : "text-bone-50/40"
+            }`}
+          >
+            {stats.combo}
+          </p>
+          <p className="mt-1 font-mono text-xs font-bold text-accent">
+            ×{stats.multiplier}
+          </p>
+        </div>
       </div>
 
       <div className="brut-card flex w-[200px] flex-col gap-1 px-4 py-3">

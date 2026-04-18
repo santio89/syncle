@@ -227,6 +227,30 @@ const PARTICLE_BUDGET = 200;
 const SHOCKWAVE_BUDGET = 24;
 /** Lookahead window in seconds inside which a lane gate "primes" itself. */
 const ANTICIPATION_WINDOW_S = 0.18;
+/**
+ * Fade-out durations after a note "leaves the playfield".
+ *
+ * IMPORTANT: these two windows must combine cleanly. A note that the
+ * player ignores transitions through TWO states inside ~190ms:
+ *
+ *   t=0          → at the judge line (alpha 1, fully visible)
+ *   t=miss−ε     → still unjudged but well past the line (grace fade)
+ *   t=miss       → engine flips note.judged="miss" + records judgedAt
+ *
+ * If the two fades are separate, the moment the engine fires the auto-miss
+ * the alpha resets back to 1 and fades a second time — that "flicker pop"
+ * is exactly what reads as the note "still being there" to the player.
+ *
+ * Solution: take the MINIMUM of the two fades each frame. The grace fade
+ * keeps decaying continuously while the judged fade tracks just-hit
+ * notes that judged near the line. min() means the alpha never re-rises.
+ *
+ * Both use a fast ease-out curve (quadratic) so the note loses most of
+ * its visual weight in the first ~40% of the window — feels snappy
+ * rather than "lingering ghost note".
+ */
+const JUDGED_FADE_S = 0.10;
+const PAST_GRACE_S = 0.16;
 /** Combo thresholds that trigger a screen-wide milestone flash. */
 const COMBO_MILESTONES = [25, 50, 100, 200, 350, 500, 750, 1000] as const;
 
@@ -515,35 +539,73 @@ function drawHighway(
   for (let i = 0; i < len; i++) {
     const n = notes[i];
     if (!isHold(n)) continue;
-    if (n.tailJudged) continue;
     const headLook = n.t - songTime;
     const tailLook = (n.endT as number) - songTime;
     if (headLook > opts.leadTime + 0.05 && tailLook > opts.leadTime + 0.05) {
       if (headLook > opts.leadTime + 1) break;
       continue;
     }
-    if (tailLook < -0.2) continue;
-    drawHoldTrail(ctx, n, songTime, opts, hw, palette);
+    // Hold trail fade — same min() pattern as tap notes so the engine's
+    // auto-miss flip doesn't pop the alpha back to 1 mid-fade.
+    let trailAlpha = 1;
+    if (tailLook < 0) {
+      if (tailLook < -PAST_GRACE_S) continue;
+      const t = -tailLook / PAST_GRACE_S;
+      trailAlpha = (1 - t) * (1 - t);
+    }
+    if (n.tailJudged && n.tailJudgedAt !== undefined) {
+      const since = songTime - n.tailJudgedAt;
+      if (since >= JUDGED_FADE_S) continue;
+      if (since >= 0) {
+        const t = since / JUDGED_FADE_S;
+        const judgedAlpha = (1 - t) * (1 - t);
+        if (judgedAlpha < trailAlpha) trailAlpha = judgedAlpha;
+      }
+    }
+    if (trailAlpha <= 0.01) continue;
+    drawHoldTrail(ctx, n, songTime, opts, hw, palette, trailAlpha);
   }
   // Reset anticipation each frame; we re-derive it from the upcoming notes.
   for (let i = 0; i < rs.laneAnticipation.length; i++) rs.laneAnticipation[i] = 0;
   for (let i = 0; i < len; i++) {
     const n = notes[i];
-    if (n.judged) continue;
     const lookahead = n.t - songTime;
     if (lookahead > opts.leadTime + 0.05) {
       if (lookahead > opts.leadTime + 1) break;
       continue;
     }
-    if (lookahead < -0.2) continue;
-    // Compute anticipation: 0 outside the window, → 1 right at the line.
-    if (lookahead >= 0 && lookahead < ANTICIPATION_WINDOW_S) {
+    // Compute fade alpha as the MIN of the two pathways so the alpha
+    // is monotonically decreasing — see JUDGED_FADE_S/PAST_GRACE_S
+    // doc comment above for why this matters.
+    let alpha = 1;
+    if (lookahead < 0) {
+      if (lookahead < -PAST_GRACE_S) continue;
+      const t = -lookahead / PAST_GRACE_S; // 0..1
+      alpha = (1 - t) * (1 - t); // ease-out: drops fast, trails into 0
+    }
+    if (n.judged && n.judgedAt !== undefined) {
+      const since = songTime - n.judgedAt;
+      if (since >= JUDGED_FADE_S) continue;
+      if (since >= 0) {
+        const t = since / JUDGED_FADE_S; // 0..1
+        const judgedAlpha = (1 - t) * (1 - t);
+        if (judgedAlpha < alpha) alpha = judgedAlpha;
+      }
+    }
+    if (alpha <= 0.01) continue;
+    // Anticipation only fires for upcoming (non-judged) notes — once the
+    // note has passed or been hit, the gate shouldn't keep pulsing for it.
+    if (
+      !n.judged &&
+      lookahead >= 0 &&
+      lookahead < ANTICIPATION_WINDOW_S
+    ) {
       const a = 1 - lookahead / ANTICIPATION_WINDOW_S;
       // Quadratic ramp so the gate ramps up near the line, not linearly.
       const v = a * a;
       if (v > rs.laneAnticipation[n.lane]) rs.laneAnticipation[n.lane] = v;
     }
-    drawTapNote(ctx, n, lookahead, opts, hw, palette);
+    drawTapNote(ctx, n, lookahead, opts, hw, palette, alpha);
   }
 
   // Judgment line — subtle pulse on the beat AND on combo milestones.
@@ -607,6 +669,7 @@ function drawTapNote(
   opts: RenderOptions,
   hw: Highway,
   palette: ThemePalette,
+  alpha: number,
 ) {
   const progress = lookahead / opts.leadTime;
   const y = hw.topY + (hw.judgeY - hw.topY) * (1 - progress);
@@ -620,8 +683,12 @@ function drawTapNote(
   const color = LANE_COLORS[n.lane];
 
   ctx.save();
+  // Compositing the whole note via globalAlpha keeps the layered fills
+  // (ring + inner + core) fading together rather than each one having to
+  // bake the alpha into its own color string.
+  ctx.globalAlpha = alpha;
   ctx.shadowColor = color;
-  ctx.shadowBlur = 18;
+  ctx.shadowBlur = 18 * alpha;
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -651,6 +718,7 @@ function drawHoldTrail(
   opts: RenderOptions,
   hw: Highway,
   palette: ThemePalette,
+  alphaMul: number,
 ) {
   const headLook = n.t - songTime;
   const tailLook = (n.endT as number) - songTime;
@@ -689,9 +757,10 @@ function drawHoldTrail(
   const alpha = consumed ? 0.85 : n.tailJudged === "miss" ? 0.18 : 0.55;
 
   ctx.save();
+  ctx.globalAlpha = alphaMul;
   ctx.fillStyle = rgba(colorRgb, alpha);
   ctx.shadowColor = color;
-  ctx.shadowBlur = consumed ? 22 : 10;
+  ctx.shadowBlur = (consumed ? 22 : 10) * alphaMul;
   // Trapezoid between (xTail±wTail/2, yTail) and (xHead±wHead/2, yHead).
   ctx.beginPath();
   ctx.moveTo(xTail - wTail / 2, yTail);
@@ -792,9 +861,13 @@ function drawLaneGate(
   ctx.arc(x, y, innerCoreR, 0, Math.PI * 2);
   ctx.fill();
 
-  // When the lane is held the inside is filled with the lane color, so the
-  // label needs to ride on that fill (gateLabelOnFill); otherwise the
-  // label sits over the empty gate interior and uses the lane color itself.
+  // Label + arrow always render in the lane color so they stay legible on
+  // the dark gateInner regardless of held state. (Earlier versions tried
+  // to flip the color to gateLabelOnFill on press, but gateInner is the
+  // *same* tone as gateLabelOnFill in both themes — the label vanished.)
+  // When pressed/held we instead add a soft white shine: a glow halo
+  // around the glyph plus a small alpha bump. Reads as "the key lit up"
+  // rather than the letter going dark.
   // LETTER_DY / ARROW_DY position the pair so its visual midpoint lands on
   // (x, y) — the circle center. With "middle" baseline a 26px ExtraBold cap
   // is ~18px tall, the arrow is 11px tall, with a 4px gap between them:
@@ -804,7 +877,20 @@ function drawLaneGate(
   const ARROW_DY = 10;
   const ARROW_SIZE = 11;
 
-  ctx.fillStyle = held || holding ? palette.gateLabelOnFill : color;
+  // Press shine intensity — strongest on an active hold sustain, slightly
+  // softer on a normal keypress, fades out alongside the lane flash.
+  const shine = holding ? 1 : held ? 0.85 : flash * 0.6;
+
+  ctx.fillStyle = color;
+  if (shine > 0.05) {
+    // White-on-color glow halo: blooms the glyph silhouette without
+    // washing out the lane color underneath. The shadow stacks under the
+    // fill so the letter itself stays crisp.
+    ctx.shadowColor = `rgba(255,255,255,${(0.55 * shine).toFixed(3)})`;
+    ctx.shadowBlur = 14 * shine;
+  } else {
+    ctx.shadowBlur = 0;
+  }
   // 800 (ExtraBold) is the heaviest weight loaded for JetBrains Mono — see
   // app/layout.tsx. Asking for 900 here would silently fall back to 700
   // (the next loaded weight) and make the letter look the same as
@@ -817,18 +903,18 @@ function drawLaneGate(
 
   // Brutalist arrow indicator under the letter — drawn as a real canvas
   // path (not a font glyph) so it's pixel-identical to the SVG arrows used
-  // in the rest of the UI and respects the active theme palette. Slightly
-  // dimmer than the letter so the lane identity reads "letter-first".
-  const arrowColor = held || holding
-    ? withAlphaCss(palette.gateLabelOnFill, 0.78)
-    : rgba(colorRgb, 0.78);
+  // in the rest of the UI. Slightly dimmer than the letter so the lane
+  // identity reads "letter-first". Brightens on press for the same shine.
+  ctx.shadowBlur = 0;
+  const arrowAlpha = clamp(0.78 + shine * 0.22, 0, 1);
   drawArrow(
     ctx,
     LANE_ARROW_DIR[lane] ?? "down",
     x,
     y + ARROW_DY,
     ARROW_SIZE,
-    arrowColor,
+    rgba(colorRgb, arrowAlpha),
+    shine,
   );
   ctx.restore();
 }
@@ -843,6 +929,7 @@ function drawArrow(
   cy: number,
   size: number,
   strokeStyle: string,
+  shine: number = 0,
 ) {
   const half = size / 2;
   const head = Math.max(3, Math.round(size * 0.42));
@@ -856,7 +943,12 @@ function drawArrow(
   ctx.lineCap = "square";
   ctx.lineJoin = "miter";
   ctx.miterLimit = 4;
-  ctx.shadowBlur = 0;
+  if (shine > 0.05) {
+    ctx.shadowColor = `rgba(255,255,255,${(0.45 * shine).toFixed(3)})`;
+    ctx.shadowBlur = 8 * shine;
+  } else {
+    ctx.shadowBlur = 0;
+  }
 
   ctx.beginPath();
   if (dir === "left") {
@@ -1205,15 +1297,3 @@ function withAlpha(hex: string, a: number) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-/**
- * Same as withAlpha but accepts either "#rrggbb" OR "rgb(...)"-shaped CSS
- * strings — used for palette colors that may be either form depending on
- * how they were authored. Falls back to a parseable hex when it can.
- */
-function withAlphaCss(css: string, a: number): string {
-  if (css.startsWith("#")) return withAlpha(css, a);
-  // rgb(r,g,b) → rgba(r,g,b,a). Tolerates whitespace.
-  const m = css.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-  if (m) return `rgba(${m[1]},${m[2]},${m[3]},${a})`;
-  return css;
-}

@@ -348,7 +348,7 @@ export class AudioEngine {
     filt.frequency.value = 700;
 
     const env = this.ctx.createGain();
-    const peak = empty ? 0.10 : 0.18;
+    const peak = empty ? 0.11 : 0.20;
     env.gain.setValueAtTime(0, t);
     env.gain.linearRampToValueAtTime(peak, t + 0.005);
     env.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
@@ -368,12 +368,11 @@ export class AudioEngine {
    *   amountFactor    multiplier on song volume during the dip (0..1)
    *   durMs           total duration of the dip + recovery
    *   detuneCents     pitch drop on the source in cents (100 = 1 semitone).
-   *                   ~40 cents ≈ quarter-tone, reads as drunk/warped but
-   *                   recovers fast enough not to feel broken. Bumped up
-   *                   from the previous "no detune at all" so the miss
-   *                   actually sounds untuned, not just muffled.
+   *                   ~55 cents sits between a quarter- and half-tone:
+   *                   audibly off without sounding broken. Recovers fast
+   *                   so consecutive misses don't compound into a mess.
    */
-  duckSong(amountFactor = 0.4, durMs = 240, detuneCents = 40): void {
+  duckSong(amountFactor = 0.36, durMs = 260, detuneCents = 55): void {
     if (!this.songGain || !this.songFilter || !this.ctx) return;
     const t = this.ctx.currentTime;
     const dur = durMs / 1000;
@@ -388,7 +387,10 @@ export class AudioEngine {
     const f = this.songFilter.frequency;
     f.cancelScheduledValues(t);
     f.setValueAtTime(f.value, t);
-    f.linearRampToValueAtTime(700, t + 0.04);
+    // 650Hz cutoff sits between the original 700 and the harsher 600 —
+    // muffles the song just enough to feel physical without sounding
+    // underwater on consecutive misses.
+    f.linearRampToValueAtTime(650, t + 0.04);
     f.linearRampToValueAtTime(22000, t + dur);
 
     // Pitch wobble. Snap down fast (40ms), then ride back to 0 cents over

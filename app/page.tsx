@@ -282,17 +282,9 @@ export default function HomePage() {
           </div>
 
           <div className="brut-card p-4 sm:p-5">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="font-mono text-xs uppercase tracking-widest text-bone-50/60">
-                Your stats
-              </p>
-              <p
-                className="font-mono text-[9px] uppercase tracking-widest text-bone-50/30"
-                title="Synced globally once Firestore lands."
-              >
-                local · soon online
-              </p>
-            </div>
+            <p className="font-mono text-xs uppercase tracking-widest text-bone-50/60">
+              Your stats
+            </p>
             <div className="mt-3 space-y-2 font-mono text-sm">
               <Stat
                 label="tracks played"

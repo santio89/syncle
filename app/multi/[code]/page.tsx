@@ -171,8 +171,17 @@ export default function MultiRoomPage() {
   // (While conn is "connecting" we just show a spinner.)
   const needsJoin = conn === "connected" && !me;
 
+  // Gameplay phases need to break out of the page's max-width container so
+  // the canvas can fill the whole viewport (minus the header), matching the
+  // single-player experience. Lobby / loading / results stay in the
+  // constrained card layout because they're form-style screens.
+  const inGame =
+    me &&
+    snapshot &&
+    (snapshot.phase === "countdown" || snapshot.phase === "playing");
+
   return (
-    <main className="relative min-h-screen overflow-hidden">
+    <main className="relative flex h-screen w-screen flex-col overflow-hidden">
       <GradientBg />
 
       <header className="relative z-20 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-8 sm:py-4">
@@ -210,49 +219,73 @@ export default function MultiRoomPage() {
 
       <NoticeStack notices={notices} />
 
-      <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pt-6 pb-12 sm:px-6">
-        {needsJoin && (
-          <JoinForm
-            code={code}
-            name={pendingName}
-            onName={setPendingName}
-            onSubmit={handleJoin}
-            busy={joining}
-            error={joinError}
-          />
-        )}
+      {inGame ? (
+        // Full-bleed game area: canvas fills the rest of the viewport
+        // (header + this flex-1 region = 100vh). MultiGame draws its own
+        // overlays (score/combo top-left, scoreboard right) on top.
+        <div className="relative z-10 min-h-0 flex-1">
+          {me && snapshot && (
+            <RoomBody
+              code={code}
+              snapshot={snapshot}
+              scoreboard={scoreboard}
+              results={results}
+              me={me.id}
+              isHost={me.isHost}
+              actions={actions}
+              loadedChart={loadedChart}
+              loadProgress={loadProgress}
+              loadError={loadError}
+              loadDeadline={loadDeadline}
+              selectedMode={selectedMode}
+            />
+          )}
+        </div>
+      ) : (
+        <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 overflow-y-auto px-4 pt-6 pb-12 sm:px-6">
+          {needsJoin && (
+            <JoinForm
+              code={code}
+              name={pendingName}
+              onName={setPendingName}
+              onSubmit={handleJoin}
+              busy={joining}
+              error={joinError}
+            />
+          )}
 
-        {conn !== "connected" && !needsJoin && <ConnectingCard conn={conn} />}
+          {conn !== "connected" && !needsJoin && <ConnectingCard conn={conn} />}
 
-        {me && snapshot && (
-          <RoomBody
-            code={code}
-            snapshot={snapshot}
-            scoreboard={scoreboard}
-            results={results}
-            me={me.id}
-            isHost={me.isHost}
-            actions={actions}
-            loadedChart={loadedChart}
-            loadProgress={loadProgress}
-            loadError={loadError}
-            loadDeadline={loadDeadline}
-            selectedMode={selectedMode}
-          />
-        )}
+          {me && snapshot && (
+            <RoomBody
+              code={code}
+              snapshot={snapshot}
+              scoreboard={scoreboard}
+              results={results}
+              me={me.id}
+              isHost={me.isHost}
+              actions={actions}
+              loadedChart={loadedChart}
+              loadProgress={loadProgress}
+              loadError={loadError}
+              loadDeadline={loadDeadline}
+              selectedMode={selectedMode}
+            />
+          )}
 
-        {lastError && (
-          <div className="brut-card-accent flex items-start justify-between gap-3 p-3">
-            <p className="font-mono text-xs">
-              <span className="text-rose-400">[{lastError.code}]</span>{" "}
-              {lastError.message}
-            </p>
-            <button onClick={clearError} className="font-mono text-[10px] uppercase tracking-widest text-bone-50/70 hover:text-accent">
-              dismiss
-            </button>
-          </div>
-        )}
-      </div>
+          {lastError && (
+            <div className="brut-card-accent flex items-start justify-between gap-3 p-3">
+              <p className="font-mono text-xs">
+                <span className="text-rose-400">[{lastError.code}]</span>{" "}
+                {lastError.message}
+              </p>
+              <button onClick={clearError} className="font-mono text-[10px] uppercase tracking-widest text-bone-50/70 hover:text-accent">
+                dismiss
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </main>
   );
 }
@@ -434,9 +467,21 @@ function JoinForm({
       <button
         onClick={onSubmit}
         disabled={busy || !name.trim()}
-        className="brut-btn-accent mt-4 w-full px-4 py-3 disabled:opacity-50"
+        className="brut-btn-accent group mt-4 inline-flex w-full items-center justify-center gap-2 px-4 py-3 disabled:opacity-50"
       >
-        {busy ? "Joining…" : "→ Join room"}
+        {busy ? (
+          <span>Joining…</span>
+        ) : (
+          <>
+            <span>Join room</span>
+            <ArrowIcon
+              direction="right"
+              size={14}
+              strokeWidth={2.75}
+              className="transition-transform duration-200 group-hover:translate-x-0.5"
+            />
+          </>
+        )}
       </button>
       {error && (
         <p className="mt-3 border-2 border-rose-500 p-2 font-mono text-xs text-rose-400">

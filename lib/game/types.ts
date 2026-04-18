@@ -68,6 +68,8 @@ export interface Note {
   holding?: boolean;
   /** Internal: tail judgment for a hold note (mirrors `judged` for taps). */
   tailJudged?: Judgment;
+  /** Internal: songTime at which the tail was judged (for fade-out). */
+  tailJudgedAt?: number;
 }
 
 export type Judgment = "perfect" | "great" | "good" | "miss";

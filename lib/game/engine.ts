@@ -199,6 +199,7 @@ export class GameState {
     songTime: number,
   ): JudgmentEvent {
     note.tailJudged = judgment;
+    note.tailJudgedAt = songTime;
     note.holding = false;
     this.tallyJudgment(judgment);
 

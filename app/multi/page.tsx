@@ -214,13 +214,23 @@ export default function MultiEntryPage() {
               <button
                 onClick={handleJoin}
                 disabled={!canJoin}
-                className="brut-btn px-4 py-3 disabled:opacity-50"
+                className="brut-btn group inline-flex items-center justify-center gap-2 px-4 py-3 disabled:opacity-50"
               >
-                {busy === "join"
-                  ? "Joining…"
-                  : conn !== "connected"
-                    ? "Waking server…"
-                    : "→ Join"}
+                {busy === "join" ? (
+                  <span>Joining…</span>
+                ) : conn !== "connected" ? (
+                  <span>Waking server…</span>
+                ) : (
+                  <>
+                    <span>Join</span>
+                    <ArrowIcon
+                      direction="right"
+                      size={14}
+                      strokeWidth={2.75}
+                      className="transition-transform duration-200 group-hover:translate-x-0.5"
+                    />
+                  </>
+                )}
               </button>
             </div>
           </div>
