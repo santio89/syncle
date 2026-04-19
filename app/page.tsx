@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
 import { MultiButton, MultiIcon } from "@/components/MultiButton";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -31,6 +31,12 @@ type LoadState =
 
 export default function HomePage() {
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
+  /**
+   * Ref to the play CTA. Passed to `<GradientBg anchorRef={playRef} />`
+   * so the gradient canvas centers itself on the CTA via JS measurement
+   * (ResizeObserver + scroll/resize listeners), independent of layout.
+   */
+  const playRef = useRef<HTMLAnchorElement>(null);
   /** Lifetime best for the random song that just loaded (any mode). */
   const [trackBest, setTrackBest] = useState<RunBest | null>(null);
   /** All-time aggregates: tracks played, total runs, best ever. */
@@ -96,7 +102,12 @@ export default function HomePage() {
 
   return (
     <main className="relative flex min-h-[100dvh] flex-col overflow-x-hidden">
-      <GradientBg />
+      {/* GradientBg's wrapper fills <main> via `absolute inset-0`, the
+          canvas fills the wrapper, and the cluster lives at
+          JS-tracked pixel coordinates around the play CTA's center.
+          Nothing in this stack has a hard pixel edge inside the
+          viewport, so there's no cut to worry about. */}
+      <GradientBg anchorRef={playRef} />
 
       <header className="relative z-10 flex shrink-0 items-center justify-between gap-4 border-b-2 border-bone-50/90 px-4 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
@@ -160,6 +171,7 @@ export default function HomePage() {
           </div>
 
           <Link
+            ref={playRef}
             href="/play"
             aria-label="Play this track"
             // Custom tooltip (TooltipLayer) showing full title + artist
@@ -171,7 +183,10 @@ export default function HomePage() {
                 ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}`
                 : undefined
             }
-            className="brut-play-cta flex h-[8.4rem] w-full flex-row items-center justify-center gap-4 px-6 sm:aspect-square sm:h-auto sm:w-[13.65rem] sm:flex-col sm:gap-1 sm:px-4 md:w-[14.7rem] lg:w-[16.8rem] xl:w-[18.9rem] shrink-0 justify-self-center md:justify-self-end"
+            // `relative z-10` keeps the CTA above the GradientBg canvas,
+            // which is `pointer-events-none absolute inset-0` on <main>
+            // and JS-positioned to center on this very element.
+            className="brut-play-cta relative z-10 flex h-[8.4rem] w-full flex-row items-center justify-center gap-4 px-6 sm:aspect-square sm:h-auto sm:w-[13.65rem] sm:flex-col sm:gap-1 sm:px-4 md:w-[14.7rem] lg:w-[16.8rem] xl:w-[18.9rem] shrink-0 justify-self-center md:justify-self-end"
           >
             <span className="font-display text-[3.95rem] leading-none translate-x-[2px] sm:text-[4.75rem] sm:-translate-y-1 lg:text-[6.3rem] shrink-0">
               ▶
