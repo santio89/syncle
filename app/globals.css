@@ -191,8 +191,23 @@ summary {
  * paragraphs so the browser's slower line-break optimizer is reserved
  * for prose, not single-line UI text.
  * ------------------------------------------------------------------------- */
+/* Headings get balanced wrapping (so a two-line title doesn't leave a
+ * one-word orphan on the second row) but DELIBERATELY keep their full
+ * line box. Trimming the half-leading off an <h1>/<h2> visually
+ * collapses the gap between the title and the subtitle/paragraph that
+ * follows it — the implicit breathing room from line-height was doing
+ * real layout work, not just decorating the glyph. */
+:where(h1, h2, h3, h4, h5, h6) {
+  text-wrap: balance;
+}
+
+/* Trim is reserved for genuine "single-line UI primitives" — things
+ * the user perceives as a chip, badge, button, label, tooltip, etc.
+ * For these, the half-leading is purely decorative and removing it
+ * makes the glyph rest dead-center inside its container. Headings,
+ * subtitles, body copy, and other prose stay untrimmed (see the rule
+ * above) so the natural typographic rhythm between blocks is preserved. */
 :where(
-  h1, h2, h3, h4, h5, h6,
   button,
   label,
   summary,
