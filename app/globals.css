@@ -86,21 +86,129 @@
   --dur-theme: 220ms;
 }
 
+/* ---------------------------------------------------------------------------
+ * Universal reset
+ *
+ * Tailwind's Preflight covers most of this, but we re-declare the
+ * canonical "no-margin / no-padding / border-box" trio explicitly so a
+ * non-Tailwind dependency (a CKEditor-style third-party widget, an
+ * embedded iframe sibling, etc.) can never re-introduce default
+ * margins. Cheaper than auditing every component to make sure it
+ * neutralizes its own defaults.
+ *
+ * IMPORTANT: nothing else in this file restates `box-sizing` — the rule
+ * below is the single source of truth.
+ * ------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Media defaults.
+ *  - `max-width: 100%` clamps to the parent so a stray un-sized <img>
+ *    or <video> can never trigger horizontal scroll on the page.
+ *  - `height: auto` keeps the aspect ratio when the width is the
+ *    binding constraint (without it the intrinsic height "wins" and
+ *    you get squashed art).
+ *  - `display: block` removes the inline-baseline gap that browsers
+ *    leave below replaced elements (the classic "3px below my image"
+ *    bug from descenders living on the same baseline). */
+img,
+video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 html,
 body {
   background: rgb(var(--bg));
   color: rgb(var(--fg));
   font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  /* Crisper glyph edges across platforms.
+   *  - `-webkit-font-smoothing: antialiased` thins strokes on Chromium /
+   *    Safari (subpixel AA off, grayscale AA on) so light-on-dark text
+   *    doesn't read as bold.
+   *  - `-moz-osx-font-smoothing: grayscale` is the Firefox-on-macOS
+   *    sibling. No-op on Linux/Windows Firefox where the system already
+   *    does grayscale AA.
+   *  - `text-rendering: optimizeLegibility` opts into ligatures + kerning
+   *    for prose-length text. (Browsers automatically fall back to the
+   *    fast path for very large bodies of text, so this is safe to set
+   *    document-wide.) */
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-}
-
-* {
-  box-sizing: border-box;
+  /* Document-wide rhythm. 1.4 is tight enough to keep card UI compact
+   * but loose enough that paragraphs in dropdowns / chat bubbles never
+   * feel cramped. Individual components can still override. */
+  line-height: 1.4;
 }
 
 body {
   min-height: 100vh;
+}
+
+/* Form / interactive elements ship with their own user-agent font + color
+ * resets that ignore the page's typography. Forcing inheritance keeps
+ * <button>, <input>, <select>, <textarea>, <a>, <label>, <summary> in
+ * lockstep with the surrounding text — no surprise serifs in a button
+ * inside a card, no Chrome-blue link override, no native input cream
+ * showing through on a dark surface. Tailwind's Preflight does most of
+ * this; we restate it so any non-Preflight CSS layer (third-party
+ * widgets, MD-rendered HTML, etc.) inherits the same baseline. */
+input,
+textarea,
+select,
+button,
+a,
+label,
+summary {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+/* ---------------------------------------------------------------------------
+ * Typography fine-tuning
+ *
+ * `text-box-trim` (shipping in Chromium 133, Firefox 133, Safari TP)
+ * strips the leading/trailing half-leading from a line box so a single
+ * line of text visually rests in the geometric center of its container
+ * instead of sitting slightly low. Critical for the small UI primitives
+ * — pills, tags, duration chips, button labels — where the off-center
+ * baseline reads as a layout bug. Browsers that don't support the
+ * property just ignore it; no fallback needed.
+ *
+ * `text-wrap: balance` keeps wrapped headings / button labels evenly
+ * distributed across lines instead of leaving a one-word orphan on the
+ * last row.
+ *
+ * `text-wrap: pretty` is the long-form sibling — applied only to
+ * paragraphs so the browser's slower line-break optimizer is reserved
+ * for prose, not single-line UI text.
+ * ------------------------------------------------------------------------- */
+:where(h1, h2, h3, h4, h5, h6,
+       button,
+       label,
+       summary,
+       .brut-btn,
+       .brut-btn-accent,
+       .brut-play-cta,
+       .brut-tooltip,
+       .icon-btn) {
+  text-wrap: balance;
+  /* Shorthand: trim both edges down to the cap-height (top) and the
+   * alphabetic baseline (bottom). Matches what designers eyeball when
+   * they vertically center text inside a small box. */
+  text-box: trim-both cap alphabetic;
+}
+
+p {
+  text-wrap: pretty;
 }
 
 /* ---------------------------------------------------------------------------
