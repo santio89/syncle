@@ -1780,14 +1780,21 @@ function HUD({
           itself was bumped up a few pixels (`h-3.5 sm:h-[1.05rem]`)
           so it reads as the headline status indicator of the card
           instead of a thin afterthought. */}
-      <div className="brut-card-accent flex flex-col gap-2 px-2.5 py-2 sm:gap-2.5 sm:px-3 sm:py-3 xl:gap-3 xl:px-4">
+      {/* Both side cards share the same explicit width tier
+          (`w-[156px] → 220 → 244 → 268`) so the left "performance"
+          and right "settings" panels read as a matched pair. The
+          width is also calibrated to leave clear breathing room
+          between each card and the highway/fret on every viewport
+          (the cards used to grow with their content and creep onto
+          the trapezoid edges on wider monitors). */}
+      <div className="brut-card-accent flex w-[156px] flex-col gap-2 px-2.5 py-2 sm:w-[220px] sm:gap-2.5 sm:px-3 sm:py-3 lg:w-[244px] xl:w-[268px] xl:gap-3 xl:px-4">
         {/* Top row keeps the original score+combo split — same
             min-widths, just nested inside the new vertical card so
             the rock meter can stack below. The two columns rely on
             their own typographic weight (big numbers + uppercase
             labels) to read as separate stats — no rule needed. */}
         <div className="flex items-stretch gap-2 sm:gap-3 xl:gap-4">
-          <div className="min-w-[89px] sm:min-w-[140px] xl:min-w-[153px]">
+          <div className="min-w-[80px] sm:min-w-[116px] xl:min-w-[132px]">
             <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
               Score
             </p>
@@ -1813,7 +1820,7 @@ function HUD({
               property identical means the two columns read as a
               matched pair — same beat, same weight, just two
               different stats. */}
-          <div className="min-w-[57px] sm:min-w-[74px] xl:min-w-[81px]">
+          <div className="min-w-[48px] sm:min-w-[68px] xl:min-w-[80px]">
             <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
               Combo
             </p>
@@ -1894,7 +1901,7 @@ function HUD({
           menu — same `<label>` wrap, same accent-colored native
           checkbox — so the player learns the affordance once and
           recognizes it in both places. */}
-      <div className="brut-card flex w-[143px] flex-col gap-2 px-2.5 py-2.5 sm:w-[212px] sm:gap-2.5 sm:px-3.5 sm:py-3.5 xl:w-[228px]">
+      <div className="brut-card flex w-[156px] flex-col gap-2 px-2.5 py-2.5 sm:w-[220px] sm:gap-2.5 sm:px-3.5 sm:py-3.5 lg:w-[244px] xl:w-[268px]">
         {/* "Now playing" strip — single source of truth for which
             song is rolling once the StartCard is gone. Title/artist
             truncate via `min-w-0` so the card border stays sharp at
@@ -1930,16 +1937,29 @@ function HUD({
                 ❚❚<span className="hidden sm:inline"> ESC</span>
               </button>
             </div>
+            {/* Title and artist wrap up to two lines and then
+                ellipsize via `line-clamp-2`. The previous single-line
+                `truncate` aggressively hid most of the song name once
+                the card was capped to a fixed width — two lines are
+                enough to read most osu! titles in full while keeping
+                the strip compact. The full "Song — Artist" string is
+                always available on hover via the tooltip. */}
+            {/* `pointer-events-auto` is critical — the HUD strip
+                wrapper is `pointer-events-none` so it doesn't trap
+                clicks over the highway, which means hover events
+                never land on these <p>s by default. Re-enabling
+                pointer events on the title/artist lets the global
+                tooltip layer pick them up on hover. */}
             <p
-              className="mt-2 truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
-              data-tooltip={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
+              className="pointer-events-auto mt-2 line-clamp-2 break-words font-mono text-[10.2px] font-bold leading-tight text-bone-50/90 sm:text-[11.2px]"
+              data-tooltip={`Song: ${songTitle}${songArtist ? `\nArtist: ${songArtist}` : ""}`}
             >
               {songTitle}
             </p>
             {songArtist && (
               <p
-                className="mt-0.5 truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
-                data-tooltip={songArtist}
+                className="pointer-events-auto mt-1 line-clamp-2 break-words font-mono text-[9.2px] leading-tight text-bone-50/50 sm:text-[10.2px]"
+                data-tooltip={`Song: ${songTitle}\nArtist: ${songArtist}`}
               >
                 {songArtist}
               </p>

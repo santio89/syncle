@@ -796,7 +796,13 @@ function CanvasPane({
               smaller `gap-3` (12 px) on mobile keeps the column
               from eating too much vertical real estate on short
               landscape phones. */}
-          <div className="flex w-fit flex-col gap-3 sm:gap-5">
+          {/* Locked-down width so the left column always matches the
+              right scoreboard's card width — the two side panels read
+              as a balanced pair, and neither ever creeps onto the
+              fret/highway. The values track the single-player HUD
+              (`Game.tsx`) exactly so solo and multi feel like the
+              same UI at every breakpoint. */}
+          <div className="flex w-[156px] flex-col gap-3 sm:w-[220px] sm:gap-5 lg:w-[244px] xl:w-[268px]">
             <PerformancePanel
               stats={stats}
               chartMode={mode}
@@ -1002,14 +1008,20 @@ function ScoreboardSidebar({
           the screen edge on small screens (where every px of side area
           counts) and only adds the original 20 px of breathing room on
           lg+ where the band stops growing relative to the highway. */}
+      {/* Padding and inner gap mirror the HUD cards (`px-2.5 py-2.5
+          sm:px-3.5 sm:py-3.5`, `gap-2 sm:gap-2.5`) so the live
+          scoreboard reads as the same UI vocabulary as the score /
+          settings cards opposite it. The list rows also use the same
+          `px-2.5 py-2` rhythm as the settings tiles for consistent
+          visual density. */}
       <aside
-        className="brut-card pointer-events-auto absolute right-3 top-3 flex max-h-[calc(100%-1.5rem)] w-[240px] max-w-[40vw] flex-col p-4 sm:right-3 sm:top-5 sm:max-h-[calc(100%-2.5rem)] sm:w-[264px] sm:p-5 lg:right-5 lg:w-[288px] xl:w-[310px]"
+        className="brut-card pointer-events-auto absolute right-3 top-3 flex max-h-[calc(100%-1.5rem)] w-[156px] max-w-[40vw] flex-col gap-2 px-2.5 py-2.5 sm:right-3 sm:top-5 sm:max-h-[calc(100%-2.5rem)] sm:w-[220px] sm:gap-2.5 sm:px-3.5 sm:py-3.5 lg:right-5 lg:w-[244px] xl:w-[268px]"
       >
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex items-baseline justify-between gap-2">
         <p className="font-mono text-[10.2px] uppercase tracking-[0.4em] text-accent">
           ░ Live
         </p>
-        <span className="font-mono text-[10.2px] uppercase tracking-widest text-bone-50/40">
+        <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/40 sm:text-[10.2px]">
           {entries.filter((e) => e.online).length} online
         </span>
       </div>
@@ -1018,13 +1030,13 @@ function ScoreboardSidebar({
           stretching down to the gameplay canvas ceiling on a 4K monitor
           when a 50-player room is full. The brutalist scrollbar (wired
           globally in globals.css) takes over once the cap is hit. */}
-      <ol className="mt-3 max-h-72 flex-1 space-y-1.5 overflow-y-auto pr-1">
+      <ol className="max-h-72 flex-1 space-y-1.5 overflow-y-auto pr-1">
         {entries.map((e, i) => {
           const isMe = e.id === me;
           return (
             <li
               key={e.id}
-              className={`flex items-center gap-2 border-2 px-2.5 py-1.5 font-mono transition-colors ${
+              className={`flex items-center gap-2 border-2 px-2.5 py-2 font-mono transition-colors ${
                 isMe
                   ? "border-accent bg-accent/10"
                   : e.finished
@@ -1130,40 +1142,43 @@ function PerformancePanel({
     // freezing the rest of the room). The rock meter bar is bumped up
     // (`h-3.5 sm:h-[1.05rem]`) so it reads as the headline status
     // indicator of the card instead of a thin afterthought.
+    // Card layout / spacing is a 1:1 mirror of the single-player
+    // PerformancePanel (`Game.tsx`). The vertical separator between
+    // SCORE and COMBO and the horizontal rule above the rock-meter
+    // group were removed because the parent card's `gap-*` already
+    // creates visual separation — same vocabulary as solo. The combo
+    // column also drops `items-center justify-center` so it aligns
+    // top-left like the score column, with the same `mt-1.5` rhythm
+    // and identical font sizes (color is the only diff).
     <div className="brut-card-accent flex w-full flex-col gap-2 px-2.5 py-2 sm:gap-2.5 sm:px-3 sm:py-3 xl:gap-3 xl:px-4">
       <div className="flex items-stretch gap-2 sm:gap-3 xl:gap-4">
-        <div className="min-w-[89px] sm:min-w-[140px] xl:min-w-[153px]">
+        <div className="min-w-[80px] sm:min-w-[116px] xl:min-w-[132px]">
           <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Score
           </p>
-          <p className="font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
+          <p className="mt-1.5 font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
             {stats.score.toLocaleString()}
           </p>
-          <p className="mt-1 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
+          <p className="mt-1.5 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
             {accuracy.toFixed(1)}% · {stats.notesPlayed}/{stats.totalNotes}
           </p>
         </div>
-        <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-        <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[74px] xl:min-w-[81px]">
+        <div className="min-w-[48px] sm:min-w-[68px] xl:min-w-[80px]">
           <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Combo
           </p>
           <p
-            className={`font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
+            className={`mt-1.5 font-display text-[1.27rem] font-bold leading-none tabular-nums sm:text-[1.91rem] ${
               stats.combo > 0 ? "text-accent" : "text-bone-50/40"
             }`}
           >
             {stats.combo}
           </p>
-          <p className="mt-1 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
+          <p className="mt-1.5 font-mono text-[9.2px] text-accent sm:text-[10.2px]">
             ×{stats.multiplier}
           </p>
         </div>
       </div>
-      {/* Faint rule separates score/combo numbers from the rock
-          meter group below — without it the two halves of the card
-          look like one big block of mixed types. */}
-      <div className="h-px w-full bg-bone-50/15" aria-hidden />
       {/* Rock meter label on the left, difficulty tag on the right
           — the tag tells the player which tier they're actually
           playing right now and lives next to the rock meter (the
@@ -1253,30 +1268,45 @@ function HealthPanel({
   songProgress: number;
 }) {
   return (
-    <div className="brut-card flex w-full flex-col gap-1.5 px-2.5 py-2 sm:gap-2 sm:px-3 sm:py-3">
-      {/* "Now playing" strip — see Game.tsx HUD for the rationale (single
-          on-screen reminder of what song is rolling once the lobby card is
-          gone). In multi we prefer the locally-loaded chart's metadata
-          when available, falling back to the room snapshot's `selectedSong`
-          so the strip is populated even before the audio buffer is ready.
-          The difficulty tag was lifted out of this block and now lives
-          next to the rock meter in `PerformancePanel`, since difficulty
-          is gameplay state rather than song metadata. */}
+    // Card outer padding/gap mirrors the single-player settings card
+    // (`px-2.5 py-2.5 sm:px-3.5 sm:py-3.5`, `gap-2 sm:gap-2.5`) so the
+    // two HUDs read as the same UI. The previous tighter values made
+    // the multi card look more cramped than its solo twin (caption→
+    // title→artist→progress all glued together), even though the
+    // contents were identical.
+    <div className="brut-card flex w-full flex-col gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3.5 sm:py-3.5">
+      {/* "Now playing" strip — see Game.tsx HUD for the rationale.
+          In multi we prefer the locally-loaded chart's metadata when
+          available, falling back to the room snapshot's `selectedSong`
+          so the strip is populated even before the audio buffer is
+          ready. Spacing inside the strip (caption / title / artist /
+          progress) carries explicit `mt-*` values that match the
+          single-player HUD beat-for-beat — that beat is the source of
+          visual coherence between the two modes. The bottom border /
+          padding on the wrapper was removed because the parent card's
+          `gap-*` already separates this strip from the settings tiles
+          below (same as single). */}
       {songTitle && (
-        <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
+        <div className="flex min-w-0 flex-col">
           <p className="truncate font-mono text-[8.2px] uppercase tracking-widest text-bone-50/45 sm:text-[9.2px]">
             ♪ Now playing
           </p>
+          {/* Two-line clamp + ellipsis (matches the single-player
+              HUD). Full "Song / Artist" text is on hover via the
+              tooltip — same wording as the landing-page card so the
+              user learns one pattern. `pointer-events-auto` is
+              required because the HUD wrapper is `pointer-events-
+              none` (so it doesn't trap clicks over the highway). */}
           <p
-            className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
-            data-tooltip={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
+            className="pointer-events-auto mt-2 line-clamp-2 break-words font-mono text-[10.2px] font-bold leading-tight text-bone-50/90 sm:text-[11.2px]"
+            data-tooltip={`Song: ${songTitle}${songArtist ? `\nArtist: ${songArtist}` : ""}`}
           >
             {songTitle}
           </p>
           {songArtist && (
             <p
-              className="truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
-              data-tooltip={songArtist}
+              className="pointer-events-auto mt-1 line-clamp-2 break-words font-mono text-[9.2px] leading-tight text-bone-50/50 sm:text-[10.2px]"
+              data-tooltip={`Song: ${songTitle}\nArtist: ${songArtist}`}
             >
               {songArtist}
             </p>
@@ -1289,7 +1319,7 @@ function HealthPanel({
               the underlying truth, so all clients see the bar
               advance in lockstep within audio-sync tolerance. */}
           {songDuration && songDuration > 0 && (
-            <div className="mt-1.5 flex items-center gap-1.5">
+            <div className="mt-2.5 flex items-center gap-2">
               <div
                 className="relative h-[3px] flex-1 border border-bone-50/25 bg-bone-50/5"
                 role="progressbar"
@@ -1319,7 +1349,7 @@ function HealthPanel({
           aesthetic as the StartCard's pre-game toggle tiles, just
           scaled down for HUD density. */}
       <label
-        className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5"
+        className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
         data-tooltip="Toggle metronome (M)"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
@@ -1335,7 +1365,7 @@ function HealthPanel({
         />
       </label>
       <label
-        className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5"
+        className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
         data-tooltip="Toggle input feedback (N)"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
@@ -1361,7 +1391,7 @@ function HealthPanel({
       <button
         type="button"
         onClick={onCycleFpsLock}
-        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5 text-left sm:flex"
+        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
         data-tooltip={
           fpsLock == null
             ? "FPS lock off — click to cap at 30 FPS"
@@ -1388,7 +1418,7 @@ function HealthPanel({
           {fpsLock == null ? "OFF" : fpsLock}
         </span>
       </button>
-      <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5">
+      <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2">
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           vol
         </span>
