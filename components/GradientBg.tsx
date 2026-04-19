@@ -34,24 +34,31 @@ type Blob = {
 // Anchor coordinates roughly correspond to the home-page layout:
 //   right-center → play button area
 //   bottom-left/right → today's track + stats cards
+//
+// Alphas land between the original (too flat — page felt fully black) and
+// the first bump pass (too punchy — glow read like a spotlight). Combined
+// with the 48px CSS blur this gives a quiet ambient lift to the corners
+// of the page without competing with foreground text or the cards.
 const BLOBS: Blob[] = [
   // Big soft glow behind the play button (right side, vertically centered).
+  // Slightly wider radius than the original so the glow bleeds past the
+  // CTA edges and reads as backlight rather than a tight halo.
   {
     cx: 0.78, cy: 0.42,
     ax: 0.025, ay: 0.02,
     freq: 0.35, phase: 0.0,
-    r: 0.28,
+    r: 0.30,
     hue: { var: "--accent" },
-    alpha: 0.16,
+    alpha: 0.21,
   },
   // Today's track card (lower-left).
   {
     cx: 0.32, cy: 0.82,
     ax: 0.03, ay: 0.018,
     freq: 0.27, phase: 1.4,
-    r: 0.22,
+    r: 0.24,
     hue: { var: "--accent" },
-    alpha: 0.10,
+    alpha: 0.14,
   },
   // Stats card (lower-right). Static violet — intentional cool/cold split
   // from the accent so the lower-right corner has its own color identity.
@@ -59,18 +66,18 @@ const BLOBS: Blob[] = [
     cx: 0.78, cy: 0.84,
     ax: 0.02, ay: 0.022,
     freq: 0.32, phase: 2.9,
-    r: 0.16,
-    hue: "100, 90, 200",
-    alpha: 0.06,
+    r: 0.17,
+    hue: "120, 100, 220",
+    alpha: 0.10,
   },
   // Tiny accent behind the "SYNCLE" wordmark (upper-left).
   {
     cx: 0.22, cy: 0.32,
     ax: 0.015, ay: 0.012,
     freq: 0.22, phase: 0.7,
-    r: 0.18,
+    r: 0.19,
     hue: { var: "--accent" },
-    alpha: 0.05,
+    alpha: 0.09,
   },
 ];
 
