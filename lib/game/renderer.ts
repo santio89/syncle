@@ -280,16 +280,37 @@ interface RenderCache {
   visBottomRightX: number;
   /** Per-lane judge-line X (pre-computed for particle spawn). */
   laneX: number[];
+  /**
+   * Per-lane TOP and BOTTOM X of the trapezoid edges. Used by the note
+   * + hold-trail draw paths to interpolate a perspective-correct X
+   * along the highway:
+   *   x(progress) = lerp(laneXTop[lane], laneXBot[lane], 1 - progress)
+   * Pre-computing the endpoints (which depend only on lane index +
+   * highway geometry, both invariant per frame) drops 4 `lerp` calls
+   * per visible note per frame to 1. On a dense chart with ~40 visible
+   * notes that's ~160 multiplies + 80 adds eliminated per frame.
+   */
+  laneXTop: number[];
+  laneXBot: number[];
   /** Per-(N-1) lane separator endpoint pairs.
    *  Six `lerp()` calls per separator per frame were redundant since the
    *  highway geometry only changes on resize. Pre-baked here so the
    *  separator pass becomes a tight stroke loop. */
   separatorTopX: number[];
   separatorBotX: number[];
+  /** Pre-parsed beat-dot idle color (palette.beatDotIdle). The dot draws
+   *  every frame, and the previous code re-parsed the hex string every
+   *  frame via `hexToRgb`. Cached here it's a one-time cost per resize/
+   *  theme swap. */
+  beatDotIdleRgb: RGB;
 }
 
 const PARTICLE_BUDGET = 200;
 const SHOCKWAVE_BUDGET = 24;
+/** Pre-computed `Math.PI * 2` — used by every arc() call in the hot path
+ *  (notes, gates, particles, shockwaves, beat dot). Saves a multiply per
+ *  arc on dense frames (~50+ arcs/frame). */
+const TAU = Math.PI * 2;
 /** Lookahead window in seconds inside which a lane gate "primes" itself. */
 const ANTICIPATION_WINDOW_S = 0.18;
 /**
@@ -541,7 +562,7 @@ export function drawFrame(
 
     drawCanvasCombo(ctx, rs, cache, palette);
   drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache);
-  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette);
+  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette, cache);
   drawMilestoneVignette(ctx, rs, W, H, cache);
 }
 
@@ -697,9 +718,17 @@ function ensureCache(
   railGradient.addColorStop(1, rgba(palette.accentRgb, BOTTOM_FADE_FLOOR));
 
   const laneX: number[] = [];
+  const laneXTop: number[] = [];
+  const laneXBot: number[] = [];
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
     const f = (i + 0.5) / MAIN_LANE_COUNT;
+    // Bottom (= judge-line) X is what particles + lane gates use.
     laneX.push(lerp(bottomLeftX, bottomRightX, f));
+    // Top + bottom edges of the trapezoid for this lane — used by
+    // drawTapNote / drawHoldTrail to lerp the X along note progress
+    // without re-deriving the endpoints per note per frame.
+    laneXTop.push(lerp(topLeftX, topRightX, f));
+    laneXBot.push(lerp(bottomLeftX, bottomRightX, f));
   }
   const separatorTopX: number[] = [];
   const separatorBotX: number[] = [];
@@ -730,8 +759,9 @@ function ensureCache(
     topY, judgeY,
     topYVisual, bottomY, bottomYVisual,
     visTopLeftX, visTopRightX, visBottomLeftX, visBottomRightX,
-    laneX,
+    laneX, laneXTop, laneXBot,
     separatorTopX, separatorBotX,
+    beatDotIdleRgb: hexToRgb(palette.beatDotIdle),
   };
   return rs.cache;
 }
@@ -875,7 +905,7 @@ function drawHighway(
       }
     }
     if (trailAlpha <= 0.01) continue;
-    drawHoldTrail(ctx, n, songTime, opts, hw, palette, trailAlpha);
+    drawHoldTrail(ctx, n, songTime, opts, hw, palette, trailAlpha, cache);
   }
   // Reset anticipation each frame; we re-derive it from the upcoming notes.
   for (let i = 0; i < rs.laneAnticipation.length; i++) rs.laneAnticipation[i] = 0;
@@ -917,7 +947,7 @@ function drawHighway(
       const v = a * a;
       if (v > rs.laneAnticipation[n.lane]) rs.laneAnticipation[n.lane] = v;
     }
-    drawTapNote(ctx, n, lookahead, opts, hw, palette, alpha);
+    drawTapNote(ctx, n, lookahead, opts, hw, palette, alpha, cache);
   }
 
   // Judgment line — subtle pulse on the beat AND on combo milestones.
@@ -938,11 +968,12 @@ function drawHighway(
   // Per-lane judgment-line "kiss" — a tiny accent segment under each gate
   // that swells with the lane's most recent flash. Reads as the lane
   // "lighting up the floor" for half a beat after a hit. Cheap.
+  // Lane X is read from `cache.laneX` (baked in `ensureCache`) so the
+  // perspective lerp doesn't re-run every frame.
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
     const flash = rs.laneFlash[i] ?? 0;
     if (flash <= 0.05) continue;
-    const f = (i + 0.5) / MAIN_LANE_COUNT;
-    const x = lerp(hw.bottomLeftX, hw.bottomRightX, f);
+    const x = cache.laneX[i];
     const w = 36 + flash * 28;
     ctx.save();
     ctx.strokeStyle = rgba(LANE_RGB[i], 0.35 + flash * 0.55);
@@ -957,12 +988,10 @@ function drawHighway(
   }
 
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
-    const f = (i + 0.5) / MAIN_LANE_COUNT;
-    const x = lerp(hw.bottomLeftX, hw.bottomRightX, f);
     drawLaneGate(
       ctx,
       i,
-      x,
+      cache.laneX[i],
       hw.judgeY,
       opts.laneHeld[i] ?? false,
       rs.laneFlash[i] ?? 0,
@@ -982,13 +1011,16 @@ function drawTapNote(
   hw: Highway,
   palette: ThemePalette,
   alpha: number,
+  cache: RenderCache,
 ) {
   const progress = lookahead / opts.leadTime;
   const y = hw.topY + (hw.judgeY - hw.topY) * (1 - progress);
 
-  const f = (n.lane + 0.5) / MAIN_LANE_COUNT;
-  const xTop = lerp(hw.topLeftX, hw.topRightX, f);
-  const xBot = lerp(hw.bottomLeftX, hw.bottomRightX, f);
+  // Lane top/bottom X are baked in `ensureCache` (constant per lane until
+  // the canvas resizes). Only the perspective-progress lerp varies
+  // per-note — saves 2 lerps per note per frame on dense charts.
+  const xTop = cache.laneXTop[n.lane];
+  const xBot = cache.laneXBot[n.lane];
   const x = lerp(xTop, xBot, 1 - progress);
 
   const radius = lerp(11.5, 27.5, 1 - progress);
@@ -1013,16 +1045,16 @@ function drawTapNote(
   }
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.arc(x, y, radius, 0, TAU);
   ctx.fill();
   ctx.shadowBlur = 0;
   ctx.fillStyle = palette.noteInner;
   ctx.beginPath();
-  ctx.arc(x, y, radius * 0.6, 0, Math.PI * 2);
+  ctx.arc(x, y, radius * 0.6, 0, TAU);
   ctx.fill();
   ctx.fillStyle = palette.noteCore;
   ctx.beginPath();
-  ctx.arc(x, y, radius * 0.28, 0, Math.PI * 2);
+  ctx.arc(x, y, radius * 0.28, 0, TAU);
   ctx.fill();
   ctx.restore();
 }
@@ -1041,6 +1073,7 @@ function drawHoldTrail(
   hw: Highway,
   palette: ThemePalette,
   alphaMul: number,
+  cache: RenderCache,
 ) {
   const headLook = n.t - songTime;
   const tailLook = (n.endT as number) - songTime;
@@ -1063,9 +1096,10 @@ function drawHoldTrail(
   const yHead = yFromProgress(visHead);
   const yTail = yFromProgress(visTail);
 
-  const f = (n.lane + 0.5) / MAIN_LANE_COUNT;
-  const xHeadTop = lerp(hw.topLeftX, hw.topRightX, f);
-  const xHeadBot = lerp(hw.bottomLeftX, hw.bottomRightX, f);
+  // Per-lane endpoints baked once in `ensureCache`; only the visHead /
+  // visTail interpolation runs per frame.
+  const xHeadTop = cache.laneXTop[n.lane];
+  const xHeadBot = cache.laneXBot[n.lane];
   const xHead = lerp(xHeadTop, xHeadBot, 1 - visHead);
   const xTail = lerp(xHeadTop, xHeadBot, 1 - visTail);
 
@@ -1155,7 +1189,7 @@ function drawLaneGate(
     ctx.shadowColor = color;
     ctx.shadowBlur = 18 * anticipation;
     ctx.beginPath();
-    ctx.arc(x, y, r + 6 + anticipation * 4, 0, Math.PI * 2);
+    ctx.arc(x, y, r + 6 + anticipation * 4, 0, TAU);
     ctx.stroke();
     ctx.restore();
   }
@@ -1169,7 +1203,7 @@ function drawLaneGate(
   ctx.shadowBlur =
     held || holding ? 26 : 8 + flash * 22 + anticipation * 12;
   ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.arc(x, y, r, 0, TAU);
   ctx.stroke();
 
   // Held / flash fill — extra strong while sustaining a hold.
@@ -1180,14 +1214,14 @@ function drawLaneGate(
   if (fillAlpha > 0) {
     ctx.fillStyle = rgba(colorRgb, fillAlpha);
     ctx.beginPath();
-    ctx.arc(x, y, innerRingR, 0, Math.PI * 2);
+    ctx.arc(x, y, innerRingR, 0, TAU);
     ctx.fill();
   }
 
   ctx.shadowBlur = 0;
   ctx.fillStyle = palette.gateInner;
   ctx.beginPath();
-  ctx.arc(x, y, innerCoreR, 0, Math.PI * 2);
+  ctx.arc(x, y, innerCoreR, 0, TAU);
   ctx.fill();
 
   // Label + arrow always render in the lane color so they stay legible on
@@ -1459,7 +1493,7 @@ function updateAndDrawShockwaves(
     ctx.shadowColor = LANE_COLORS[s.laneIdx];
     ctx.shadowBlur = (s.intense ? 26 : 14) * (1 - t);
     ctx.beginPath();
-    ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+    ctx.arc(s.x, s.y, radius, 0, TAU);
     ctx.stroke();
     if (s.intense && t < 0.4) {
       // White core for the first ~180ms of perfect hits — the splash that
@@ -1468,7 +1502,7 @@ function updateAndDrawShockwaves(
       ctx.lineWidth = 1.5;
       ctx.shadowBlur = 0;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, radius * 0.55, 0, Math.PI * 2);
+      ctx.arc(s.x, s.y, radius * 0.55, 0, TAU);
       ctx.stroke();
     }
     if (write !== read) sw[write] = s;
@@ -1487,18 +1521,21 @@ function drawBeatDot(
   pulse: number,
   isDownbeat: boolean,
   palette: ThemePalette,
+  cache: RenderCache,
 ) {
   ctx.save();
   // Downbeats use the brand accent (theme-shifted), off-beats use the
-  // theme's idle dot color so the marker stays visible on either bg.
-  const colorRgb = isDownbeat ? palette.accentRgb : hexToRgb(palette.beatDotIdle);
+  // theme's idle dot color. Idle RGB is parsed once in `ensureCache`
+  // and reused — the previous code called `hexToRgb(palette.beatDotIdle)`
+  // every frame.
+  const colorRgb = isDownbeat ? palette.accentRgb : cache.beatDotIdleRgb;
   const colorCss = `rgb(${colorRgb.r},${colorRgb.g},${colorRgb.b})`;
   const r = 5 + pulse * 5;
   ctx.shadowColor = colorCss;
   ctx.shadowBlur = 8 + pulse * 16;
   ctx.fillStyle = rgba(colorRgb, 0.35 + pulse * 0.65);
   ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.arc(x, y, r, 0, TAU);
   ctx.fill();
   ctx.restore();
 }
@@ -1594,7 +1631,7 @@ function updateAndDrawParticles(
     const a = p.life / p.maxLife;
     ctx.fillStyle = rgba(LANE_RGB[p.laneIdx], a * a);
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size * (0.4 + a * 0.6), 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, p.size * (0.4 + a * 0.6), 0, TAU);
     ctx.fill();
     if (write !== read) ps[write] = p;
     write++;
