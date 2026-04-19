@@ -6,7 +6,13 @@
  */
 
 const VOL_KEY = "syncle.volume";
-const DEFAULT_VOLUME = 0.85;
+// Default music volume on first launch (when no persisted value is found).
+// 1.0 = 100% — the slider's max — so a fresh install gets the loudest
+// possible mix and the player can dial down from there if needed. Was
+// 0.85 historically; bumped because a brand-new player loading their
+// first track shouldn't have to discover the slider just to hear the
+// chart at full level.
+const DEFAULT_VOLUME = 1.0;
 const FPS_LOCK_KEY = "syncle.fpsLock";
 const SFX_KEY = "syncle.sfx";
 const DEFAULT_SFX = true;
