@@ -51,6 +51,7 @@ import {
   crossedComboMilestone,
   DEFAULT_RENDER_OPTIONS,
   drawFrame,
+  prewarmRenderer,
   RenderState,
 } from "@/lib/game/renderer";
 import {
@@ -92,6 +93,8 @@ export function MultiGame({
   actions,
   me,
   mode,
+  audioEngine,
+  audioReady,
 }: {
   snapshot: RoomSnapshot;
   scoreboard: ScoreboardEntry[];
@@ -100,6 +103,14 @@ export function MultiGame({
   actions: RoomActions;
   me: string;
   mode: ChartMode;
+  // Owned by the page, NOT by this component. The engine was created
+  // and the AudioBuffer was decoded back during the `loading` phase
+  // so by the time we mount everything is already in memory and
+  // `audio.start()` is just reserving a future timestamp on a
+  // pre-warmed graph. See `audioEngineRef` in `app/multi/[code]/page.tsx`
+  // for the lifecycle / hoist rationale.
+  audioEngine: AudioEngine | null;
+  audioReady: boolean;
 }) {
   // Full-bleed layout: the canvas fills the available area exactly like
   // single-player, with the live scoreboard floating as a right-edge overlay.
@@ -113,6 +124,8 @@ export function MultiGame({
         loadError={loadError}
         actions={actions}
         mode={mode}
+        audioEngine={audioEngine}
+        audioReady={audioReady}
       />
       <ScoreboardSidebar scoreboard={scoreboard} me={me} snapshot={snapshot} />
     </div>
@@ -129,15 +142,29 @@ function CanvasPane({
   loadError,
   actions,
   mode,
+  audioEngine,
+  audioReady,
 }: {
   snapshot: RoomSnapshot;
   loaded: LoadSongResult | null;
   loadError: string | null;
   actions: RoomActions;
   mode: ChartMode;
+  audioEngine: AudioEngine | null;
+  audioReady: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const audioRef = useRef<AudioEngine | null>(null);
+  // Mirror the engine prop into a ref so the existing `audioRef.current?.X`
+  // call sites (settings effects, schedule effect, render loop) keep
+  // working unchanged. The engine itself was created back at the page
+  // level during the `loading` phase — we just point a local ref at it
+  // here and keep that ref in sync if it ever changes (e.g. a future
+  // round in the same room re-uses the same instance, but nothing
+  // stops the page from swapping it out).
+  const audioRef = useRef<AudioEngine | null>(audioEngine);
+  useEffect(() => {
+    audioRef.current = audioEngine;
+  }, [audioEngine]);
   const stateRef = useRef<GameState | null>(null);
   const renderStateRef = useRef<RenderState>(createRenderState());
   const heldRef = useRef<boolean[]>(new Array(TOTAL_LANES).fill(false));
@@ -215,17 +242,13 @@ function CanvasPane({
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
-  /**
-   * Flips true once `loadFromBytes` / `load` resolves and the AudioBuffer
-   * is actually decoded into the engine. The schedule effect depends on
-   * this so it re-runs the moment the buffer is ready — without it, if the
-   * snapshot's `startsAt` arrived BEFORE the buffer finished loading,
-   * `audio.start()` would throw, get silently caught, and `songTime()`
-   * would then track `ctx.currentTime` (positive, growing) instead of the
-   * intended negative countdown value. That bug surfaced as random notes
-   * appearing on the highway during the "3, 2, 1" overlay.
-   */
-  const [audioReady, setAudioReady] = useState(false);
+  // `audioReady` is now sourced from the page-level prop instead of
+  // local state. The page resolves it to true the moment the
+  // AudioBuffer finishes decoding during the `loading` phase, which
+  // means by the time MultiGame mounts `audioReady` is already true
+  // for normal flows. The `audioReady` gate on the schedule effect
+  // still matters for the reconnect case (where a player drops in
+  // mid-game and we re-decode after the fact).
 
   const { theme } = useTheme();
   useEffect(() => {
@@ -244,7 +267,24 @@ function CanvasPane({
       canvas.height = Math.floor(rect.height * dpr);
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Force the renderer to rebuild its size-dependent gradient cache.
       renderStateRef.current.cache = undefined;
+      // Pre-warm: build the gradient cache + JIT-compile every hot draw
+      // path NOW (the countdown overlay is covering the canvas at this
+      // point), so the very first real frame after `audio.start()` doesn't
+      // pay the 12–35 ms hitch of cold gradients + cold note/popup paths.
+      // That hitch was the root cause of the "tiny stutter when the song
+      // begins" players were reporting in multi — without this, the first
+      // real-state frame had to build all 4 lane-gate gradients, the
+      // highway radial, the milestone vignette AND let V8 promote
+      // drawTapNote / drawHoldNote / drawJudgmentText out of the
+      // interpreter, all in the same frame the audio kicked in.
+      // The helper wipes its synthetic draw via clearRect, so nothing
+      // it paints is ever visible to the player. Reads the LIVE
+      // renderOptsRef so the cache lands with the right theme baked in.
+      if (ctx) {
+        prewarmRenderer(ctx, renderOptsRef.current, renderStateRef.current);
+      }
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -256,62 +296,33 @@ function CanvasPane({
     };
   }, []);
 
-  /* -------- audio prep + scheduled start at server's startsAt -------- */
-  // Whenever the chart finishes loading, decode it into a fresh AudioEngine.
+  /* -------- per-song state reset -------- */
+  // Decode is no longer this component's job — the page-level loading
+  // effect already filled the AudioEngine's buffer before we even
+  // mounted (see `audioEngineRef` in `app/multi/[code]/page.tsx`).
+  // What's left for us to do on each new chart is purely the
+  // INSTANCE-LOCAL state reset: spin up a fresh GameState for the
+  // notes, wipe leftover particles / combo / scheduled-beat cursor
+  // from the previous round, and re-arm `audioStartedRef` so the
+  // highway gating doesn't trust the audio clock until the schedule
+  // effect runs `start()` on the new song.
   useEffect(() => {
     if (!loaded) return;
-    let cancelled = false;
-    // Re-arm the readiness gate so the schedule effect doesn't reuse the
-    // previous song's "ready" signal while the new buffer is still
-    // decoding (matters when the host picks a fresh song after a results
-    // screen).
-    setAudioReady(false);
-    // Re-arm the "audio actually started" flag too — a fresh chart in
-    // the same room means the next `audio.start()` call is the new
-    // ground truth for songTime, and until then the highway gating
-    // logic shouldn't trust the engine's clock.
     audioStartedRef.current = false;
-    const prep = async () => {
-      let buffered = false;
-      try {
-        if (!audioRef.current) audioRef.current = new AudioEngine();
-        audioRef.current.ensureContext();
-        if (loaded.delivery === "remote" && loaded.audioBytes && loaded.audioKey) {
-          await audioRef.current.loadFromBytes(
-            loaded.audioBytes.slice(0),
-            loaded.audioKey,
-          );
-          buffered = true;
-        } else if (loaded.meta.audioUrl) {
-          await audioRef.current.load(loaded.meta.audioUrl);
-          buffered = true;
-        }
-      } catch {
-        // Silent — countdown effect will retry start anyway.
-      }
-      if (cancelled) return;
-      stateRef.current = new GameState(loaded.notes);
-      setStats({ ...stateRef.current.stats });
-      lastScheduledBeatRef.current = -1;
-      finishedRef.current = false;
-      prevComboRef.current = 0;
-      lastScoreSentSigRef.current = "";
-      // Wipe leftover particles/shockwaves/milestone from a previous song
-      // so the new run starts on a clean canvas.
-      const rs = renderStateRef.current;
-      rs.particles.length = 0;
-      rs.shockwaves.length = 0;
-      rs.pendingHits.length = 0;
-      rs.laneFlash.fill(0);
-      rs.laneAnticipation.fill(0);
-      rs.combo = 0;
-      rs.milestone = null;
-      if (buffered) setAudioReady(true);
-    };
-    void prep();
-    return () => {
-      cancelled = true;
-    };
+    stateRef.current = new GameState(loaded.notes);
+    setStats({ ...stateRef.current.stats });
+    lastScheduledBeatRef.current = -1;
+    finishedRef.current = false;
+    prevComboRef.current = 0;
+    lastScoreSentSigRef.current = "";
+    const rs = renderStateRef.current;
+    rs.particles.length = 0;
+    rs.shockwaves.length = 0;
+    rs.pendingHits.length = 0;
+    rs.laneFlash.fill(0);
+    rs.laneAnticipation.fill(0);
+    rs.combo = 0;
+    rs.milestone = null;
   }, [loaded]);
 
   // Schedule the audio start exactly at snapshot.startsAt (countdown→playing).
@@ -333,6 +344,19 @@ function CanvasPane({
     // notes from random points in the chart over the countdown overlay.
     if (!loaded || !audioRef.current || !audioReady) return;
     if (snapshot.phase !== "countdown" && snapshot.phase !== "playing") return;
+    // Idempotency guard. The server keeps `startsAt` populated through
+    // the entire `playing` phase, so when `songStartedAt` flips from
+    // null → number on the countdown→playing transition this effect
+    // re-fires. Without this guard we'd hit `audio.start()` a SECOND
+    // time for the same round — and since `start()` always begins
+    // with `stop()`, that produces a tiny stop-and-restart click
+    // exactly when the song should be settling into its first beat.
+    // `audioStartedRef` is reset to false in the per-song state-reset
+    // effect above (deps: `[loaded]`), so a fresh round still arms
+    // properly. A reconnect-into-play that swaps the loaded chart
+    // also resets it. Lobby return clears `loaded`, then the next
+    // round refills it.
+    if (audioStartedRef.current) return;
     const startsAt = snapshot.startsAt ?? snapshot.songStartedAt;
     if (!startsAt) return;
     const delayMs = startsAt - Date.now();
@@ -494,7 +518,14 @@ function CanvasPane({
       pressLane(lane, e.timeStamp);
     };
     const onKeyUp = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target)) return;
+      // No `isEditableTarget` short-circuit: chat / name input is a
+      // realistic mid-song interaction, and if the player held a lane
+      // key, focused chat (keydown still in flight or already past),
+      // and then released, the keyup target IS the input. Skipping
+      // would strand the hold note's tail and leave `heldRef` set
+      // until they retap that lane — confusing in the middle of a
+      // song. Releasing is always safe (no-op if not held). Same
+      // rationale as Game.tsx onKeyUp.
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
       releaseLane(lane, e.timeStamp);
@@ -604,7 +635,15 @@ function CanvasPane({
           }
         }
 
-        // End-of-song detection
+        // End-of-song detection. `state.notes.every(...)` used to walk
+        // the entire chart EVERY frame in the trailing 1.5s window —
+        // O(n) per frame, measurable on dense charts in a 50-player
+        // room. Replaced with `notesPlayed >= totalNotes`, which the
+        // engine maintains in O(1) (holds add 2 to totalNotes for
+        // head + tail, and the judgment helpers each increment
+        // notesPlayed once). The 1.5s grace window after `lastEnd`
+        // is preserved so players see their final judgment popup
+        // before the canvas hands off to the results screen.
         const lastNote = state.notes[state.notes.length - 1];
         const lastEnd = lastNote
           ? isHold(lastNote)
@@ -614,7 +653,8 @@ function CanvasPane({
         const allJudged =
           lastNote &&
           songTime > lastEnd + 1.5 &&
-          state.notes.every((n) => n.judged && (!isHold(n) || n.tailJudged));
+          state.stats.totalNotes > 0 &&
+          state.stats.notesPlayed >= state.stats.totalNotes;
         const audioDone =
           audio && !audio.isPlaying && songMeta && songTime > songMeta.duration - 0.5;
         if ((allJudged || audioDone) && !finishedRef.current) {
@@ -785,12 +825,16 @@ function CanvasPane({
     saveFpsLock(fpsLock);
   }, [fpsLock]);
 
-  // Stop the engine on unmount.
-  useEffect(() => {
-    return () => {
-      audioRef.current?.stop();
-    };
-  }, []);
+  // No engine-stop on unmount: lifecycle is OWNED by the page now
+  // (see `audioEngineRef` in `app/multi/[code]/page.tsx`). The page
+  // calls `engine.stop()` when the room flips back to `lobby` and
+  // again on full page unmount, which covers every legitimate way
+  // a player can exit the canvas. Stopping here too would race with
+  // the page's own `stop()` and, more importantly, would kill the
+  // engine when transitioning to the `results` screen — the engine
+  // is supposed to keep its decoded buffer alive across that screen
+  // so a "play again" round in the same room reuses the same buffer
+  // (the loadFromBytes dedup check in audio.ts catches this).
 
   return (
     <div className="absolute inset-0">

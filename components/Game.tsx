@@ -18,6 +18,7 @@ import {
   crossedComboMilestone,
   DEFAULT_RENDER_OPTIONS,
   drawFrame,
+  prewarmRenderer,
   RenderState,
 } from "@/lib/game/renderer";
 import { Note, PlayerStats, SongMeta, TOTAL_LANES } from "@/lib/game/types";
@@ -394,30 +395,16 @@ export default function Game() {
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
       renderStateRef.current.cache = undefined;
-      // Pre-build the gradient cache + JIT-compile the draw path right now
-      // (still on the loading screen, before any notes scroll), so the very
-      // first in-game frame doesn't spend 20–40ms building gradients and
-      // hot-compiling drawHighway / drawTapNote.
-      //
-      // Use the LIVE renderOptsRef (which already has the active theme set
-      // by the useTheme effect) instead of DEFAULT_RENDER_OPTIONS — otherwise
-      // a user in light mode would have the dark-palette gradients baked
-      // into the cache for the first frame, then swapped on the next
-      // resize/theme effect. Reading the ref keeps the pre-warm honest.
+      // Full pre-warm: builds the gradient cache AND JIT-compiles every
+      // hot draw path the live loop will hit (drawTapNote, drawHoldNote,
+      // drawJudgmentText, particle/shockwave drains, combo number).
+      // The synthetic draw is wiped via clearRect inside the helper, so
+      // nothing it paints leaks visually even on the brief frame between
+      // mount and the loading-overlay paint. Uses the LIVE renderOptsRef
+      // (which already has the active theme set by the useTheme effect)
+      // so the cache lands with the right palette baked in.
       if (ctx) {
-        try {
-          drawFrame(
-            ctx,
-            new GameState([]),
-            -COUNTDOWN_SECONDS,
-            0,
-            renderOptsRef.current,
-            renderStateRef.current,
-          );
-        } catch {
-          // Pre-warm is best-effort. If it throws (e.g. ctx in a weird
-          // state mid-resize), we'll get there on the first real frame.
-        }
+        prewarmRenderer(ctx, renderOptsRef.current, renderStateRef.current);
       }
     };
     resize();
@@ -568,6 +555,20 @@ export default function Game() {
     phaseRef.current = phase;
   }, [phase]);
 
+  // Same pattern as `phaseRef`, but for `chartMode` — the render loop
+  // needs the current mode INSIDE `finishRun` to look up the per-mode
+  // best score, but if we put `chartMode` in the loop's dep array the
+  // entire rAF / metronome / canvas effect tears down and re-arms every
+  // time the player toggles a mode in the StartCard. Reading off a ref
+  // instead lets the loop persist for the component's lifetime, which
+  // in turn means the loop also survives the `idle → countdown →
+  // playing` phase transition without resetting `last` / `pacedNext`
+  // (the source of the song-start stutter players reported).
+  const chartModeRef = useRef<ChartMode>(chartMode);
+  useEffect(() => {
+    chartModeRef.current = chartMode;
+  }, [chartMode]);
+
   // `eventTimestamp` is the `performance.now()` moment from the
   // KeyboardEvent / PointerEvent that caused the press. Passed through
   // to `audio.inputSongTime()` so we judge against the audio clock at
@@ -668,7 +669,17 @@ export default function Game() {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target)) return;
+      // Note: we deliberately do NOT short-circuit on
+      // `isEditableTarget` here (unlike onKeyDown). If a player holds
+      // a lane key, focuses an <input> (e.g. opens chat or moves to
+      // the volume slider), and THEN releases the key, the keyup
+      // event's target is the now-focused input. Skipping this
+      // release would leave the hold marked active in `heldRef` and
+      // strand the hold note's tail in a "still being held" state
+      // until the player happens to retap that lane — a confusing,
+      // long-lived gameplay bug. Releasing is always safe (it's a
+      // no-op for unheld lanes) and keeps the input model crisp
+      // regardless of focus.
       if (phase === "paused") return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
@@ -762,8 +773,19 @@ export default function Game() {
       const songMeta = songRef.current.meta;
       const beatLen = 60 / songMeta.bpm;
       const songTime = audio ? audio.songTime() : -COUNTDOWN_SECONDS;
+      // Read phase off the ref so the rAF loop never has to be torn
+      // down + recreated across a phase transition. Pre-fix this loop
+      // listed `phase` in its deps and React would cancel the running
+      // rAF + spawn a fresh closure (with reset `last`, `pacedNext`,
+      // `lastMissCount`, `fpsAccumStart`) at the EXACT countdown→playing
+      // moment — i.e. the instant the song's first frame fires. That
+      // boundary lined up with the audible song onset, which is why
+      // players felt a small "stutter" right at song start. With the
+      // loop persisting, the very first audio frame is just another
+      // `now - last` step and the highway slides on perfectly cleanly.
+      const currentPhase = phaseRef.current;
 
-      if (state && phase === "playing") {
+      if (state && currentPhase === "playing") {
         state.expireMisses(songTime);
 
         const misses = state.stats.hits.miss;
@@ -772,6 +794,24 @@ export default function Game() {
           lastMissCount = misses;
         }
 
+        // End-of-song detection. Two short-circuited paths:
+        //   1. All notes judged (incl. hold tails) AND a 1.5s grace
+        //      window has elapsed past the last note end — gives the
+        //      player a beat to read their final judgment popup
+        //      before the screen swaps to results. The "all judged"
+        //      part is checked via the O(1) `notesPlayed` counter
+        //      instead of `state.notes.every()`, which previously
+        //      walked the entire notes array EVERY frame in the
+        //      trailing window. On dense charts (thousands of notes)
+        //      that was a measurable per-frame cost. The engine
+        //      keeps `notesPlayed` and `totalNotes` in lockstep:
+        //      holds add 2 to `totalNotes` (head + tail) and the
+        //      judgment helpers increment `notesPlayed` once each,
+        //      so the equality mirrors the old array predicate
+        //      exactly.
+        //   2. Audio buffer ended naturally — fallback for charts
+        //      whose last note ends well before the audio outro, or
+        //      where a player paused mid-song.
         const lastNote = state.notes[state.notes.length - 1];
         const lastEnd = lastNote
           ? (isHold(lastNote) ? (lastNote.endT as number) : lastNote.t)
@@ -779,7 +819,8 @@ export default function Game() {
         if (
           lastNote &&
           songTime > lastEnd + 1.5 &&
-          state.notes.every((n) => n.judged && (!isHold(n) || n.tailJudged))
+          state.stats.totalNotes > 0 &&
+          state.stats.notesPlayed >= state.stats.totalNotes
         ) {
           finishRun(state);
         } else if (
@@ -792,7 +833,7 @@ export default function Game() {
       }
 
       // Schedule metronome clicks ahead of the audio clock.
-      if (audio && (phase === "playing" || phase === "countdown")) {
+      if (audio && (currentPhase === "playing" || currentPhase === "countdown")) {
         const lookaheadSec = 0.6;
         const horizon = songTime + lookaheadSec;
         const firstBeatIdx = Math.max(
@@ -873,11 +914,16 @@ export default function Game() {
 
     function finishRun(state: GameState) {
       const songMeta = songRef.current.meta;
-      const key = bestKey(songMeta.id, chartMode);
+      // Read the active chart mode off the ref instead of the closure —
+      // see `chartModeRef` declaration. This is what lets the render
+      // loop's effect carry an empty dep array and persist across
+      // phase + mode toggles without re-arming the rAF.
+      const mode = chartModeRef.current;
+      const key = bestKey(songMeta.id, mode);
       const accuracy = computeAccuracy(state.stats);
       const result = saveBestIfHigher(key, {
         songId: songMeta.id,
-        mode: chartMode,
+        mode,
         score: state.stats.score,
         accuracy,
         maxCombo: state.stats.maxCombo,
@@ -889,7 +935,7 @@ export default function Game() {
         songId: songMeta.id,
         songTitle: songMeta.title,
         songArtist: songMeta.artist,
-        mode: chartMode,
+        mode,
         score: state.stats.score,
         accuracy,
         maxCombo: state.stats.maxCombo,
@@ -904,7 +950,17 @@ export default function Game() {
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
-  }, [phase, chartMode]);
+    // Intentionally empty deps: the rAF / metronome / canvas loop must
+    // run continuously for the component's lifetime. `phase` is read
+    // via `phaseRef.current` inside the loop and `chartMode` via
+    // `chartModeRef.current` inside `finishRun`, so neither needs a
+    // dep entry. Including `phase` here used to tear the loop down at
+    // the countdown→playing boundary (= the moment the song fires),
+    // which reset `last` / `pacedNext` / `lastMissCount` and produced
+    // a one-frame stutter exactly when players were watching for the
+    // first beat. With deps `[]` the loop survives every transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- Cleanup on unmount ----------------------------------------------
   useEffect(() => {

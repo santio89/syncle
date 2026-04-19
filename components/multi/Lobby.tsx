@@ -41,6 +41,18 @@ import {
   modeStars,
   probeSongModes,
 } from "@/lib/game/chart";
+import {
+  loadFpsLock,
+  loadMetronome,
+  loadSfx,
+  loadVolume,
+  nextFpsLock,
+  saveFpsLock,
+  saveMetronome,
+  saveSfx,
+  saveVolume,
+  type FpsLock,
+} from "@/lib/game/settings";
 import type {
   CatalogItem,
   ChatMessage,
@@ -85,7 +97,16 @@ export function Lobby({
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(280px,1fr)_minmax(0,1.4fr)]">
-      {/* Left column: roster + chat stacked. */}
+      {/* Left column: roster + your settings + chat stacked. The
+          settings card sits between roster and chat because:
+          - It's PER-PLAYER (like the rename / ready buttons in the
+            roster card), not room state, so it logically belongs with
+            "you" controls rather than the host's room controls.
+          - Putting it ABOVE the chat keeps it visible even when the
+            chat scrolls — settings don't compete with conversation.
+          - All three cards in the column share `brut-card` styling
+            so visually they read as one stacked panel of "your stuff
+            in this room". */}
       <div className="flex flex-col gap-4">
         <PlayerRoster
           snapshot={snapshot}
@@ -94,6 +115,7 @@ export function Lobby({
           actions={actions}
           allReady={allReady}
         />
+        <PlayerSettingsCard />
         <div className="min-h-[20rem]">
           <ChatPanel
             chat={chat}
@@ -249,6 +271,199 @@ function PlayerRoster({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Per-player settings card                                                 */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Compact settings panel mirroring the single-player StartCard's
+ * settings strip (FPS lock + Metronome + Input feedback as a tile row,
+ * Music volume slider in its own tile below).
+ *
+ * Why per-player and self-contained:
+ *   - These are LOCAL preferences, not room state. They never get sent
+ *     over the wire — every player adjusts their own and they take
+ *     effect for them only. So the card has no `actions` prop and no
+ *     callbacks back into the lobby; it just reads / writes the same
+ *     `lib/game/settings` localStorage keys the single-player Game.tsx
+ *     and the in-game MultiGame.tsx use.
+ *   - When the match starts, MultiGame's useState initialisers call
+ *     loadVolume() / loadMetronome() / loadSfx() / loadFpsLock() on
+ *     mount, so any nudge made in the lobby is automatically picked
+ *     up — no protocol round-trip needed.
+ *   - Visual style matches the single-player StartCard exactly (same
+ *     tile borders, captions, accent colors, slider treatment) so a
+ *     player who knows the solo settings panel feels at home here
+ *     immediately.
+ *
+ * Save semantics:
+ *   - Each control persists IMMEDIATELY on change (no Apply button).
+ *     This matches the StartCard pattern and avoids the "did my
+ *     setting save?" question that confirm-style panels create.
+ *   - The volume slider is shown live in % (perceptual scale, see
+ *     audio.ts perceivedToGain) so the number on screen matches the
+ *     mental model the player has from solo play.
+ */
+function PlayerSettingsCard() {
+  const [volume, setVolumeState] = useState<number>(loadVolume);
+  const [metronome, setMetronomeState] = useState<boolean>(loadMetronome);
+  const [sfx, setSfxState] = useState<boolean>(loadSfx);
+  const [fpsLock, setFpsLockState] = useState<FpsLock>(loadFpsLock);
+
+  // Live-save handlers — persist on every change so closing the lobby
+  // tab without a final "save" still keeps the player's choices.
+  const onVolume = useCallback((v: number) => {
+    setVolumeState(v);
+    saveVolume(v);
+  }, []);
+  const onToggleMetronome = useCallback(() => {
+    setMetronomeState((cur) => {
+      const next = !cur;
+      saveMetronome(next);
+      return next;
+    });
+  }, []);
+  const onToggleSfx = useCallback(() => {
+    setSfxState((cur) => {
+      const next = !cur;
+      saveSfx(next);
+      return next;
+    });
+  }, []);
+  const onCycleFpsLock = useCallback(() => {
+    setFpsLockState((cur) => {
+      const next = nextFpsLock(cur);
+      saveFpsLock(next);
+      return next;
+    });
+  }, []);
+
+  return (
+    <div className="brut-card flex flex-col p-5 sm:p-6">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
+          ░ Settings
+        </p>
+        <span className="font-mono text-[10px] uppercase tracking-widest text-bone-50/40">
+          local · per-player
+        </span>
+      </div>
+
+      {/* Three-tile row: FPS lock + Metronome + Input feedback. Same
+          dimensions and dressing as the StartCard tiles so the two
+          panels feel like one product. On narrow widths the grid
+          collapses to a single column — keyboard / touch targets stay
+          a comfortable size all the way down to phone widths. */}
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <button
+          type="button"
+          onClick={onCycleFpsLock}
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
+          data-tooltip={
+            fpsLock == null
+              ? "FPS lock off — click to cap at 30 FPS"
+              : `Render frame-rate capped at ${fpsLock} FPS — click to ${
+                  fpsLock === 30 ? "cap at 60" : "uncap"
+                }`
+          }
+          aria-label="Cycle render FPS lock"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              FPS lock
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                fpsLock == null ? "text-bone-50/60" : "text-accent"
+              }`}
+            >
+              {fpsLock == null ? "OFF" : fpsLock}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            click to cycle off / 30 / 60
+          </span>
+        </button>
+
+        <label
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
+          data-tooltip="Toggle the audible click track that plays on every beat"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Metronome
+            </span>
+            <input
+              type="checkbox"
+              checked={metronome}
+              onChange={onToggleMetronome}
+              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
+              aria-label="Toggle metronome"
+              aria-keyshortcuts="M"
+            />
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            press M to toggle in-game
+          </span>
+        </label>
+
+        <label
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
+          data-tooltip="Toggle hit / miss / release tones on key press"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Input feedback
+            </span>
+            <input
+              type="checkbox"
+              checked={sfx}
+              onChange={onToggleSfx}
+              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
+              aria-label="Toggle input sound effects"
+              aria-keyshortcuts="N"
+              aria-pressed={sfx}
+            />
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            press N to toggle in-game
+          </span>
+        </label>
+      </div>
+
+      {/* Volume tile sits on its own row at full width — the slider
+          needs the horizontal real estate to be precise, and pairing
+          it with the percentage readout in the header line keeps the
+          control compact while still showing the live value. */}
+      <div className="mt-2 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+            Music volume
+          </span>
+          <span className="font-mono text-[10.5px] tabular-nums text-bone-50/40">
+            {Math.round(volume * 100)}%
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={volume}
+          onChange={(e) => onVolume(parseFloat(e.target.value))}
+          className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
+          aria-label="Music volume"
+        />
+      </div>
+
+      <p className="mt-3 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
+        Applies on the next match · saved locally
+      </p>
     </div>
   );
 }

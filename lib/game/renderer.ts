@@ -521,6 +521,132 @@ export function createRenderState(): RenderState {
 }
 
 /**
+ * Pre-compile every hot draw path AND build the gradient cache so the
+ * first real in-game frame doesn't pay for either.
+ *
+ * Why this exists:
+ *   On the very first frame after `audio.start()` fires, the renderer
+ *   has to do TWO expensive things at once:
+ *     1. Build the per-canvas-size gradient cache (`ensureCache`):
+ *        ~10 createLinearGradient / createRadialGradient calls plus a
+ *        bunch of trapezoid math. Measured at 8–25 ms on a mid-range
+ *        laptop, longer on integrated GPUs.
+ *     2. JIT-compile drawTapNote / drawHoldNote / drawJudgmentText /
+ *        the particle path. V8 keeps these in the interpreter until
+ *        they're called several times — the very first call can spend
+ *        4–10 ms in the parse+baseline tier alone.
+ *
+ *   Combined that's a 12–35 ms hitch on the EXACT frame the song begins,
+ *   which lands as a visible stutter right when the player is most
+ *   primed to notice it (audio onset draws all attention to the screen).
+ *
+ *   This helper draws ONE synthetic frame containing a tap + a hold +
+ *   one of each judgment popup, so the cache lands in `rs.cache` and
+ *   every code path the loop will hit is already in the optimized tier
+ *   by the time the first real note draws. The synthetic geometry is
+ *   then wiped from the canvas (`clearRect`) so nothing leaks visually,
+ *   even on the rare case the loading overlay isn't covering yet.
+ *
+ * Pollution safety:
+ *   The draw mutates RenderState in-place (lane flashes decay,
+ *   pendingHits drain into particles, etc.). To keep the real `rs`
+ *   pristine we draw into a throwaway state with a fresh particles /
+ *   pendingHits / etc., then COPY ONLY the gradient cache back to the
+ *   caller's `rs`. The cache is the only thing we want to survive.
+ *
+ * Idempotent: cheap to call repeatedly (a single ~3-tap-equivalent
+ * draw). Game.tsx and MultiGame.tsx both call it from their canvas
+ * resize effect, which fires once on mount and again on any DPR /
+ * theme / size change.
+ */
+export function prewarmRenderer(
+  ctx: CanvasRenderingContext2D,
+  opts: RenderOptions,
+  realRs: RenderState,
+): void {
+  // Synthetic chart designed to exercise EVERY hot draw path the live
+  // loop will hit:
+  //   - 1 tap RIGHT at the judge line (t inside ANTICIPATION_WINDOW_S,
+  //     0.18s) → forces drawLaneGate's anticipation pulse path so the
+  //     first real "incoming note" doesn't pay JIT for that branch.
+  //   - 1 tap mid-highway → standard drawTapNote path.
+  //   - 1 hold mid-highway → drawHoldTrail path.
+  // All three are positive songTime so they render above the judge
+  // line at songTime = 0.
+  const syntheticNotes: Note[] = [
+    { id: -100, t: 0.10, lane: 1 },
+    { id: -101, t: 0.5,  lane: 0 },
+    { id: -102, t: 0.7,  endT: 0.95, lane: 2 },
+  ];
+  const syntheticState = new GameState(syntheticNotes);
+  // Seed one of EACH judgment popup, one tail-judgment popup
+  // (`tail: true` exercises the "PERFECT·HOLD" label path), and one
+  // generic judgment so drawJudgmentPopups warms text metrics for
+  // every per-grade color + label combination it'll later hit.
+  syntheticState.events = [
+    { noteId: -201, lane: 0, judgment: "perfect", delta: 0,    at: -0.05 },
+    { noteId: -202, lane: 1, judgment: "great",   delta: 0.02, at: -0.05 },
+    { noteId: -203, lane: 2, judgment: "good",    delta: 0.04, at: -0.05 },
+    { noteId: -204, lane: 3, judgment: "miss",    delta: 0.20, at: -0.05 },
+    { noteId: -205, lane: 2, judgment: "perfect", delta: 0,    at: -0.05, tail: true },
+  ];
+
+  // Throwaway RenderState — keeps the caller's particles / pendingHits /
+  // milestone untouched. We pre-charge:
+  //   - pendingHits: one per judgment so drainHits spawns particles +
+  //     shockwaves of every flavor (warms updateAndDrawParticles +
+  //     updateAndDrawShockwaves end-to-end).
+  //   - laneFlash: every lane non-zero so the "kiss under judgment line"
+  //     gradient path runs for all four lanes.
+  //   - laneAnticipation: every lane non-zero so the gate's
+  //     anticipation halo path is JIT'd.
+  //   - combo + milestone: triggers drawMilestoneVignette + the
+  //     drawCanvasCombo number-rendering path (digits, kerning).
+  const throwawayRs: RenderState = {
+    recentEvents: syntheticState.events,
+    laneFlash: new Array(TOTAL_LANES).fill(0.6),
+    laneAnticipation: new Array(TOTAL_LANES).fill(0.6),
+    particles: [],
+    shockwaves: [],
+    pendingHits: [
+      { lane: 0, judgment: "perfect" },
+      { lane: 1, judgment: "great" },
+      { lane: 2, judgment: "good" },
+      { lane: 3, judgment: "miss" },
+    ],
+    combo: 100,
+    milestone: { strength: 0.8, combo: 100 },
+    cache: realRs.cache,
+  };
+
+  try {
+    drawFrame(ctx, syntheticState, 0, 0.016, opts, throwawayRs);
+  } catch {
+    // Pre-warm is best-effort. If the canvas is in a weird state mid-
+    // resize, the next real frame will rebuild the cache from scratch.
+    return;
+  }
+
+  // Move the freshly-built cache to the real rs so the live loop hits
+  // a warm cache on its first frame. Everything else (particles spawned
+  // from the pendingHit, the synthetic combo number, etc.) stays trapped
+  // in the throwaway and is discarded with it.
+  realRs.cache = throwawayRs.cache;
+
+  // Wipe the canvas so nothing the prewarm drew is visible — both
+  // Game.tsx and MultiGame.tsx have an overlay above the canvas
+  // during the prewarm window, but clearing belt-and-suspenders means
+  // we're safe even on the brief frame between mount and overlay paint.
+  // The clear uses the canvas's BACKING-store size (which we set with
+  // setTransform(dpr,...) in the resize handler), so passing W*H from
+  // ctx.canvas covers every drawn pixel regardless of DPR.
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.restore();
+}
+
+/**
  * Returns true if `prevCombo → newCombo` crossed any milestone threshold.
  * Used by Game / MultiGame to know when to flash + chime.
  */

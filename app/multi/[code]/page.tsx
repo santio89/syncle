@@ -32,6 +32,7 @@ import { useRoomSocket } from "@/hooks/useRoomSocket";
 import { isValidRoomCode } from "@/lib/multi/protocol";
 import type { LoadSongResult, ChartMode } from "@/lib/game/chart";
 import { loadSongById } from "@/lib/game/chart";
+import { AudioEngine } from "@/lib/game/audio";
 
 const NAME_STORAGE_KEY = "syncle.multi.name";
 
@@ -143,6 +144,63 @@ export default function MultiRoomPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const lastLoadedKeyRef = useRef<string | null>(null);
 
+  // Page-level AudioEngine.
+  //
+  // Hoisted up here (instead of living inside <MultiGame>) so we can
+  // decode the song's AudioBuffer DURING the `loading` phase — i.e.
+  // alongside the .osz download — instead of after the player has
+  // already advanced into `countdown` and the engine is being created
+  // for the first time. The previous topology meant the decode (~100–
+  // 500ms for a 3min mp3 / ogg) raced against the visible "3 / 2 / 1"
+  // overlay; on slow machines the schedule effect would sit waiting
+  // on `audioReady` for a beat or two and the playhead would catch
+  // up via the late-join seek path. With the hoist, decode happens
+  // while everyone's already staring at the loading screen, so by
+  // the time `MultiGame` mounts the AudioBuffer is already in memory
+  // and `audio.start()` is just reserving a future timestamp on a
+  // pre-warmed graph. No race, no seek-fallback, no risk of the
+  // first frame of a song being a 1-frame catch-up.
+  //
+  // Engine lifecycle:
+  //   - Created lazily on the FIRST song load (loading effect below).
+  //   - Reused across rounds in the same room — `loadFromBytes()`
+  //     dedups via its `key` arg AND replaces the buffer in-place,
+  //     so the AudioContext + master/SFX graph survives every round
+  //     change.
+  //   - Stopped (but not destroyed) when we go back to lobby. Stopped
+  //     AND closed implicitly when the page unmounts (the engine ref
+  //     is dropped; AudioContext gets GC'd).
+  //
+  // Why an `AudioEngine | null` ref + a boolean state instead of just
+  // a state: the engine itself is a heavy mutable object, and React
+  // would treat every internal mutation as a state change if we
+  // tried to put it in `useState`. The boolean is what consumers
+  // (MultiGame's schedule effect) actually depend on.
+  const audioEngineRef = useRef<AudioEngine | null>(null);
+  const [audioReady, setAudioReady] = useState<boolean>(false);
+
+  // Tracks the song key the in-flight chart download / decode is for.
+  // We DON'T tie cancellation to effect lifecycle (a `let cancelled`
+  // captured in closure), because the loading effect re-runs on every
+  // phase tick — so a slow loader whose room flips from `loading` →
+  // `countdown` while their download is in flight would have their
+  // promise short-circuited by the cleanup, yet `lastLoadedKeyRef`
+  // would still point at the same key and the new effect run would
+  // early-return. Result: the player gets stuck on "Decoding audio…"
+  // forever. With a key-keyed inflight ref, the in-flight promise
+  // checks `inflightLoadKeyRef.current === key` on resolve — phase
+  // changes don't disturb it; only a real song change supersedes it.
+  // The mounted ref handles the page-unmount safety (don't setState
+  // after unmount).
+  const inflightLoadKeyRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // When the snapshot says "loading" with a selected song, kick off the
   // download. We dedup by `${beatmapsetId}:${mode}` so we don't re-download
   // when the snapshot ticks for unrelated reasons (player joined, name
@@ -180,40 +238,112 @@ export default function MultiRoomPage() {
     const key = `${song.beatmapsetId}:${targetMode}`;
     if (lastLoadedKeyRef.current === key) return;
     lastLoadedKeyRef.current = key;
+    inflightLoadKeyRef.current = key;
+
+    // `stillCurrent()` is the cancellation predicate. It's true while
+    // (a) the page is still mounted AND (b) the in-flight load is
+    // still for THIS song key. Phase changes don't flip either of
+    // these, so a slow loader whose room moves on to `countdown` /
+    // `playing` mid-download keeps grinding and resolves cleanly into
+    // the late-join recovery path (their MultiGame mounts; the
+    // schedule effect sees `startsAt` is in the past and seeks the
+    // audio buffer by `now - startsAt` so they slot into the song
+    // timeline at the right offset).
+    const stillCurrent = () =>
+      mountedRef.current && inflightLoadKeyRef.current === key;
 
     setLoadedChart(null);
+    setAudioReady(false);
     setLoadProgress(`Downloading ${song.artist} — ${song.title}…`);
     setLoadError(null);
 
-    let cancelled = false;
+    // Two-stage prep: download + parse the chart, THEN decode the audio
+    // bytes into the (page-level) AudioEngine. Both stages run before
+    // we report `markReady()` so the server only advances past `loading`
+    // once every player has the AudioBuffer actually in memory — no
+    // "decoded during countdown" race, no first-frame catch-up via the
+    // seek-fallback path. The progress label is updated between stages
+    // so the LoadingScreen shows what we're actually doing.
     loadSongById(song.beatmapsetId, targetMode, {
       onProgress: (msg) => {
-        if (!cancelled) setLoadProgress(msg);
+        if (stillCurrent()) setLoadProgress(msg);
       },
     })
-      .then((res) => {
-        if (cancelled) return;
+      .then(async (res) => {
+        if (!stillCurrent()) return res;
         setLoadedChart(res);
+        setLoadProgress("Decoding audio…");
+
+        // Stand the engine up on first need. Reused across rounds —
+        // `loadFromBytes()` swaps the buffer in-place, so the
+        // AudioContext + master / SFX graph carries over.
+        if (!audioEngineRef.current) {
+          audioEngineRef.current = new AudioEngine();
+        }
+        const engine = audioEngineRef.current;
+        // `ensureContext()` is best-effort; the AudioContext might
+        // start suspended if the browser hasn't seen a user gesture
+        // for this tab yet (rare in practice — players reach loading
+        // by clicking READY or START). Decode works fine on a
+        // suspended context, and `audio.start()` resumes it later.
+        try {
+          engine.ensureContext();
+        } catch {
+          /* will recover when start() is called */
+        }
+
+        try {
+          if (res.delivery === "remote" && res.audioBytes && res.audioKey) {
+            // `decodeAudioData` detaches its input — slice so the
+            // original bytes live on in `loadedChart` for any future
+            // re-use (e.g. a "play again" round in the same room
+            // that re-fires this effect with the same key, which
+            // dedups via the loadedUrl/key check inside the engine).
+            await engine.loadFromBytes(res.audioBytes.slice(0), res.audioKey);
+          } else if (res.meta.audioUrl) {
+            await engine.load(res.meta.audioUrl);
+          }
+        } catch {
+          // Decode failed — surface it as a load error so the host
+          // can see and retry, same path as a chart-fetch failure.
+          if (stillCurrent()) {
+            setLoadError("Failed to decode audio");
+            // Re-check phase at resolution time (not the captured
+            // `isLoadingPhase` from when the load started): a slow
+            // loader's room may have already moved past `loading`,
+            // in which case the server would ignore the failure
+            // report anyway and the player will catch up via the
+            // late-join path.
+            if (snapshot?.phase === "loading") {
+              actions.reportLoadFailure("Failed to decode audio");
+            }
+          }
+          return res;
+        }
+
+        if (!stillCurrent()) return res;
+        setAudioReady(true);
         setLoadProgress(null);
-        // Only flag ourselves as `ready` to the server when we're in the
-        // loading phase — that's the signal the server uses to advance
-        // past `loading`. On reconnect-into-play we just want the local
-        // chart populated so the canvas can render; the server is past
-        // the readiness gate already and a stray `client:ready` would
-        // be ignored at best, churn state at worst.
-        if (isLoadingPhase) actions.markReady();
+        // Only flag ourselves as `ready` to the server when the room
+        // is STILL gating on us in the `loading` phase. On
+        // reconnect-into-play AND on the slow-loader-late-join path
+        // the server has already advanced past the gate, so a stray
+        // `client:ready` would be ignored at best, churn state at
+        // worst — we just want the local chart + audio populated so
+        // the canvas can render and the schedule effect can seek.
+        if (snapshot?.phase === "loading") actions.markReady();
+        return res;
       })
       .catch((err) => {
-        if (cancelled) return;
+        if (!stillCurrent()) return;
         const msg = err?.message ?? "Failed to load song";
         setLoadError(msg);
-        // Same rationale: only report a load failure to the server while
-        // it's still gating on our readiness in the `loading` phase.
-        if (isLoadingPhase) actions.reportLoadFailure(msg);
+        if (snapshot?.phase === "loading") actions.reportLoadFailure(msg);
       });
-    return () => {
-      cancelled = true;
-    };
+    // No cleanup: cancellation is keyed by song, not effect lifecycle,
+    // so phase / loadedChart re-runs of this effect don't disturb the
+    // in-flight load. The next song change will bump
+    // `inflightLoadKeyRef.current` and supersede us cleanly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     snapshot?.phase,
@@ -224,15 +354,32 @@ export default function MultiRoomPage() {
 
   // Reset the chart when we go back to lobby so a fresh round can re-trigger
   // the loading effect for the same song (same key) without thinking it was
-  // already done.
+  // already done. Also tears down any in-flight audio so the next round
+  // starts from silence — the engine itself is kept alive (its
+  // AudioContext + graph are reused) but the playing source is stopped.
   useEffect(() => {
     if (snapshot?.phase === "lobby") {
       lastLoadedKeyRef.current = null;
+      inflightLoadKeyRef.current = null;
       setLoadedChart(null);
       setLoadProgress(null);
       setLoadError(null);
+      setAudioReady(false);
+      audioEngineRef.current?.stop();
     }
   }, [snapshot?.phase]);
+
+  // Stop the engine when the page itself unmounts (player navigated
+  // away, leave-room, etc). Dropping the ref is enough for the
+  // AudioContext to be GC'd; we also call `stop()` so any currently-
+  // playing source releases immediately rather than running until its
+  // scheduled end while the user is already on a different page.
+  useEffect(() => {
+    return () => {
+      audioEngineRef.current?.stop();
+      audioEngineRef.current = null;
+    };
+  }, []);
 
   /* ------------- join form (for cold URL hits) ------------- */
   const handleJoin = useCallback(async () => {
@@ -350,6 +497,8 @@ export default function MultiRoomPage() {
               loadError={loadError}
               loadDeadline={loadDeadline}
               selectedMode={selectedMode}
+              audioEngine={audioEngineRef.current}
+              audioReady={audioReady}
             />
           )}
           {me && (
@@ -396,6 +545,8 @@ export default function MultiRoomPage() {
               loadError={loadError}
               loadDeadline={loadDeadline}
               selectedMode={selectedMode}
+              audioEngine={audioEngineRef.current}
+              audioReady={audioReady}
             />
           )}
 
@@ -441,6 +592,8 @@ function RoomBody({
   loadError,
   loadDeadline,
   selectedMode,
+  audioEngine,
+  audioReady,
 }: {
   code: string;
   snapshot: RoomSnapshot;
@@ -455,6 +608,11 @@ function RoomBody({
   loadError: string | null;
   loadDeadline: number | null;
   selectedMode: ChartMode | null;
+  // Threaded down from the page so the in-game canvas reuses the
+  // SAME engine that decoded the audio during the loading screen.
+  // See `audioEngineRef` declaration in `MultiRoomPage` for rationale.
+  audioEngine: AudioEngine | null;
+  audioReady: boolean;
 }) {
   // Wrap each phase in a fade-in shell so transitions from one phase
   // to another don't pop. The shell uses Tailwind's `animate-fade-in`
@@ -501,6 +659,8 @@ function RoomBody({
             actions={actions}
             me={me}
             mode={selectedMode ?? "easy"}
+            audioEngine={audioEngine}
+            audioReady={audioReady}
           />
         );
       case "results":

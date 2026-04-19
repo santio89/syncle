@@ -117,6 +117,29 @@ export function LoadingScreen({
           />
         </div>
 
+        {/* Visual ready-ratio bar. Fills as more clients call markReady().
+            Pairs with the per-player grid on the right but scans faster:
+            one glance tells the host "we're 4/6 done". The deadline tint
+            propagates here too so the bar itself flashes amber/red as
+            time runs short. */}
+        <ReadyProgressBar
+          ready={ready}
+          total={total}
+          urgency={
+            remaining === null
+              ? "neutral"
+              : remaining < 5000
+                ? "danger"
+                : remaining < 10000
+                  ? "warn"
+                  : "neutral"
+          }
+        />
+
+        <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
+          ░ Match starts at the deadline — late loaders join in mid-song
+        </p>
+
         {isHost && (
           <button
             onClick={onCancel}
@@ -226,6 +249,51 @@ function Stat({
       >
         {value}
       </p>
+    </div>
+  );
+}
+
+function ReadyProgressBar({
+  ready,
+  total,
+  urgency,
+}: {
+  ready: number;
+  total: number;
+  urgency: StatTone;
+}) {
+  const safeTotal = Math.max(1, total);
+  const pct = Math.min(100, Math.round((ready / safeTotal) * 100));
+  const fillClass =
+    urgency === "danger"
+      ? "bg-rose-400"
+      : urgency === "warn"
+        ? "bg-yellow-400"
+        : "bg-accent";
+  const borderClass =
+    urgency === "danger"
+      ? "border-rose-500/60"
+      : urgency === "warn"
+        ? "border-yellow-400/40"
+        : "border-bone-50/20";
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
+        <span>room load</span>
+        <span className="tabular-nums text-bone-50/80">{pct}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        className={`relative h-3 w-full border-2 ${borderClass} bg-bone-50/[0.04] overflow-hidden`}
+      >
+        <div
+          className={`absolute inset-y-0 left-0 ${fillClass} transition-[width] duration-300 ease-out`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }

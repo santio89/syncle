@@ -923,6 +923,30 @@ class RoomRegistry {
       this.transitionToLobby(room);
       return;
     }
+    // Forced-start path (deadline elapsed, at least one player ready):
+    // we DON'T kick the slow players. They stay in the room and
+    // continue downloading / decoding; once their client finishes it
+    // calls `client:ready` (which is now a no-op past loading), or
+    // their MultiGame mounts and the page's late-join recovery path
+    // re-runs the load + decode. The schedule effect then seeks the
+    // audio by `now - startsAt` so they slot into the song timeline
+    // at the right offset. The room owner gets a soft notice so they
+    // know who is hopping in late.
+    if (forced) {
+      const stragglers = [...room.players.values()].filter(
+        (p) => p.socketId !== null && !p.ready,
+      );
+      if (stragglers.length > 0) {
+        const names = stragglers
+          .map((p) => p.name || "someone")
+          .join(", ");
+        this.emitNotice(
+          room.code,
+          "info",
+          `Starting without ${names} — they can join in late`,
+        );
+      }
+    }
     if (room.loadingTimer) {
       clearTimeout(room.loadingTimer);
       room.loadingTimer = null;
@@ -939,6 +963,17 @@ class RoomRegistry {
       if (room.phase !== "countdown") return;
       room.phase = "playing";
       room.songStartedAt = Date.now();
+      // Defense in depth: scrub any `final` that somehow leaked into
+      // a player record before the song actually started. Today
+      // `applyFinished` is gated on `phase === "playing"`, but if a
+      // future change re-introduces a pre-play write path (or a bug
+      // sneaks one in), this guarantees that the standings table
+      // can't be poisoned by a value the player didn't earn during
+      // this round's actual playback.
+      for (const p of room.players.values()) {
+        p.final = null;
+        p.live = emptyLive();
+      }
       this.io
         .to(`room:${room.code}`)
         .emit("phase:playing", { songStartedAt: room.songStartedAt });
@@ -1041,7 +1076,17 @@ class RoomRegistry {
   applyFinished(code: string, sessionId: string, raw: unknown): void {
     const room = this.rooms.get(code);
     if (!room) return;
-    if (room.phase !== "playing" && room.phase !== "countdown") return;
+    // Anti-cheat: only accept `client:finished` while the song is
+    // ACTUALLY playing. The previous `phase === "countdown"` carve-out
+    // was a leaderboard exploit — a malicious client could submit a
+    // forged `final` (with score / combo clamped at the upper bounds
+    // below, so still a "fake high score") BEFORE the song even
+    // started, locking it in `p.final`. Standings (`standingsOf`)
+    // prefer `p.final` over `p.live`, so the cheater would appear
+    // ranked without playing a single note. Restricting this to
+    // `playing` means a finished payload requires the song to have
+    // actually been running.
+    if (room.phase !== "playing") return;
     const p = room.players.get(sessionId);
     if (!p) return;
     const final = raw as Partial<FinalStats> | null;
