@@ -203,9 +203,7 @@ export default function MultiEntryClient() {
             <p>
               The realtime server sleeps when idle and takes around{" "}
               <strong className="text-bone-50">30 seconds</strong> to spin
-              back up on the first connection. This happens once — every
-              player who joins after that connects instantly. Single-player
-              isn&apos;t affected.
+              back up on the first connection.
             </p>
           </div>
         </div>
