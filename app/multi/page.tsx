@@ -23,7 +23,6 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { GradientBg } from "@/components/GradientBg";
 import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
@@ -74,8 +73,6 @@ export default function MultiEntryPage() {
 
   return (
     <main className="relative min-h-screen overflow-hidden">
-      <GradientBg />
-
       {/* Padding kept in lockstep with the homepage / /play / room
           headers (px-4 sm:px-6 py-3) so the 38×38 icon-btn row
           produces the same overall header height on every page —

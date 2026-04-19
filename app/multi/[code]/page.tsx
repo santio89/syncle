@@ -19,7 +19,6 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CopyToast } from "@/components/CopyToast";
-import { GradientBg } from "@/components/GradientBg";
 import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
@@ -279,8 +278,6 @@ export default function MultiRoomPage() {
 
   return (
     <main className="relative flex h-screen w-screen flex-col overflow-hidden">
-      <GradientBg />
-
       {/* Padding kept in lockstep with the homepage / /play / /multi
           headers (px-4 sm:px-6 py-3) so the 38×38 icon-btn row
           produces the same overall header height on every page. */}
@@ -736,7 +733,6 @@ function NoticeStack({
 function InvalidCodeScreen({ code, onBack }: { code: string; onBack: () => void }) {
   return (
     <main className="relative min-h-screen">
-      <GradientBg />
       <div className="relative z-10 mx-auto flex max-w-md flex-col items-center justify-center gap-4 px-4 py-32 text-center">
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-rose-400">
           Bad room code
