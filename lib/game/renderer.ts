@@ -237,6 +237,14 @@ interface RenderCache {
   paletteId: ThemeName;
   vignette: CanvasGradient;
   highway: CanvasGradient;
+  /**
+   * Rail gradient stroke baked at unit accent alpha with a vertical fade
+   * (0 at the new visual top, 1 inside the original highway, 0 at the
+   * new visual bottom). The per-frame draw multiplies it via
+   * `globalAlpha = railAlpha` so beat-pulse + milestone still drive
+   * intensity without re-allocating a gradient every frame.
+   */
+  railGradient: CanvasGradient;
   /** Milestone vignette gradient — only recreated on resize/theme swap.
    *  Re-allocating this every frame during a milestone showed up as ~3% of
    *  total frame time in profile traces. */
@@ -248,6 +256,28 @@ interface RenderCache {
   topRightX: number;
   topY: number;
   judgeY: number;
+  /**
+   * Visual top/bottom of the trapezoid AFTER the edge-fade extension.
+   * Strictly visuals — note spawn/travel still keys off `topY`/`judgeY`
+   * so timing perception is identical to the pre-fade version.
+   *
+   * `bottomY` is the unfaded bottom edge (judgeY + 50) and is used by
+   * the lane separators which intentionally stop at the original extent
+   * so they don't bleed into the fade zone.
+   */
+  topYVisual: number;
+  bottomY: number;
+  bottomYVisual: number;
+  /**
+   * Trapezoid corners EXTRAPOLATED along the existing perspective slope
+   * to the new visual top/bottom. Re-derived from the same slope as the
+   * rails so the fade region's left/right edges remain perfectly
+   * collinear with the rails — no perspective break.
+   */
+  visTopLeftX: number;
+  visTopRightX: number;
+  visBottomLeftX: number;
+  visBottomRightX: number;
   /** Per-lane judge-line X (pre-computed for particle spawn). */
   laneX: number[];
   /** Per-(N-1) lane separator endpoint pairs.
@@ -286,6 +316,49 @@ const ANTICIPATION_WINDOW_S = 0.18;
  */
 const JUDGED_FADE_S = 0.10;
 const PAST_GRACE_S = 0.16;
+/**
+ * Fraction of canvas height the trapezoid extends BEYOND the original
+ * top and bottom edges. Used purely for visuals — gameplay math
+ * (judgeY, topY, note spawn/travel timing) is unchanged.
+ *
+ * 4% per side (≈32px on a typical 800px tall canvas) is the smallest
+ * value where the alpha gradient has enough vertical room to actually
+ * READ as a soft falloff. Anything tighter (we tried 1.2% first) just
+ * compresses the ramp into a few pixels and the eye still sees a hard
+ * line — the gradient is mathematically correct but visually invisible
+ * because both the highway color and the page bg are within ~20% value
+ * of each other in both themes.
+ *
+ * The new "fade zones" sit between the original edges and the new
+ * visual edges; the highway gradient + rails fade their alpha to 0
+ * inside these zones so the playfield melts into the page bg instead
+ * of cutting at a hard line. Lane gates / judge line are unaffected
+ * (they live well inside the fully-opaque region at judgeY).
+ */
+const EDGE_FADE_PCT = 0.04;
+/**
+ * How far the alpha ramp bleeds INTO the original highway area, as a
+ * fraction of the new fade strip height. 0 = fade is contained strictly
+ * to the new strip (looks abrupt because both surfaces are similar
+ * tones); 1.0 = fade is twice as wide, half inside the new strip and
+ * half inside the original highway. 0.5 lands in the sweet spot — the
+ * note travel area loses ~16px of "fully opaque" highway at top and
+ * bottom but gains a clearly visible ease-in/out, and the boundary
+ * between the new and original areas is now invisible.
+ */
+const EDGE_FADE_BLEED = 0.5;
+/**
+ * Top-of-progress threshold inside which notes (and beat lines) ramp
+ * their alpha from 0 → 1 as they enter the highway. Reads as the note
+ * "materializing" onto the floor instead of popping in at full alpha.
+ *
+ * 0.95 means the fade happens across the first 5% of progress; on a
+ * 1.2s leadTime that's ~60ms which is exactly the "very quick" window
+ * the player asked for — fast enough to feel snappy, long enough to
+ * kill the pop. The same constant is reused for hold-trail head fade
+ * and beat-line top fade so all three top-edge effects stay in sync.
+ */
+const SPAWN_FADE_PROGRESS = 0.95;
 /** Combo thresholds that trigger a screen-wide milestone flash. */
 const COMBO_MILESTONES = [25, 50, 100, 200, 350, 500, 750, 1000] as const;
 
@@ -312,7 +385,7 @@ function hexToRgb(hex: string): RGB {
 export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
   leadTime: 1.2,
   laneHeld: new Array(TOTAL_LANES).fill(false),
-  judgeLineY: 0.78,
+  judgeLineY: 0.82,
   bpm: 161,
   offset: 0.18,
   theme: "dark",
@@ -473,8 +546,17 @@ function ensureCache(
     return rs.cache;
   }
 
+  // Vertical placement of the playfield. `topY` + `judgeY` were
+  // translated down together by ~4% of H vs the pre-tweak placement
+  // (0.05 / 0.78 → 0.09 / 0.82) so the highway sits lower in its
+  // container — gives the score / settings cards visible breathing
+  // room above the trapezoid and soaks up the previously-empty black
+  // band beneath the lane gates. Playfield HEIGHT is unchanged
+  // (judgeY - topY ≈ 0.73 * H in both versions), so note travel
+  // time, perspective, and every other y-derived constant stay
+  // identical — this is a pure translate.
   const judgeY = H * opts.judgeLineY;
-  const topY = H * 0.05;
+  const topY = H * 0.09;
   const cx = W / 2;
   // Highway sizing.
   //
@@ -504,10 +586,81 @@ function ensureCache(
   vignette.addColorStop(0, "rgba(0,0,0,0)");
   vignette.addColorStop(1, palette.vignetteOuter);
 
-  const highway = ctx.createLinearGradient(0, topY, 0, judgeY);
-  highway.addColorStop(0, palette.highwayStops[0]);
-  highway.addColorStop(0.7, palette.highwayStops[1]);
-  highway.addColorStop(1, palette.highwayStops[2]);
+  // Visual edge extension. The trapezoid's geometric "play area" stays
+  // anchored at topY → bottomY (judgeY + 50) — that's where notes live
+  // and where the rails *used* to terminate. We extend outward by
+  // EDGE_FADE_PCT of H on each side and use that extra strip purely for
+  // the fade-to-transparent so the highway melts into the page bg
+  // instead of having a hard edge. Clamped to the canvas so we never
+  // try to draw past the surface even on extreme aspect ratios.
+  const bottomY = judgeY + 50;
+  const fadePx = H * EDGE_FADE_PCT;
+  const topYVisual = Math.max(0, topY - fadePx);
+  const bottomYVisual = Math.min(H, bottomY + fadePx);
+
+  // Extrapolate the trapezoid corners along the existing rail slope so
+  // the fade-zone widening matches the perspective EXACTLY. If we just
+  // pushed the corners straight up/down we'd get a tiny "step" where
+  // the rails meet the fade region — the eye picks that up immediately.
+  const slope = (bottomHalf - topHalf) / (bottomY - topY);
+  const visTopHalf = Math.max(0, topHalf - slope * (topY - topYVisual));
+  const visBottomHalf = bottomHalf + slope * (bottomYVisual - bottomY);
+  const visTopLeftX = cx - visTopHalf;
+  const visTopRightX = cx + visTopHalf;
+  const visBottomLeftX = cx - visBottomHalf;
+  const visBottomRightX = cx + visBottomHalf;
+
+  // Highway gradient — spans the FULL visual extent (including the
+  // fade zones) and uses rgba so we can fade alpha to 0 at the very
+  // top and very bottom.
+  //
+  // The "fully opaque" stops are placed PAST the original top/bottom
+  // by EDGE_FADE_BLEED of the strip width, so the alpha ramp visibly
+  // covers (a) the entire new strip plus (b) a small slice of the
+  // original highway. Without this bleed the ramp is contained inside
+  // a ~32px strip whose start AND end pixels are visible against the
+  // page bg simultaneously — the eye picks the ramp endpoints out as
+  // two faint horizontal lines instead of "no edge". With the bleed,
+  // the alpha-1 anchor sits well inside the highway and the ramp
+  // gradient looks like a single smooth dissolve.
+  //
+  // The mid color stop is repositioned so its relative spacing INSIDE
+  // the original highway area is preserved (the 0.7 stop still sits
+  // 70% of the way down the original gradient, not 70% of the way
+  // down the extended gradient).
+  const totalH = bottomYVisual - topYVisual;
+  const stripTop = (topY - topYVisual) / totalH;       // start of original area
+  const stripBot = (bottomY - topYVisual) / totalH;    // end of original area
+  // Compute strip heights independently so a canvas tall enough to
+  // clamp `topYVisual` to 0 (or `bottomYVisual` to H) still picks
+  // bleed values that are proportional to the ACTUAL strip on each
+  // side rather than assuming top/bottom strips are equal.
+  const stripHTop = stripTop;
+  const stripHBot = 1 - stripBot;
+  const fadeTopAnchor = stripTop + stripHTop * EDGE_FADE_BLEED;
+  const fadeBotAnchor = stripBot - stripHBot * EDGE_FADE_BLEED;
+  const innerMid = fadeTopAnchor + 0.7 * (fadeBotAnchor - fadeTopAnchor);
+  const stop0 = hexToRgb(palette.highwayStops[0]);
+  const stop1 = hexToRgb(palette.highwayStops[1]);
+  const stop2 = hexToRgb(palette.highwayStops[2]);
+  const highway = ctx.createLinearGradient(0, topYVisual, 0, bottomYVisual);
+  highway.addColorStop(0, rgba(stop0, 0));
+  highway.addColorStop(fadeTopAnchor, rgba(stop0, 1));
+  highway.addColorStop(innerMid, rgba(stop1, 1));
+  highway.addColorStop(fadeBotAnchor, rgba(stop2, 1));
+  highway.addColorStop(1, rgba(stop2, 0));
+
+  // Rail gradient — same fade anchors at unit accent alpha so the
+  // rails fade in/out in lockstep with the highway floor. Per-frame
+  // rail draw sets `globalAlpha = railAlpha` which scales the WHOLE
+  // gradient (including the gradient's own alpha stops); the
+  // rails-to-floor alignment is therefore exact regardless of
+  // beat-pulse strength. One allocation per resize/theme.
+  const railGradient = ctx.createLinearGradient(0, topYVisual, 0, bottomYVisual);
+  railGradient.addColorStop(0, rgba(palette.accentRgb, 0));
+  railGradient.addColorStop(fadeTopAnchor, rgba(palette.accentRgb, 1));
+  railGradient.addColorStop(fadeBotAnchor, rgba(palette.accentRgb, 1));
+  railGradient.addColorStop(1, rgba(palette.accentRgb, 0));
 
   const laneX: number[] = [];
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
@@ -538,9 +691,12 @@ function ensureCache(
   rs.cache = {
     W, H,
     paletteId: palette.id,
-    vignette, highway, milestoneVignette,
+    vignette, highway, railGradient, milestoneVignette,
     cx, bottomLeftX, bottomRightX, topLeftX, topRightX,
-    topY, judgeY, laneX,
+    topY, judgeY,
+    topYVisual, bottomY, bottomYVisual,
+    visTopLeftX, visTopRightX, visBottomLeftX, visBottomRightX,
+    laneX,
     separatorTopX, separatorBotX,
   };
   return rs.cache;
@@ -562,33 +718,49 @@ function drawHighway(
   cache: RenderCache,
   palette: ThemePalette,
 ) {
-  // Trapezoid floor
+  // Trapezoid floor — drawn at the EXTENDED visual extent so the
+  // baked highway gradient can fade alpha to 0 at top and bottom. The
+  // gameplay area (where notes live) still occupies topY → judgeY+50;
+  // everything outside that band is the fade strip.
   ctx.beginPath();
-  ctx.moveTo(hw.topLeftX, hw.topY);
-  ctx.lineTo(hw.topRightX, hw.topY);
-  ctx.lineTo(hw.bottomRightX, hw.judgeY + 50);
-  ctx.lineTo(hw.bottomLeftX, hw.judgeY + 50);
+  ctx.moveTo(cache.visTopLeftX, cache.topYVisual);
+  ctx.lineTo(cache.visTopRightX, cache.topYVisual);
+  ctx.lineTo(cache.visBottomRightX, cache.bottomYVisual);
+  ctx.lineTo(cache.visBottomLeftX, cache.bottomYVisual);
   ctx.closePath();
   ctx.fillStyle = cache.highway;
   ctx.fill();
 
-  // Combo milestone bumps the rails' brightness + glow on top of the
-  // beat pulse — a "you're cooking" moment that lasts ~700ms then fades.
-  const ms = rs.milestone?.strength ?? 0;
-  const railAlpha = clamp(0.55 + beatPulse * 0.45 + ms * 0.4, 0, 1);
-  const railBlur = 10 + beatPulse * (isDownbeat ? 22 : 12) + ms * 28;
+  // Rails — fixed neon glow, no beat-pulse / milestone / downbeat
+  // modulation. Earlier versions ramped `railAlpha`, `railBlur` and
+  // `lineWidth` against `beatPulse` to "react" to the music, but at
+  // 161 BPM that's ~2.7 alpha+blur swings per second on the most
+  // visually dominant element on screen — extremely distracting and
+  // exactly what the player called out as "constantly flashing".
+  // The judgment line still pulses (it's narrow and subtle), and the
+  // milestone vignette still flashes the whole canvas tinted on
+  // combo milestones, so the music-reactive feedback isn't lost — it
+  // just isn't competing with the rails for attention anymore.
+  //
+  // Strokestyle uses the CACHED `railGradient` (baked once per
+  // resize/theme at unit accent alpha with vertical 0→1→0 fade) so
+  // the rails meet the highway floor's fade-to-transparent exactly
+  // at topYVisual / bottomYVisual without per-frame allocation.
   ctx.save();
-  ctx.lineWidth = 3 + ms * 1.5;
-  ctx.strokeStyle = rgba(palette.accentRgb, railAlpha);
-  ctx.shadowColor = rgba(palette.accentRgb, 0.85);
-  ctx.shadowBlur = railBlur;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = cache.railGradient;
+  ctx.shadowColor = rgba(palette.accentRgb, 0.95);
+  ctx.shadowBlur = 22;
   ctx.beginPath();
-  ctx.moveTo(hw.topLeftX, hw.topY);
-  ctx.lineTo(hw.bottomLeftX, hw.judgeY + 50);
-  ctx.moveTo(hw.topRightX, hw.topY);
-  ctx.lineTo(hw.bottomRightX, hw.judgeY + 50);
+  ctx.moveTo(cache.visTopLeftX, cache.topYVisual);
+  ctx.lineTo(cache.visBottomLeftX, cache.bottomYVisual);
+  ctx.moveTo(cache.visTopRightX, cache.topYVisual);
+  ctx.lineTo(cache.visBottomRightX, cache.bottomYVisual);
   ctx.stroke();
   ctx.restore();
+  // `ms` is still consumed by the judgment-line pulse below, so we
+  // resolve it here even though the rails no longer need it.
+  const ms = rs.milestone?.strength ?? 0;
 
   // Lane separators — endpoints baked once in `ensureCache` so this is
   // just N strokes per frame, no `lerp()` per separator.
@@ -606,16 +778,34 @@ function drawHighway(
     const t = firstBeat + b * beatLen;
     const progress = (t - songTime) / opts.leadTime;
     if (progress < 0 || progress > 1) continue;
+    // Beat lines that just spawned at the top get the same quick alpha
+    // ramp as notes — without it they pop into existence at full alpha
+    // right at topY, which reads as a "twitch" on every measure as the
+    // grid scrolls. Same SPAWN_FADE_PROGRESS constant as note + hold
+    // fade-ins keeps every top-edge effect in sync.
+    const beatAlpha =
+      progress > SPAWN_FADE_PROGRESS
+        ? (1 - progress) / (1 - SPAWN_FADE_PROGRESS)
+        : 1;
+    if (beatAlpha <= 0.02) continue;
     const y = hw.topY + (hw.judgeY - hw.topY) * (1 - progress);
     const xL = lerp(hw.topLeftX, hw.bottomLeftX, 1 - progress);
     const xR = lerp(hw.topRightX, hw.bottomRightX, 1 - progress);
     const isMeasure = Math.round((t - opts.offset) / beatLen) % 4 === 0;
     ctx.strokeStyle = isMeasure ? palette.measureLine : palette.beatLine;
     ctx.lineWidth = isMeasure ? 2 : 1;
+    // save/restore only on the few frames a beat is in the fade zone —
+    // most frames are fully opaque and skip the state shuffle entirely.
+    const needsAlpha = beatAlpha < 1;
+    if (needsAlpha) {
+      ctx.save();
+      ctx.globalAlpha = beatAlpha;
+    }
     ctx.beginPath();
     ctx.moveTo(xL, y);
     ctx.lineTo(xR, y);
     ctx.stroke();
+    if (needsAlpha) ctx.restore();
   }
 
   // Notes — draw hold trails first (behind), then heads.

@@ -714,6 +714,23 @@ function CanvasPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, actions]);
 
+  // Gate persistence on hydration having actually finished. Without
+  // this gate, the mount sequence is:
+  //   (1) state initialized to hardcoded defaults (vol=0.85, sfx=true,
+  //       metronome=true, fpsLock=null)
+  //   (2) the four save-on-change effects fire FIRST and clobber
+  //       localStorage with those defaults
+  //   (3) the hydration effect runs and reads back the values it just
+  //       overwrote — so the player's persisted settings (whether set
+  //       in solo or in a previous multi session) silently revert.
+  // `hasHydratedRef` flips true after the load setters are queued, so
+  // the save calls become no-ops for the initial render and start
+  // working again on the next render driven by the hydration setters
+  // (or any subsequent user input). Audio-engine mirror calls
+  // (`setMetronome` / `setVolume` / `setSfx`) still run unconditionally
+  // so the engine always reflects live state.
+  const hasHydratedRef = useRef(false);
+
   // Mirror React state into the AudioEngine. `loaded` is in the dep list
   // for both effects so the values get re-applied as soon as the engine
   // finishes (re)initializing for a new song — otherwise toggling
@@ -721,12 +738,12 @@ function CanvasPane({
   // would silently drop the value.
   useEffect(() => {
     audioRef.current?.setMetronome(metronome);
-    saveMetronome(metronome);
+    if (hasHydratedRef.current) saveMetronome(metronome);
   }, [metronome, loaded]);
 
   useEffect(() => {
     audioRef.current?.setVolume(volume);
-    saveVolume(volume);
+    if (hasHydratedRef.current) saveVolume(volume);
   }, [volume, loaded]);
 
   // SFX mirror — same dual-write pattern as `volume` / `metronome`.
@@ -735,7 +752,7 @@ function CanvasPane({
   // same room never silently drops the preference.
   useEffect(() => {
     audioRef.current?.setSfx(sfx);
-    saveSfx(sfx);
+    if (hasHydratedRef.current) saveSfx(sfx);
   }, [sfx, loaded]);
 
   // Hydrate persisted rock-meter settings (volume / fps-lock / sfx /
@@ -748,12 +765,17 @@ function CanvasPane({
     setFpsLock(loadFpsLock());
     setSfx(loadSfx());
     setMetronome(loadMetronome());
+    // Flip the gate AFTER queuing the state setters above. React
+    // batches the four updates into a single re-render, after which
+    // the per-setting save effects fire — and by then the ref is true
+    // so the persisted values are written back (no-op if unchanged).
+    hasHydratedRef.current = true;
   }, []);
 
   // Persist the FPS lock — the rAF loop reads `fpsLockRef`, so this is
   // purely about remembering the choice across reconnects / refreshes.
   useEffect(() => {
-    saveFpsLock(fpsLock);
+    if (hasHydratedRef.current) saveFpsLock(fpsLock);
   }, [fpsLock]);
 
   // Stop the engine on unmount.

@@ -333,21 +333,35 @@ export default function Game() {
     };
   }, [displayMeta, metronome, volume, sfx]);
 
+  // Gate the persistence side of every settings effect on the
+  // hydration having actually finished. The naive pattern (save on
+  // every change, hydrate from storage in a separate `[]`-dep effect)
+  // races itself: React mounts with the hardcoded defaults, the save
+  // effects fire FIRST and clobber storage with those defaults, then
+  // the hydration effect runs and reads back the values it just
+  // overwrote. The end result is that a player who set vol=0.5 in
+  // one session (or in the OTHER mode) sees the slider snap back to
+  // 0.85 here. `hasHydratedRef` flips true after `loadX()` is wired
+  // into state, so saves stay no-ops until then; the audio-engine
+  // mirror calls (`setMetronome`, `setVolume`, `setSfx`) still run
+  // every render so the engine reflects the live state regardless.
+  const hasHydratedRef = useRef(false);
+
   useEffect(() => {
     audioRef.current?.setMetronome(metronome);
-    saveMetronome(metronome);
+    if (hasHydratedRef.current) saveMetronome(metronome);
   }, [metronome]);
 
   useEffect(() => {
     audioRef.current?.setVolume(volume);
-    saveVolume(volume);
+    if (hasHydratedRef.current) saveVolume(volume);
   }, [volume]);
 
   // Persist the FPS lock the moment it changes (the rAF loop already
   // picks it up via fpsLockRef; this just keeps the choice across
   // refreshes / new sessions).
   useEffect(() => {
-    saveFpsLock(fpsLock);
+    if (hasHydratedRef.current) saveFpsLock(fpsLock);
   }, [fpsLock]);
 
   // Mirror the SFX toggle into the audio engine and persist it. Same
@@ -357,7 +371,7 @@ export default function Game() {
   // the song bus + the metronome stay live.
   useEffect(() => {
     audioRef.current?.setSfx(sfx);
-    saveSfx(sfx);
+    if (hasHydratedRef.current) saveSfx(sfx);
   }, [sfx]);
 
   // Hydrate persisted volume + detect touch-only devices on mount.
@@ -366,6 +380,11 @@ export default function Game() {
     setFpsLock(loadFpsLock());
     setSfx(loadSfx());
     setMetronome(loadMetronome());
+    // Flip the gate AFTER queuing the state setters above. React
+    // batches the four updates into a single re-render, after which
+    // the per-setting save effects fire — and by then the ref is true
+    // so the persisted values are written back (no-op if unchanged).
+    hasHydratedRef.current = true;
     if (typeof window !== "undefined" && window.matchMedia) {
       // pointer:coarse + no fine pointer ⇒ phone/tablet without a real keyboard.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
