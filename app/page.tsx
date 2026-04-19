@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
 import { MultiButton, MultiIcon } from "@/components/MultiButton";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -46,59 +46,95 @@ export default function HomePage() {
     bestEver: null,
   });
 
+  /**
+   * Fetch + apply a random song. Shared by the initial mount effect
+   * and the in-page refresh button.
+   *
+   * `force` controls the module-level session cache in chart.ts:
+   *   - `false` (initial mount) → reuse any session already primed
+   *     (e.g. from a back-nav or pre-warmed prefetch).
+   *   - `true` (refresh button) → drop the cache and roll a brand-new
+   *     random song without round-tripping through a full page reload.
+   *
+   * EAGER PREFETCH on homepage mount:
+   *
+   *   1. `loadSong()` downloads + extracts + parses the random .osz
+   *      and runs `finalize()` for the default mode. The result is
+   *      cached at module level (`sessionPromise` in chart.ts), so
+   *      when the user later clicks Play and /play calls `loadSong()`
+   *      again, the network + parse phase is skipped and only the
+   *      ~ms-cheap quantization re-runs for whichever mode they
+   *      picked. This means the picker on /play sees real per-tier
+   *      availability on first paint instead of the all-disabled
+   *      placeholder.
+   *
+   *   2. For LOCAL fallback songs (rare — only when every osu mirror
+   *      fails), the audio lives at a separate URL and isn't bundled
+   *      with the chart. We `prefetchAudio()` it so the browser HTTP
+   *      cache is warm by the time the player hits Play. Remote .osz
+   *      songs already have their decoded audio bytes sitting in the
+   *      cached session, so no extra fetch is needed.
+   */
+  const fetchSong = useCallback(
+    (force: boolean, signal: { cancelled: boolean }) => {
+      setLoad({ status: "loading" });
+      setTrackBest(null);
+      loadSong(undefined, { force })
+        .then((s) => {
+          if (signal.cancelled) return;
+          setLoad({
+            status: "ready",
+            meta: s.meta,
+            noteCount: s.notes.length,
+            modes: s.modes,
+          });
+          if (s.meta.audioUrl && !s.audioBytes) {
+            prefetchAudio(s.meta.audioUrl);
+          }
+          // Highest score this device has ever set on this song, across all
+          // difficulties — gives the player a target to chase on this refresh.
+          let highest: RunBest | null = null;
+          for (const m of MODE_ORDER) {
+            const b = loadBest(bestKey(s.meta.id, m));
+            if (b && (!highest || b.score > highest.score)) highest = b;
+          }
+          setTrackBest(highest);
+        })
+        .catch((err) => {
+          if (signal.cancelled) return;
+          setLoad({
+            status: "error",
+            message: err?.message ?? "Could not load a chart",
+          });
+        });
+    },
+    [],
+  );
+
+  /**
+   * Latest in-flight signal for `fetchSong`. We keep it in a ref so
+   * clicking refresh while a previous load is still pending cancels
+   * the older response (instead of letting it race-overwrite the
+   * newer state with a stale song).
+   */
+  const fetchSignalRef = useRef<{ cancelled: boolean } | null>(null);
+
+  const refreshSong = useCallback(() => {
+    if (fetchSignalRef.current) fetchSignalRef.current.cancelled = true;
+    const signal = { cancelled: false };
+    fetchSignalRef.current = signal;
+    fetchSong(true, signal);
+  }, [fetchSong]);
+
   useEffect(() => {
     setStats(loadStats());
-    let cancelled = false;
-    // EAGER PREFETCH on homepage mount:
-    //
-    //   1. `loadSong()` downloads + extracts + parses the random .osz
-    //      and runs `finalize()` for the default mode. The result is
-    //      cached at module level (`sessionPromise` in chart.ts), so
-    //      when the user later clicks Play and /play calls `loadSong()`
-    //      again, the network + parse phase is skipped and only the
-    //      ~ms-cheap quantization re-runs for whichever mode they
-    //      picked. This means the picker on /play sees real per-tier
-    //      availability on first paint instead of the all-disabled
-    //      placeholder.
-    //
-    //   2. For LOCAL fallback songs (rare — only when every osu mirror
-    //      fails), the audio lives at a separate URL and isn't bundled
-    //      with the chart. We `prefetchAudio()` it so the browser HTTP
-    //      cache is warm by the time the player hits Play. Remote .osz
-    //      songs already have their decoded audio bytes sitting in the
-    //      cached session, so no extra fetch is needed.
-    loadSong()
-      .then((s) => {
-        if (cancelled) return;
-        setLoad({
-          status: "ready",
-          meta: s.meta,
-          noteCount: s.notes.length,
-          modes: s.modes,
-        });
-        if (s.meta.audioUrl && !s.audioBytes) {
-          prefetchAudio(s.meta.audioUrl);
-        }
-        // Highest score this device has ever set on this song, across all
-        // difficulties — gives the player a target to chase on this refresh.
-        let highest: RunBest | null = null;
-        for (const m of MODE_ORDER) {
-          const b = loadBest(bestKey(s.meta.id, m));
-          if (b && (!highest || b.score > highest.score)) highest = b;
-        }
-        setTrackBest(highest);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setLoad({
-          status: "error",
-          message: err?.message ?? "Could not load a chart",
-        });
-      });
+    const signal = { cancelled: false };
+    fetchSignalRef.current = signal;
+    fetchSong(false, signal);
     return () => {
-      cancelled = true;
+      signal.cancelled = true;
     };
-  }, []);
+  }, [fetchSong]);
 
   return (
     <main className="relative flex min-h-[100dvh] flex-col overflow-x-hidden">
@@ -318,6 +354,24 @@ export default function HomePage() {
                       {load.meta.artist}
                       {load.meta.year ? ` · ${load.meta.year}` : ""}
                     </p>
+                    {/* Duration sits as a quiet metadata line under the
+                        artist — no border, no padding, just the same
+                        muted-mono treatment used for other secondary
+                        details (year, mapper, etc. when shown). The
+                        old bordered chip in the bottom-right corner
+                        above the PLAY CTA was visually competing with
+                        the CTA; demoting it to inline metadata lets
+                        the PLAY button stand on its own. */}
+                    <p
+                      className="mt-1 font-mono text-[0.78rem] uppercase tracking-widest text-bone-50/55"
+                      style={
+                        load.meta.coverUrl
+                          ? { textShadow: "0 1px 6px rgb(var(--bg) / 0.95)" }
+                          : undefined
+                      }
+                    >
+                      {formatDuration(load.meta.duration)}
+                    </p>
                   </>
                 ) : load.status === "loading" ? (
                   <div className="mt-2 flex items-center gap-3">
@@ -338,19 +392,27 @@ export default function HomePage() {
                   </>
                 )}
               </div>
-              {load.status === "ready" && (
-                // Card no longer carries a difficulty badge: with adaptive
-                // quantization every song exposes Easy through some path
-                // (mapper-shipped or synthesized from the densest source),
-                // so a single label can't summarize the song's range. The
-                // full picker on /play is the source of truth for which
-                // tiers are actually available.
-                <div className="flex shrink-0 flex-row gap-2 font-mono text-[0.78rem] sm:flex-col sm:items-end sm:gap-1">
-                  <span className="border-2 border-bone-50 px-2 py-0.5">
-                    {formatDuration(load.meta.duration)}
-                  </span>
-                </div>
-              )}
+              {/* Right rail of the now-playing header now carries
+                  ONLY the "roll a new random track" refresh button —
+                  the duration chip moved down to sit above the PLAY
+                  CTA in the bottom row, where it visually belongs
+                  (it describes the thing you're about to play). The
+                  refresh button stays here, alongside the song
+                  metadata, because it's a "metadata-level" action
+                  (swap THIS song) rather than a play-level action.
+                  Card no longer carries a difficulty badge either:
+                  with adaptive quantization every song exposes Easy
+                  through some path (mapper-shipped or synthesized
+                  from the densest source), so a single label can't
+                  summarize the song's range. The full picker on
+                  /play is the source of truth for which tiers are
+                  actually available. */}
+              <div className="flex shrink-0 items-center font-mono text-[0.78rem]">
+                <RefreshSongButton
+                  onClick={refreshSong}
+                  loading={load.status === "loading"}
+                />
+              </div>
             </div>
 
             <div className="mt-auto flex items-end gap-3 pt-5">
@@ -378,11 +440,19 @@ export default function HomePage() {
                   );
                 })}
               </div>
+              {/* PLAY CTA — duration moved out of this stack and
+                  back up under the artist line as inline metadata,
+                  so the bottom-right corner is just the play action
+                  itself, free of competing chips. The PLAY link
+                  shrink-wraps to its natural type metrics; the
+                  waveform to the left owns the row height via its
+                  own `h-[3.15rem]` and `items-end` on the parent
+                  keeps PLAY bottom-aligned with the waveform. */}
               {load.status === "ready" ? (
                 <Link
                   href="/play"
                   aria-label={`Play ${load.meta.title}`}
-                  className="flex h-[2.6rem] shrink-0 items-center gap-2 px-2 font-display text-[0.92rem] font-bold tracking-widest text-bone-50 transition-opacity hover:opacity-80 sm:h-[3.15rem]"
+                  className="inline-flex shrink-0 items-center gap-2 border-2 border-bone-50 px-3 py-1.5 font-display text-[0.92rem] font-bold tracking-widest text-bone-50 transition-colors hover:border-accent hover:text-accent"
                 >
                   <span className="text-[1.05rem] leading-none">▶</span>
                   <span>PLAY</span>
@@ -390,7 +460,7 @@ export default function HomePage() {
               ) : (
                 <span
                   aria-disabled
-                  className="flex h-[2.6rem] shrink-0 items-center gap-2 px-2 font-display text-[0.92rem] font-bold tracking-widest text-bone-50/30 sm:h-[3.15rem]"
+                  className="inline-flex shrink-0 items-center gap-2 border-2 border-bone-50/30 px-3 py-1.5 font-display text-[0.92rem] font-bold tracking-widest text-bone-50/30"
                 >
                   <span className="text-[1.05rem] leading-none">▶</span>
                   <span>PLAY</span>
@@ -518,5 +588,101 @@ function Stat({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Compact "roll a new random track" button used in the home page's
+ * now-playing card. Sits beside the duration chip and lets the
+ * player swap to a fresh random song without a full-page reload —
+ * which would also discard any prefetched audio in other tabs and
+ * blank the canvas, the gradient, etc.
+ *
+ * Visually borrows the brutalist chip recipe (`border-2`, square
+ * corners, monospace caps inside) so it reads as a sibling of the
+ * duration chip rather than competing with the PLAY CTA above.
+ * Spins the icon while the new song is fetching so the player has
+ * an honest indicator that something's happening — clicking again
+ * mid-fetch is harmless (the page-level handler cancels the older
+ * in-flight signal so only the freshest response wins).
+ */
+function RefreshSongButton({
+  onClick,
+  loading,
+}: {
+  onClick: () => void;
+  loading: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      // Padding is explicit (`px-2 py-1`) rather than the
+      // duration-chip recipe (`px-2 py-0.5`) for two reasons:
+      //   1. This is a button that mixes an SVG icon with text;
+      //      the global `text-box: trim-both` on <button> trims
+      //      the text glyphs but not the SVG, so symmetric
+      //      box-padding plus `leading-none` is what makes the
+      //      content actually center optically (not just
+      //      geometrically).
+      //   2. Stops it from matching the bordered-pill
+      //      padding-block override in globals.css that's tuned
+      //      for text-only chips and would otherwise stretch the
+      //      bottom edge below the icon.
+      className="group inline-flex items-center gap-1.5 border-2 border-accent bg-transparent px-2 py-1 font-mono text-[10.5px] font-bold leading-none uppercase tracking-widest text-accent transition-colors hover:bg-accent/10 disabled:cursor-wait disabled:opacity-60"
+      data-tooltip="Roll a new random track"
+      aria-label="Roll a new random track"
+      aria-busy={loading}
+    >
+      <RefreshIcon
+        size={14}
+        className={loading ? "animate-spin" : "transition-transform duration-300 group-hover:-rotate-180"}
+      />
+      <span>new</span>
+    </button>
+  );
+}
+
+function RefreshIcon({
+  size = 12,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      shapeRendering="geometricPrecision"
+      aria-hidden="true"
+      className={className}
+    >
+      {/* Classic two-arrow refresh — two opposing C-shaped arcs
+          with solid filled arrowheads at the open ends. The pair
+          reads as "cycle / refresh" instantly at small sizes,
+          much faster than a single open ring. Filled arrowheads
+          (instead of stroked polylines) match the brutalist
+          vocabulary of the rest of the app's icons (PlayIcon's
+          solid triangle, MultiIcon's filled squares). Drawn in
+          one path each so the stroke joins are perfectly mitered
+          with no extra junctions. Designed inside a 24×24 grid
+          so the arcs scale crisply at any size and the spinner
+          rotation looks balanced (visual mass on opposite sides
+          of the geometric center). */}
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M12 4.5a7.5 7.5 0 0 0-7.06 4.97L3.06 8.79A9.5 9.5 0 0 1 12 2.5c2.85 0 5.43 1.25 7.18 3.24V3.5h2v6h-6v-2h2.86A7.49 7.49 0 0 0 12 4.5z"
+      />
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M12 19.5a7.5 7.5 0 0 0 7.06-4.97l1.88.68A9.5 9.5 0 0 1 12 21.5a9.49 9.49 0 0 1-7.18-3.24V20.5h-2v-6h6v2H5.96A7.49 7.49 0 0 0 12 19.5z"
+      />
+    </svg>
   );
 }
