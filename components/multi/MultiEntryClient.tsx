@@ -229,9 +229,6 @@ export default function MultiEntryClient() {
             spellCheck={false}
             className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent transition-colors"
           />
-          <p className="mt-1 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
-            Up to 20 characters, no formatting.
-          </p>
         </label>
 
         <TabBar tab={tab} onChange={setTab} />
@@ -387,9 +384,6 @@ function CreatePane({
           spellCheck={false}
           className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent transition-colors"
         />
-        <p className="mt-1 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
-          Up to {ROOM_NAME_MAX_LEN} characters, no formatting.
-        </p>
       </label>
 
       <fieldset className="block">
