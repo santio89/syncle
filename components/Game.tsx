@@ -1782,46 +1782,47 @@ function HUD({
           instead of a thin afterthought. */}
       <div className="brut-card-accent flex flex-col gap-2 px-2.5 py-2 sm:gap-2.5 sm:px-3 sm:py-3 xl:gap-3 xl:px-4">
         {/* Top row keeps the original score+combo split — same
-            min-widths and dividing rule, just nested inside the
-            new vertical card so the rock meter can stack below. */}
+            min-widths, just nested inside the new vertical card so
+            the rock meter can stack below. The two columns rely on
+            their own typographic weight (big numbers + uppercase
+            labels) to read as separate stats — no rule needed. */}
         <div className="flex items-stretch gap-2 sm:gap-3 xl:gap-4">
           <div className="min-w-[89px] sm:min-w-[140px] xl:min-w-[153px]">
             <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
               Score
             </p>
-            <p className="font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
+            <p className="mt-1.5 font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
               {stats.score.toLocaleString()}
             </p>
-            <p className="mt-1 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
+            <p className="mt-1.5 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
               {accuracy.toFixed(1)}% · {stats.notesPlayed}/{total}
             </p>
             {best && (
-              <p className="mt-1 hidden font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50 sm:block">
+              <p className="mt-1.5 hidden font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50 sm:block">
                 track best {best.score.toLocaleString()}
               </p>
             )}
           </div>
-          <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-          <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[74px] xl:min-w-[81px]">
+          {/* COMBO column mirrors SCORE's vertical rhythm: top-aligned
+              (no `justify-center`) and the same `mt-1.5` between rows
+              so the label / number / multiplier stack reads with the
+              same beat as the score side. */}
+          <div className="flex min-w-[57px] flex-col items-center sm:min-w-[74px] xl:min-w-[81px]">
             <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
               Combo
             </p>
             <p
-              className={`font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
+              className={`mt-1.5 font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
                 stats.combo > 0 ? "text-accent" : "text-bone-50/40"
               }`}
             >
               {stats.combo}
             </p>
-            <p className="mt-1 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
+            <p className="mt-1.5 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
               ×{stats.multiplier}
             </p>
           </div>
         </div>
-        {/* Faint rule separates the score/combo numbers from the
-            rock meter group below — without it the two halves of
-            the card look like one big block of mixed types. */}
-        <div className="h-px w-full bg-bone-50/15" aria-hidden />
         {/* Rock meter label on the left, difficulty tag on the
             right. The tag tells the player which tier they're
             actually playing right now — it lives next to the rock
@@ -1829,7 +1830,11 @@ function HUD({
             now-playing strip across the screen, since difficulty
             is part of the gameplay context, not the song
             metadata. Tag mirrors the lobby picker's name-only
-            chip; the chart density (notes / nps) shows on hover. */}
+            chip; the chart density (notes / nps) shows on hover.
+            The score/combo block above and the rock-meter block
+            below are visually separated by the card's `gap-*`
+            alone — no rule needed; the typographic weight of each
+            section makes the boundary obvious. */}
         <div className="flex items-center justify-between gap-2">
           <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Rock meter
@@ -1883,16 +1888,21 @@ function HUD({
           menu — same `<label>` wrap, same accent-colored native
           checkbox — so the player learns the affordance once and
           recognizes it in both places. */}
-      <div className="brut-card flex w-[143px] flex-col gap-1.5 px-2.5 py-2 sm:w-[212px] sm:gap-2 sm:px-3 sm:py-3 xl:w-[228px]">
+      <div className="brut-card flex w-[143px] flex-col gap-2 px-2.5 py-2.5 sm:w-[212px] sm:gap-2.5 sm:px-3.5 sm:py-3.5 xl:w-[228px]">
         {/* "Now playing" strip — single source of truth for which
             song is rolling once the StartCard is gone. Title/artist
             truncate via `min-w-0` so the card border stays sharp at
             every width; full text is on hover via `data-tooltip`.
             The bottom border doubles as the divider between this
             block and the settings tiles below — same vocabulary as
-            the in-card divider on the left card. */}
+            the in-card divider on the left card.
+            Each row inside the strip carries its own explicit `mt-*`
+            instead of relying on the parent line-box leading — the
+            previous spacing leaned on browser leading that the
+            text-box trim removed, leaving caption/title/artist
+            visually glued together. */}
         {songTitle && (
-          <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
+          <div className="flex min-w-0 flex-col">
             {/* Top row: "♪ Now playing" caption on the left, the
                 pause button on the right. Pause lives here (rather
                 than next to the rock meter on the left card) so
@@ -1915,21 +1925,21 @@ function HUD({
               </button>
             </div>
             <p
-              className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
+              className="mt-2 truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
               data-tooltip={`${songTitle}${songArtist ? ` — ${songArtist}` : ""}`}
             >
               {songTitle}
             </p>
             {songArtist && (
               <p
-                className="truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
+                className="mt-0.5 truncate font-mono text-[9.2px] text-bone-50/50 sm:text-[10.2px]"
                 data-tooltip={songArtist}
               >
                 {songArtist}
               </p>
             )}
             {songDuration && songDuration > 0 && (
-              <div className="mt-1.5 flex items-center gap-1.5">
+              <div className="mt-2.5 flex items-center gap-2">
                 <div
                   className="relative h-[3px] flex-1 border border-bone-50/25 bg-bone-50/5"
                   role="progressbar"
@@ -1960,7 +1970,7 @@ function HUD({
             sits flush right; `pointer-events-auto` is needed
             because the parent HUD wrapper is `pointer-events-none`. */}
         <label
-          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5"
+          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
           data-tooltip="Toggle metronome (M)"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
@@ -1976,7 +1986,7 @@ function HUD({
           />
         </label>
         <label
-          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5"
+          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
           data-tooltip="Toggle input feedback (N)"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
@@ -2004,7 +2014,7 @@ function HUD({
         <button
           type="button"
           onClick={onCycleFpsLock}
-          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5 text-left sm:flex"
+          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
           data-tooltip={
             fpsLock == null
               ? "FPS lock off — click to cap at 30 FPS"
@@ -2038,7 +2048,7 @@ function HUD({
             <input type="range"> ships with a UA-imposed intrinsic
             min-width (~120 px) that would otherwise overflow the
             tile on the narrow mobile card. */}
-        <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5">
+        <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2">
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             vol
           </span>
