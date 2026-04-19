@@ -58,6 +58,19 @@ import { fetchCatalog } from "./catalog";
 const PLAYER_GRACE_MS = 60_000;
 /** How long a fully-empty room sticks around for refresh-rejoin. */
 const EMPTY_ROOM_TTL_MS = 10 * 60_000;
+/**
+ * Hard cap on how long a room can sit without ANY meaningful activity
+ * (chat, song change, ready toggle, score update, etc.) before the
+ * server force-closes it. Prevents abandoned-but-non-empty rooms from
+ * hanging around in the public browser forever and provides a passive
+ * anti-spam ceiling on top of the host-leaves-closes-lobby rule below.
+ *
+ * "Activity" is bumped centrally from `emitSnapshot` (covers every
+ * state change) and `emitScoreboard` (covers in-match score churn that
+ * doesn't necessarily re-snapshot), so any real interaction in the
+ * room resets the clock.
+ */
+const INACTIVITY_TTL_MS = 30 * 60_000;
 /** Max wait for everyone to call `client:ready` after host hits start. */
 const LOADING_DEADLINE_MS = 30_000;
 /**
@@ -120,6 +133,16 @@ interface InternalRoom {
   catalogFetchedAt: number | null;
   emptyTtlTimer: NodeJS.Timeout | null;
   loadingTimer: NodeJS.Timeout | null;
+  /**
+   * Sliding inactivity timer. Set on room creation and reset on every
+   * activity bump (any snapshot or scoreboard fan-out). Fires
+   * `closeRoom(... "inactivity")` when nothing has happened in the room
+   * for `INACTIVITY_TTL_MS`. Cleared during room close + re-armed by
+   * `bumpActivity` on every meaningful interaction.
+   */
+  inactivityTimer: NodeJS.Timeout | null;
+  /** Wall-clock of the most recent activity bump (debug / future use). */
+  lastActivityAt: number;
   /**
    * Wall-clock safety net for the "playing" phase. Scheduled when the
    * server flips to `phase === "playing"` to fire at
@@ -201,7 +224,27 @@ class RoomRegistry {
   emitSnapshot(code: string): void {
     const room = this.rooms.get(code);
     if (!room) return;
+    this.bumpActivity(room);
     this.io.to(`room:${code}`).emit("room:snapshot", this.snapshotOf(room));
+  }
+
+  /**
+   * Reset the room's inactivity timer. Called from every fan-out helper
+   * (`emitSnapshot`, `emitScoreboard`) so any real interaction — host
+   * picks a song, a player marks ready, a score update streams in,
+   * someone joins or leaves — keeps the room alive. A room that goes
+   * `INACTIVITY_TTL_MS` without a bump is force-closed.
+   */
+  private bumpActivity(room: InternalRoom): void {
+    room.lastActivityAt = Date.now();
+    if (room.inactivityTimer) clearTimeout(room.inactivityTimer);
+    room.inactivityTimer = setTimeout(() => {
+      // Re-check liveness: if the room was already removed (empty TTL
+      // beat us to it) the lookup is a no-op, but explicit guard keeps
+      // the close path short-circuited.
+      if (!this.rooms.has(room.code)) return;
+      this.closeRoom(room, "Room closed due to inactivity");
+    }, INACTIVITY_TTL_MS);
   }
 
   emitNotice(code: string, kind: NoticeKind, text: string): void {
@@ -211,6 +254,7 @@ class RoomRegistry {
   emitScoreboard(code: string): void {
     const room = this.rooms.get(code);
     if (!room) return;
+    this.bumpActivity(room);
     const entries: ScoreboardEntry[] = [];
     for (const p of room.players.values()) {
       entries.push({
@@ -350,6 +394,16 @@ class RoomRegistry {
     roomName: string,
     visibility: RoomVisibility,
   ): { code: string; sessionId: string } {
+    // Belt-and-braces: a socket is only ever supposed to occupy ONE
+    // (room, session) slot at a time. If this socket is already linked
+    // to another room (e.g. the user clicked "Create" without first
+    // navigating away from a previous room), evict that slot first so
+    // the prior room doesn't end up with an orphaned, perpetually-
+    // "online" ghost player. Without this, repeated create/join
+    // bouncing leaves stacks of zombie slots in old rooms — the bug
+    // visible in the screenshot where "santi" appeared three times in
+    // the same room.
+    this.releaseSocketSlot(socketId);
     const code = this.generateCode();
     const sessionId = randomUUID();
     const room: InternalRoom = {
@@ -371,6 +425,8 @@ class RoomRegistry {
       emptyTtlTimer: null,
       loadingTimer: null,
       matchSafetyTimer: null,
+      inactivityTimer: null,
+      lastActivityAt: Date.now(),
     };
     room.players.set(sessionId, {
       id: sessionId,
@@ -402,6 +458,13 @@ class RoomRegistry {
     if (room.players.size >= MAX_PLAYERS_PER_ROOM) {
       throw new RoomError("ROOM_FULL", `Room ${code} is full`);
     }
+    // Same anti-zombie precaution as createRoom: free any prior slot
+    // this socket was holding before claiming a fresh one. Crucially
+    // this also handles the "joined the same room twice" case — a
+    // stale player from a previous join attempt with this exact socket
+    // gets evicted before we add a brand-new player, instead of
+    // accumulating duplicates.
+    this.releaseSocketSlot(socketId);
     if (room.emptyTtlTimer) {
       clearTimeout(room.emptyTtlTimer);
       room.emptyTtlTimer = null;
@@ -436,13 +499,51 @@ class RoomRegistry {
         "Your seat was reclaimed — rejoin as a new player",
       );
     }
+    // If this same socket was already pointed at a DIFFERENT slot
+    // (different room, or a different session in this room), free
+    // that slot first. Without this a quick reconnect-with-stale-
+    // session followed by a manual rejoin can leave the prior session
+    // sitting in a different room as an orphan.
+    const prior = this.socketIndex.get(socketId);
+    if (prior && (prior.code !== code || prior.sessionId !== sessionId)) {
+      this.releaseSocketSlot(socketId);
+    }
     if (p.graceTimer) {
       clearTimeout(p.graceTimer);
       p.graceTimer = null;
     }
+    // If some OTHER live socket is currently bound to this seat (e.g.
+    // a duplicate tab racing to rejoin with the same sessionId), drop
+    // that mapping so the new socket cleanly owns the seat. We do
+    // *not* disconnect the old socket — Socket.IO will emit to
+    // whichever socket is currently in the room channel, and the new
+    // socket re-joins below.
+    if (p.socketId && p.socketId !== socketId) {
+      this.socketIndex.delete(p.socketId);
+    }
     p.socketId = socketId;
     this.socketIndex.set(socketId, { code, sessionId });
     return p;
+  }
+
+  /**
+   * Detach whatever (room, session) slot the given socket is currently
+   * bound to and evict that player from their room. No-op if the socket
+   * isn't holding a slot. Used as a "you only get one slot" enforcement
+   * point in createRoom / joinRoom / rejoin to prevent the same client
+   * from accidentally accumulating multiple ghost players (which is
+   * how the same person showed up three times in one room).
+   */
+  private releaseSocketSlot(socketId: string): void {
+    const ref = this.socketIndex.get(socketId);
+    if (!ref) return;
+    this.socketIndex.delete(socketId);
+    // Best-effort detach the socket from the room's broadcast channel
+    // so it stops receiving snapshots for the old room while it joins
+    // a different one.
+    const sock = this.io.sockets.sockets.get(socketId);
+    if (sock) sock.leave(`room:${ref.code}`);
+    this.evict(ref.code, ref.sessionId, "leave");
   }
 
   handleDisconnect(
@@ -475,7 +576,35 @@ class RoomRegistry {
     const p = room.players.get(sessionId);
     if (!p) return;
     if (p.graceTimer) clearTimeout(p.graceTimer);
+    // Drop any socketIndex entries pointing at this seat. Previously
+    // only handleDisconnect() did this, which meant an explicit
+    // `room:leave` left a dangling index entry — the same socket then
+    // could end up mapped to a non-existent session, confusing every
+    // subsequent action.
+    if (p.socketId) this.socketIndex.delete(p.socketId);
     room.players.delete(sessionId);
+    // Anti-spam rule: if the HOST leaves the lobby (or the post-match
+    // results screen), the entire room shuts down rather than being
+    // handed off to a random player. This prevents the "create a room,
+    // bail, leave it as a public listing zombie" attack pattern. We
+    // intentionally do NOT close mid-match (loading/countdown/playing)
+    // so a host's network blip during a song doesn't kill everyone's
+    // run — the standard host-promotion path still applies there.
+    const wasHost = room.hostId === sessionId;
+    if (wasHost && (room.phase === "lobby" || room.phase === "results")) {
+      this.emitNotice(
+        code,
+        reason === "leave" ? "leave" : "info",
+        `${p.name || "host"} ${reason === "leave" ? "left" : "disconnected"}`,
+      );
+      this.closeRoom(
+        room,
+        reason === "leave"
+          ? "Host closed the room"
+          : "Host disconnected — room closed",
+      );
+      return;
+    }
     const promoted = this.maybePromoteHost(room);
     this.emitNotice(
       code,
@@ -492,6 +621,44 @@ class RoomRegistry {
       else if (room.phase === "playing") this.checkAllFinished(room);
     }
     this.emitSnapshot(code);
+  }
+
+  /**
+   * Tear a room down completely: notify every remaining player, drop
+   * all timers, clear socket indexes, and remove the room from the
+   * registry. Used by the host-leaves-lobby rule and the inactivity
+   * timer. Each player gets a `room:kicked` so the client can show a
+   * polite "room closed" splash and redirect home — same UX as a real
+   * kick, just with a different reason string.
+   */
+  private closeRoom(room: InternalRoom, reason: string): void {
+    for (const p of room.players.values()) {
+      if (p.graceTimer) {
+        clearTimeout(p.graceTimer);
+        p.graceTimer = null;
+      }
+      if (p.socketId) {
+        this.io.to(p.socketId).emit("room:kicked", { reason });
+        this.socketIndex.delete(p.socketId);
+        const sock = this.io.sockets.sockets.get(p.socketId);
+        if (sock) sock.leave(`room:${room.code}`);
+      }
+    }
+    room.players.clear();
+    if (room.loadingTimer) {
+      clearTimeout(room.loadingTimer);
+      room.loadingTimer = null;
+    }
+    if (room.emptyTtlTimer) {
+      clearTimeout(room.emptyTtlTimer);
+      room.emptyTtlTimer = null;
+    }
+    if (room.inactivityTimer) {
+      clearTimeout(room.inactivityTimer);
+      room.inactivityTimer = null;
+    }
+    this.clearMatchSafetyTimer(room);
+    this.rooms.delete(room.code);
   }
 
   private maybePromoteHost(room: InternalRoom): InternalPlayer | null {
@@ -517,6 +684,10 @@ class RoomRegistry {
       if (room.loadingTimer) {
         clearTimeout(room.loadingTimer);
         room.loadingTimer = null;
+      }
+      if (room.inactivityTimer) {
+        clearTimeout(room.inactivityTimer);
+        room.inactivityTimer = null;
       }
       this.rooms.delete(room.code);
     }, EMPTY_ROOM_TTL_MS);
