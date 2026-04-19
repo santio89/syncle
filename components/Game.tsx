@@ -119,7 +119,13 @@ export default function Game() {
   // rAF loop so it ticks at the same ~10Hz cadence — smooth enough to
   // feel live without forcing a full React re-render every vblank.
   const [songProgress, setSongProgress] = useState<number>(0);
-  const [metronome, setMetronome] = useState<boolean>(true);
+  // Settings that live in localStorage are read via lazy `useState`
+  // initializers so the very first render already reflects what the
+  // player saved last session — no flash of defaults, no `useEffect`
+  // round-trip. Game.tsx is loaded via `dynamic({ ssr: false })` so
+  // these initializers never run on the server; `loadX()` falls back
+  // to the hardcoded default if `window` is missing anyway.
+  const [metronome, setMetronome] = useState<boolean>(loadMetronome);
   const [chartLength, setChartLength] = useState<number>(0);
   const [songSource, setSongSource] = useState<"osu" | "fallback" | null>(null);
   const [chartMode, setChartMode] = useState<ChartMode>("easy");
@@ -159,15 +165,15 @@ export default function Game() {
   /** True if the just-finished run set a new lifetime best for this track. */
   const [newBest, setNewBest] = useState<boolean>(false);
   /** Master song volume 0..1, persisted across sessions. */
-  const [volume, setVolume] = useState<number>(0.85);
+  const [volume, setVolume] = useState<number>(loadVolume);
   /** Rolling average frame rate, sampled every ~250ms for HUD readout. */
   const [fps, setFps] = useState<number>(0);
   /** Optional render frame-rate cap (off / 30 / 60). Persisted across
    *  sessions. The rAF loop reads `fpsLockRef.current` so toggling the
    *  lock takes effect on the next frame without a remount.
    *  Hydrated from localStorage in the same effect that loads `volume`. */
-  const [fpsLock, setFpsLock] = useState<FpsLock>(null);
-  const fpsLockRef = useRef<FpsLock>(null);
+  const [fpsLock, setFpsLock] = useState<FpsLock>(loadFpsLock);
+  const fpsLockRef = useRef<FpsLock>(loadFpsLock());
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
@@ -178,7 +184,7 @@ export default function Game() {
    *  changes — the engine no-ops the relevant `play*` calls when off,
    *  which means zero audible feedback for hits or misses (song +
    *  metronome are unaffected). */
-  const [sfx, setSfx] = useState<boolean>(true);
+  const [sfx, setSfx] = useState<boolean>(loadSfx);
   /** True if the user is on a touch-only device (no physical keyboard).
    *  Drives the on-screen <TouchLanes> overlay and swaps the "press D F J K"
    *  hints in the StartCard for tap-friendly copy. */
@@ -333,58 +339,40 @@ export default function Game() {
     };
   }, [displayMeta, metronome, volume, sfx]);
 
-  // Gate the persistence side of every settings effect on the
-  // hydration having actually finished. The naive pattern (save on
-  // every change, hydrate from storage in a separate `[]`-dep effect)
-  // races itself: React mounts with the hardcoded defaults, the save
-  // effects fire FIRST and clobber storage with those defaults, then
-  // the hydration effect runs and reads back the values it just
-  // overwrote. The end result is that a player who set vol=0.5 in
-  // one session (or in the OTHER mode) sees the slider snap back to
-  // 0.85 here. `hasHydratedRef` flips true after `loadX()` is wired
-  // into state, so saves stay no-ops until then; the audio-engine
-  // mirror calls (`setMetronome`, `setVolume`, `setSfx`) still run
-  // every render so the engine reflects the live state regardless.
-  const hasHydratedRef = useRef(false);
-
+  // Mirror each setting into the audio engine on change AND persist
+  // it to storage. The lazy `useState(loadX)` initializers above mean
+  // the very first render already holds the persisted value, so the
+  // initial fire of these effects writes the same value back — a
+  // harmless no-op that keeps the contract simple (no hydration gate,
+  // no `useEffect` to "load" later, no flash of defaults).
   useEffect(() => {
     audioRef.current?.setMetronome(metronome);
-    if (hasHydratedRef.current) saveMetronome(metronome);
+    saveMetronome(metronome);
   }, [metronome]);
 
   useEffect(() => {
     audioRef.current?.setVolume(volume);
-    if (hasHydratedRef.current) saveVolume(volume);
+    saveVolume(volume);
   }, [volume]);
 
   // Persist the FPS lock the moment it changes (the rAF loop already
   // picks it up via fpsLockRef; this just keeps the choice across
   // refreshes / new sessions).
   useEffect(() => {
-    if (hasHydratedRef.current) saveFpsLock(fpsLock);
+    saveFpsLock(fpsLock);
   }, [fpsLock]);
 
-  // Mirror the SFX toggle into the audio engine and persist it. Same
-  // dual-write pattern as `volume` / `metronome` — the engine no-ops
+  // Mirror the SFX toggle into the audio engine. The engine no-ops
   // `playHit` / `playMiss` / `playRelease` / `playComboMilestone`
   // when off so the player gets pure music with no whiff cue, but
   // the song bus + the metronome stay live.
   useEffect(() => {
     audioRef.current?.setSfx(sfx);
-    if (hasHydratedRef.current) saveSfx(sfx);
+    saveSfx(sfx);
   }, [sfx]);
 
-  // Hydrate persisted volume + detect touch-only devices on mount.
+  // Detect touch-only devices on mount.
   useEffect(() => {
-    setVolume(loadVolume());
-    setFpsLock(loadFpsLock());
-    setSfx(loadSfx());
-    setMetronome(loadMetronome());
-    // Flip the gate AFTER queuing the state setters above. React
-    // batches the four updates into a single re-render, after which
-    // the per-setting save effects fire — and by then the ref is true
-    // so the persisted values are written back (no-op if unchanged).
-    hasHydratedRef.current = true;
     if (typeof window !== "undefined" && window.matchMedia) {
       // pointer:coarse + no fine pointer ⇒ phone/tablet without a real keyboard.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
@@ -1361,24 +1349,22 @@ function StartCard({
           settings tiles all mirror the in-game HUD's state — toggling
           here is the same as toggling in the HUD chip during play. */}
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <div className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
-          <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
+        {/* Same 2-line layout as the FPS / Metronome / Input feedback
+            tiles: caption row on top, single small-mono detail row on
+            the bottom. The big numeric score that used to live in the
+            middle was making this tile a third taller than its
+            neighbors, breaking the 2x2 grid's vertical rhythm. We now
+            just show "no runs yet" or "score · acc · ×combo" in the
+            same caption font as the other tiles' hints. */}
+        <div className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
+          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
             Best on this track
-          </p>
-          {best ? (
-            <p className="mt-1 font-display text-[1.58rem] font-bold text-accent">
-              {best.score.toLocaleString()}
-            </p>
-          ) : (
-            <p className="mt-1 font-display text-[1.58rem] font-bold text-bone-50/30">
-              —
-            </p>
-          )}
-          <p className="font-mono text-[9.5px] text-bone-50/50">
+          </span>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
             {best
-              ? `${best.accuracy.toFixed(1)}% · ×${best.maxCombo} combo`
+              ? `${best.score.toLocaleString()} · ${best.accuracy.toFixed(1)}% · ×${best.maxCombo} combo`
               : "no runs yet"}
-          </p>
+          </span>
         </div>
         {/* FPS lock tile — the entire tile is the click target (acts
             like the <label> tiles next to it), so clicking anywhere on

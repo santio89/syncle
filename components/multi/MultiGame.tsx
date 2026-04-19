@@ -179,20 +179,27 @@ function CanvasPane({
   // user-toggleable here too (it only affects the LOCAL click track; the
   // server-driven `startsAt` timestamp is what actually keeps the room in
   // sync, not whether each player happens to hear the metronome).
-  const [volume, setVolume] = useState<number>(0.85);
-  const [metronome, setMetronome] = useState<boolean>(true);
+  // Settings that live in localStorage are read via lazy `useState`
+  // initializers so the very first render already reflects what the
+  // player saved last session — no flash of defaults, no `useEffect`
+  // hydration round-trip. MultiGame only mounts after the lobby
+  // (countdown / playing phase), so these initializers always run on
+  // the client; `loadX()` falls back to the hardcoded default if
+  // `window` is missing anyway.
+  const [volume, setVolume] = useState<number>(loadVolume);
+  const [metronome, setMetronome] = useState<boolean>(loadMetronome);
   // Per-input feedback SFX (hit / miss / release / combo-milestone +
   // the song-duck whiff cue). Persisted via the same shared
   // settings store as solo so a player's preference carries across
   // game modes. The engine no-ops the relevant `play*` calls when
   // off — song bus + metronome stay live.
-  const [sfx, setSfx] = useState<boolean>(true);
+  const [sfx, setSfx] = useState<boolean>(loadSfx);
   const [fps, setFps] = useState<number>(0);
   // Optional render-loop frame-rate cap — same control surface as
   // single-player (off / 30 / 60), shared persistence key so a player
   // who caps in solo also has it capped in multi without re-toggling.
-  const [fpsLock, setFpsLock] = useState<FpsLock>(null);
-  const fpsLockRef = useRef<FpsLock>(null);
+  const [fpsLock, setFpsLock] = useState<FpsLock>(loadFpsLock);
+  const fpsLockRef = useRef<FpsLock>(loadFpsLock());
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
@@ -714,68 +721,40 @@ function CanvasPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, actions]);
 
-  // Gate persistence on hydration having actually finished. Without
-  // this gate, the mount sequence is:
-  //   (1) state initialized to hardcoded defaults (vol=0.85, sfx=true,
-  //       metronome=true, fpsLock=null)
-  //   (2) the four save-on-change effects fire FIRST and clobber
-  //       localStorage with those defaults
-  //   (3) the hydration effect runs and reads back the values it just
-  //       overwrote — so the player's persisted settings (whether set
-  //       in solo or in a previous multi session) silently revert.
-  // `hasHydratedRef` flips true after the load setters are queued, so
-  // the save calls become no-ops for the initial render and start
-  // working again on the next render driven by the hydration setters
-  // (or any subsequent user input). Audio-engine mirror calls
-  // (`setMetronome` / `setVolume` / `setSfx`) still run unconditionally
-  // so the engine always reflects live state.
-  const hasHydratedRef = useRef(false);
-
-  // Mirror React state into the AudioEngine. `loaded` is in the dep list
-  // for both effects so the values get re-applied as soon as the engine
-  // finishes (re)initializing for a new song — otherwise toggling
-  // metronome / dragging the volume slider before the engine spun up
-  // would silently drop the value.
+  // Mirror React state into the AudioEngine and persist it. `loaded`
+  // is in the dep list for the engine-mirror effects so the values
+  // get re-applied as soon as the engine finishes (re)initializing
+  // for a new song — otherwise toggling metronome / dragging the
+  // volume slider before the engine spun up would silently drop the
+  // value.
+  //
+  // Persistence rides along: because the lazy `useState(loadX)`
+  // initializers above already seed state from storage, the first
+  // fire of these effects writes the same value back — a harmless
+  // no-op that keeps the contract simple (no hydration gate, no
+  // separate `useEffect` to "load" later, no flash of defaults). All
+  // four settings share the same store as single-player via
+  // `lib/game/settings` so a player who tweaks them in solo also has
+  // them carried over into multi without re-toggling.
   useEffect(() => {
     audioRef.current?.setMetronome(metronome);
-    if (hasHydratedRef.current) saveMetronome(metronome);
+    saveMetronome(metronome);
   }, [metronome, loaded]);
 
   useEffect(() => {
     audioRef.current?.setVolume(volume);
-    if (hasHydratedRef.current) saveVolume(volume);
+    saveVolume(volume);
   }, [volume, loaded]);
 
-  // SFX mirror — same dual-write pattern as `volume` / `metronome`.
-  // `loaded` in the deps re-applies the choice the moment the engine
-  // is rebuilt for a new song, so toggling SFX between songs in the
-  // same room never silently drops the preference.
   useEffect(() => {
     audioRef.current?.setSfx(sfx);
-    if (hasHydratedRef.current) saveSfx(sfx);
+    saveSfx(sfx);
   }, [sfx, loaded]);
-
-  // Hydrate persisted rock-meter settings (volume / fps-lock / sfx /
-  // metronome) on mount so the controls remember the last session's
-  // preference. All four share the same store as single-player via
-  // lib/game/settings so a player who tweaks them in solo also has
-  // them carried over into multi without re-toggling.
-  useEffect(() => {
-    setVolume(loadVolume());
-    setFpsLock(loadFpsLock());
-    setSfx(loadSfx());
-    setMetronome(loadMetronome());
-    // Flip the gate AFTER queuing the state setters above. React
-    // batches the four updates into a single re-render, after which
-    // the per-setting save effects fire — and by then the ref is true
-    // so the persisted values are written back (no-op if unchanged).
-    hasHydratedRef.current = true;
-  }, []);
 
   // Persist the FPS lock — the rAF loop reads `fpsLockRef`, so this is
   // purely about remembering the choice across reconnects / refreshes.
   useEffect(() => {
-    if (hasHydratedRef.current) saveFpsLock(fpsLock);
+    saveFpsLock(fpsLock);
   }, [fpsLock]);
 
   // Stop the engine on unmount.
