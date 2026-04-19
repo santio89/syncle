@@ -270,7 +270,7 @@ export default function HomePage() {
                   load.status === "ready"
                     ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}${
                         load.meta.year ? `\nYear: ${load.meta.year}` : ""
-                      }${load.meta.creator ? `\nMapper: ${load.meta.creator}` : ""}`
+                      }`
                     : undefined
                 }
               >

@@ -1194,7 +1194,7 @@ function StartCard({
             className="font-mono text-[9.5px] uppercase tracking-widest text-accent/70"
             data-tooltip={
               mirror
-                ? `Pulled from ${mirror} at runtime${meta!.creator ? ` · mapped by ${meta!.creator}` : ""}`
+                ? `Pulled from ${mirror} at runtime`
                 : "Loaded from a real osu!mania 4K beatmap"
             }
           >
