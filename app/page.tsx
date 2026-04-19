@@ -179,7 +179,6 @@ export default function HomePage() {
           </span>
         </div>
         <nav className="flex items-center gap-3 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
-          <span className="hidden sm:inline">osu! mania · 4K</span>
           {/* All header chips share `.icon-btn` (38×38 square) so the
               right side of the header reads as a uniform strip. The
               old wider "░ multi" pill drifted off-grid; the icon-only
