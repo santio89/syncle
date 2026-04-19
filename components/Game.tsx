@@ -1341,25 +1341,39 @@ function StartCard({
         </div>
       </div>
 
-      {/* 2x2 tile grid for the pre-game settings panel. Top row: Best
-          score on the left, FPS Lock cycler on the right. Bottom row:
-          Metronome toggle on the left, Input Feedback toggle on the
-          right. All four tiles share the same border/padding/typography
-          treatment so they read as one cohesive panel, and the three
-          settings tiles all mirror the in-game HUD's state — toggling
-          here is the same as toggling in the HUD chip during play. */}
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      {/* Tile grid for the pre-game settings panel. On mobile (< sm)
+          everything stacks in a single column so each tile gets the
+          full width and the captions / chips stay readable on a
+          narrow screen. From `sm` up we switch to the 2x2 layout —
+          top row: Best score on the left, FPS Lock cycler on the
+          right; bottom row: Metronome toggle on the left, Input
+          Feedback toggle on the right. All four tiles share the same
+          border / padding / typography treatment so they read as one
+          cohesive panel, and the three settings tiles all mirror the
+          in-game HUD's state — toggling here is the same as toggling
+          in the HUD chip during play. */}
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {/* Same 2-line layout as the FPS / Metronome / Input feedback
             tiles: caption row on top, single small-mono detail row on
             the bottom. The big numeric score that used to live in the
             middle was making this tile a third taller than its
             neighbors, breaking the 2x2 grid's vertical rhythm. We now
             just show "no runs yet" or "score · acc · ×combo" in the
-            same caption font as the other tiles' hints. */}
+            same caption font as the other tiles' hints.
+
+            The top row is wrapped in a `min-h-[1.05rem]` flex so it
+            matches the height of the chip / checkbox rows in the
+            sibling tiles — without that the label is ~4px shorter,
+            which (combined with `justify-between` and the shared
+            grid-row height) leaks an extra ~4px of empty space
+            between the two text lines and breaks the vertical rhythm
+            you'd otherwise expect across all four tiles. */}
         <div className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
-          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-            Best on this track
-          </span>
+          <div className="flex min-h-[1.05rem] items-center">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Best on this track
+            </span>
+          </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
             {best
               ? `${best.score.toLocaleString()} · ${best.accuracy.toFixed(1)}% · ×${best.maxCombo} combo`
@@ -1394,10 +1408,8 @@ function StartCard({
             </span>
             <span
               aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest border px-1.5 py-0.5 transition-colors ${
-                fpsLock == null
-                  ? "border-bone-50/30 text-bone-50/60"
-                  : "border-accent text-accent"
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                fpsLock == null ? "text-bone-50/60" : "text-accent"
               }`}
             >
               {fpsLock == null ? "OFF" : fpsLock}
