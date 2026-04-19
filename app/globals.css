@@ -218,13 +218,43 @@ summary {
    * single-line pill — same vertical-centering problem, same fix. */
   [class~="border-2"][class~="px-2"][class~="py-0.5"],
   [class~="border-2"][class~="px-1.5"][class~="py-px"],
-  [class~="border"][class~="px-1.5"][class~="py-0.5"]
+  [class~="border"][class~="px-1.5"][class~="py-0.5"],
+  [class~="border"][class~="px-1"][class~="py-0.5"]
 ) {
   text-wrap: balance;
   /* Shorthand: trim both edges down to the cap-height (top) and the
    * alphabetic baseline (bottom). Matches what designers eyeball when
    * they vertically center text inside a small box. */
   text-box: trim-both cap alphabetic;
+}
+
+/* ---------------------------------------------------------------------------
+ * Pill breathing room
+ *
+ * `text-box: trim-both` above strips the half-leading that the line
+ * box used to leave above and below the glyphs. For bare inline labels
+ * that's a pure win (better baseline alignment), but for BORDERED
+ * pills the previously-invisible half-leading was doubling as visual
+ * padding — strip it and the text now reads as cramped against the
+ * border (see the "RANKED" / "4:19" chips on the home card).
+ *
+ * Restore that breathing room with explicit `padding-block` on the
+ * canonical bordered-pill recipes. Specificity math: each rule below
+ * stacks three attribute selectors → (0, 3, 0), which beats the single
+ * Tailwind `py-*` utility class → (0, 1, 0) without needing
+ * `!important`. The horizontal padding from `px-*` is left alone
+ * because the trim doesn't affect inline metrics. Pills that already
+ * ship with `py-1`+ aren't matched, so we never *shrink* an element
+ * that was already generously padded.
+ * ------------------------------------------------------------------------- */
+[class~="border-2"][class~="px-2"][class~="py-0.5"],
+[class~="border-2"][class~="px-1.5"][class~="py-px"],
+[class~="border"][class~="px-1.5"][class~="py-0.5"],
+[class~="border"][class~="px-1"][class~="py-0.5"] {
+  /* ~5px each side. Calibrated against text-[10.5px]/text-[12.5px] at
+   * line-height 1.4 — restores the same total box height the pill had
+   * before trimming, so existing layouts don't shift. */
+  padding-block: 0.32rem;
 }
 
 p {
