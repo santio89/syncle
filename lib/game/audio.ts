@@ -2,13 +2,53 @@ import { Judgment, LANE_PITCH } from "./types";
 
 /**
  * Base level of the per-input feedback SFX bus. The actual `sfxGain.gain`
- * value is `BASE_SFX_LEVEL * songVol`, so when the player pulls the master
- * volume down, the hit / miss / release tones fall off in lockstep instead
- * of staying loud over a quiet song. Picked low (vs the song bus's 1.0
- * ceiling) so a stack of perfect-pluck + metronome click + combo chime
- * still leaves headroom under the limiter.
+ * value is `BASE_SFX_LEVEL * perceivedToGain(songVol)`, so when the
+ * player pulls the master volume down, the hit / miss / release tones
+ * fall off in lockstep with the song instead of staying loud over a
+ * quiet mix. Picked low (vs the song bus's 1.0 ceiling) so a stack of
+ * perfect-pluck + metronome click + combo chime still leaves headroom
+ * under the limiter.
  */
 const BASE_SFX_LEVEL = 0.45;
+
+/**
+ * Convert a slider/perceived value (0..1) to an actual GainNode value
+ * using a quadratic ("audio taper") curve.
+ *
+ * Human loudness perception is roughly logarithmic in gain — a LINEAR
+ * slider (`gain = slider`) feels like "nothing happens until 10%"
+ * because:
+ *   slider 0.50  →  -6 dB  ≈  70% as loud as full
+ *   slider 0.10  →  -20 dB ≈  25% as loud
+ *   slider 0.05  →  -26 dB ≈  18% as loud
+ * The entire useful perceived range gets crammed into the bottom 10–15%
+ * of the slider; the upper 85% all sounds like one indistinguishable
+ * "loud" plateau. That's the dominant complaint with naive web-audio
+ * volume sliders.
+ *
+ * Quadratic taper (`gain = perceived²`) is the standard "audio taper"
+ * used in DAWs, mixers, and game engines (it's literally the
+ * resistance curve audio-taper potentiometers use in hardware faders).
+ * It maps:
+ *   slider 0.80  →  -4 dB  ≈  76% perceived
+ *   slider 0.50  →  -12 dB ≈  44% perceived
+ *   slider 0.20  →  -28 dB ≈  13% perceived
+ * — close to the player's intuition that "50% slider should sound like
+ * about 50% volume". Endpoints stay anchored at silent (0) and full
+ * (1) so the slider's two extremes do exactly what they say, and the
+ * curve is monotonic across the whole range so every nudge produces
+ * an audible step.
+ *
+ * Note: the value persisted in localStorage is the SLIDER value
+ * (perceived 0..1), not the gain. The curve is applied inside the
+ * engine, so the UI never has to know about it — and there's no
+ * migration needed for existing saved values.
+ */
+function perceivedToGain(perceived: number): number {
+  if (perceived <= 0) return 0;
+  if (perceived >= 1) return 1;
+  return perceived * perceived;
+}
 
 /**
  * Audio engine wrapper around the Web Audio API.
@@ -47,8 +87,10 @@ const BASE_SFX_LEVEL = 0.45;
  *   source → songFilter (lowpass) → songGain → master → limiter → destination
  *   sfx    → sfxGain → master → limiter → destination
  *
- * `sfxGain.gain = BASE_SFX_LEVEL * songVol` so master volume controls
- * both buses; the player can never get loud SFX over a quiet song.
+ * `sfxGain.gain = BASE_SFX_LEVEL * perceivedToGain(songVol)` so master
+ * volume controls both buses on the same quadratic taper; the player
+ * can never get loud SFX over a quiet song, and 50% slider really
+ * sounds like ~50% loudness on both song and SFX.
  */
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -120,8 +162,10 @@ export class AudioEngine {
       // Initial level honours the persisted master volume (set via
       // setVolume() before start()), so the very first tap a player
       // makes — possibly during the lead-in countdown, before any
-      // setVolume() call lands — already respects their slider.
-      this.sfxGain.gain.value = BASE_SFX_LEVEL * this.songVol;
+      // setVolume() call lands — already respects their slider AND
+      // the quadratic taper applied by perceivedToGain().
+      this.sfxGain.gain.value =
+        BASE_SFX_LEVEL * perceivedToGain(this.songVol);
       this.sfxGain.connect(this.master);
     }
     if (this.ctx!.state === "suspended") {
@@ -213,6 +257,11 @@ export class AudioEngine {
       throw new Error("Audio not loaded");
     }
     this.stop();
+    // `volume` is the slider/perceived value (0..1); the actual GainNode
+    // value goes through perceivedToGain() so 50% slider really sounds
+    // like ~50% loudness. We store the perceived form on songVol so any
+    // later code that reads it (duckSong, setVolume) sees the same
+    // mental model.
     this.songVol = volume;
     const safeOffset = Math.max(0, Math.min(this.buffer.duration - 0.05, offset));
 
@@ -236,7 +285,7 @@ export class AudioEngine {
     // Slightly longer fade for late-join so the seeked-into frame doesn't
     // crackle from being mid-waveform; 60ms still feels instantaneous.
     const fadeLen = safeOffset > 0 ? 0.12 : 0.06;
-    gain.gain.linearRampToValueAtTime(volume, startAt + fadeLen);
+    gain.gain.linearRampToValueAtTime(perceivedToGain(volume), startAt + fadeLen);
 
     this.source = src;
     this.songFilter = filt;
@@ -388,6 +437,16 @@ export class AudioEngine {
     return this.startedAtCtxTime + songTime;
   }
 
+  /**
+   * Set the master volume.
+   *
+   * `v` is the SLIDER position (perceived 0..1), not the raw gain. The
+   * engine routes it through `perceivedToGain()` so the slider feels
+   * even from top to bottom (50% slider ≈ 50% loudness, not 75% as a
+   * naive linear gain would produce). The persisted value is the
+   * slider position, so the curve is purely an internal concern — the
+   * UI keeps showing 0–100%.
+   */
   setVolume(v: number): void {
     const clamped = Math.min(1, Math.max(0, v));
     this.songVol = clamped;
@@ -398,17 +457,18 @@ export class AudioEngine {
     // the song would suggest.
     if (this.ctx) {
       const t = this.ctx.currentTime;
+      const songGainTarget = perceivedToGain(clamped);
       if (this.songGain) {
         const g = this.songGain.gain;
         g.cancelScheduledValues(t);
         g.setValueAtTime(g.value, t);
-        g.linearRampToValueAtTime(clamped, t + 0.05);
+        g.linearRampToValueAtTime(songGainTarget, t + 0.05);
       }
       if (this.sfxGain) {
         const g = this.sfxGain.gain;
         g.cancelScheduledValues(t);
         g.setValueAtTime(g.value, t);
-        g.linearRampToValueAtTime(BASE_SFX_LEVEL * clamped, t + 0.05);
+        g.linearRampToValueAtTime(BASE_SFX_LEVEL * songGainTarget, t + 0.05);
       }
     }
   }
@@ -532,7 +592,11 @@ export class AudioEngine {
     if (!this.songGain || !this.songFilter || !this.ctx) return;
     const t = this.ctx.currentTime;
     const dur = durMs / 1000;
-    const vol = this.songVol;
+    // `songVol` is the perceived/slider value; the actual gain we want
+    // to dip from (and recover back to) is the curved value. Multiplying
+    // amountFactor against the curved gain keeps the duck depth a true
+    // 36% of the running level, regardless of where the slider sits.
+    const vol = perceivedToGain(this.songVol);
 
     const g = this.songGain.gain;
     g.cancelScheduledValues(t);
