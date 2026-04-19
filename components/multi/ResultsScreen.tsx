@@ -175,17 +175,6 @@ export function ResultsScreen({
             </button>
           </div>
 
-          {/* Soft "host hint" — hosts get the same Back-to-room button
-              as everyone else now (matches the new "any player can
-              trigger" UX). The hint is just a nudge that they can
-              start the next song after the transition. */}
-          {isHost && !returning && (
-            <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/45">
-              Host: pick the next song from the lobby once you&apos;re
-              back.
-            </p>
-          )}
-
           <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
             ESC = leave to main menu
           </p>
@@ -245,9 +234,6 @@ export function ResultsScreen({
             </li>
           ))}
         </ol>
-        <p className="mt-3 border-t-2 border-bone-50/10 pt-2 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
-          Stats are saved locally. Cloud sync arrives later.
-        </p>
       </div>
     </div>
   );
