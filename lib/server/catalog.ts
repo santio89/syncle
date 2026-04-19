@@ -31,6 +31,15 @@ const SEARCH_SOURCES: SearchSource[] = [
     extract: (j: any) =>
       Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : [],
   },
+  {
+    // Same osu!-v2 response shape as nerinyan, so normalize() works
+    // unchanged. We already use catboy as a download mirror — wiring up
+    // its search side gives us 3-way redundancy without a new schema.
+    name: "catboy.best",
+    url: (page, ps) =>
+      `https://catboy.best/api/v2/search?m=3&s=ranked&ps=${ps}&p=${page}`,
+    extract: (j) => (Array.isArray(j) ? j : []),
+  },
 ];
 
 const PAGE_WINDOW = 30;

@@ -84,6 +84,7 @@ export interface ExtractedSongFull {
  * Each entry's `url(id)` returns the .osz download URL for that mirror.
  *
  *  - catboy.best     fastest CDN, the trailing "n" suffix = no-video build.
+ *                    Also doubles as a search source (see SEARCH_SOURCES).
  *  - osu.direct      S3-backed (idrivee2-50.com), per-origin CORS.
  *  - api.nerinyan.moe modern, can be intermittently slow under load.
  */
@@ -277,6 +278,17 @@ const SEARCH_SOURCES: Array<{
     url: (page, ps) =>
       `https://osu.direct/api/v2/search?mode=3&status=1&amount=${ps}&offset=${page * ps}`,
     extract: (j: any) => (Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : []),
+  },
+  {
+    // catboy.best exposes the same osu!-v2 response shape as nerinyan,
+    // and we already use it as a download mirror — adding it here gives
+    // search a 3rd anonymous CORS-enabled source for free, with zero
+    // schema work (the `pick.id`/`beatmaps[]`/`status` extraction below
+    // applies unchanged).
+    name: "catboy.best",
+    url: (page, ps) =>
+      `https://catboy.best/api/v2/search?m=3&s=ranked&ps=${ps}&p=${page}`,
+    extract: (j) => (Array.isArray(j) ? j : []),
   },
 ];
 
