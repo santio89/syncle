@@ -27,6 +27,8 @@ import {
   FinalStats,
   LiveScore,
   MATCH_COUNTDOWN_LEAD_MS,
+  MATCH_MAX_DURATION_FALLBACK_MS,
+  MATCH_RESULTS_GRACE_MS,
   MAX_CHAT_HISTORY,
   MAX_PLAYERS_PER_ROOM,
   NoticeKind,
@@ -118,6 +120,22 @@ interface InternalRoom {
   catalogFetchedAt: number | null;
   emptyTtlTimer: NodeJS.Timeout | null;
   loadingTimer: NodeJS.Timeout | null;
+  /**
+   * Wall-clock safety net for the "playing" phase. Scheduled when the
+   * server flips to `phase === "playing"` to fire at
+   * `songStartedAt + songDurationMs + MATCH_RESULTS_GRACE_MS`. If the
+   * room is still in "playing" by then, `forceTransitionToResults`
+   * synthesises a `final` from each unfinished player's last `live`
+   * snapshot and flips the room to "results" so the results screen
+   * ALWAYS shows up — even if a `player:finished` packet from one of
+   * the clients was lost, the chart never loaded for them, their tab
+   * froze, etc. Without this timer the room would otherwise stay in
+   * "playing" forever and nobody (not even players who cleanly
+   * finished) would ever see their final standings.
+   *
+   * Cleared in every transition out of "playing" (results, lobby).
+   */
+  matchSafetyTimer: NodeJS.Timeout | null;
 }
 
 type Sock = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -347,6 +365,7 @@ class RoomRegistry {
       catalogFetchedAt: null,
       emptyTtlTimer: null,
       loadingTimer: null,
+      matchSafetyTimer: null,
     };
     room.players.set(sessionId, {
       id: sessionId,
@@ -436,6 +455,12 @@ class RoomRegistry {
     p.graceTimer = setTimeout(() => {
       this.evict(room.code, p.id, "grace");
     }, PLAYER_GRACE_MS);
+    // If this player was the only one we were still waiting on to
+    // finish, re-evaluate the room phase immediately instead of
+    // waiting out the full grace window — `checkAllFinished` only
+    // counts CONNECTED players, so the moment they go offline the
+    // remaining connected set may already be 100% finished.
+    if (room.phase === "playing") this.checkAllFinished(room);
     return { room, player: p };
   }
 
@@ -479,7 +504,16 @@ class RoomRegistry {
   private scheduleEmptyTtl(room: InternalRoom): void {
     if (room.emptyTtlTimer) clearTimeout(room.emptyTtlTimer);
     room.emptyTtlTimer = setTimeout(() => {
-      if (room.players.size === 0) this.rooms.delete(room.code);
+      if (room.players.size !== 0) return;
+      // Final timer cleanup before the room object is GC'd. Without
+      // this an in-flight match-safety timer could still fire on a
+      // deleted room and attempt to emit to a dead room channel.
+      this.clearMatchSafetyTimer(room);
+      if (room.loadingTimer) {
+        clearTimeout(room.loadingTimer);
+        room.loadingTimer = null;
+      }
+      this.rooms.delete(room.code);
     }, EMPTY_ROOM_TTL_MS);
   }
 
@@ -543,11 +577,26 @@ class RoomRegistry {
     if (!s || typeof s.beatmapsetId !== "number") {
       throw new RoomError("BAD_SONG", "Invalid song selection");
     }
+    // `durationSec` is optional on SongRef (added after launch). Validate
+    // it as a finite, positive integer in a sane range so a malicious or
+    // stale client can't smuggle NaN / Infinity / a junk number through
+    // — the lobby formatter would render garbage. Anything weird → drop
+    // the field; UI falls back to the mirror name like before.
+    const rawDuration =
+      typeof s.durationSec === "number" ? s.durationSec : undefined;
+    const durationSec =
+      rawDuration !== undefined &&
+      Number.isFinite(rawDuration) &&
+      rawDuration > 0 &&
+      rawDuration < 60 * 60
+        ? Math.round(rawDuration)
+        : undefined;
     room.selectedSong = {
       beatmapsetId: s.beatmapsetId,
       title: String(s.title ?? "Untitled").slice(0, 80),
       artist: String(s.artist ?? "Unknown").slice(0, 80),
       source: String(s.source ?? "host").slice(0, 32),
+      ...(durationSec !== undefined ? { durationSec } : {}),
     };
     // Picking a fresh song invalidates the room's ready quorum — any
     // pre-clicked "I'm ready" was for the previous selection. Clearing
@@ -718,7 +767,73 @@ class RoomRegistry {
         .to(`room:${room.code}`)
         .emit("phase:playing", { songStartedAt: room.songStartedAt });
       this.emitSnapshot(room.code);
+      // Arm the wall-clock safety net the moment we enter "playing"
+      // so even a worst-case "every connected client lost their
+      // player:finished packet" still produces a results screen.
+      this.armMatchSafetyTimer(room);
     }, delay);
+  }
+
+  /**
+   * Schedule (or re-schedule) the per-room safety net that guarantees a
+   * "results" transition even if no `player:finished` event ever
+   * arrives. Fires at `songStartedAt + songDurationMs + grace`. Uses a
+   * generous fallback duration when the host's `selectedSong` doesn't
+   * carry a `durationSec` field (legacy mirror payloads).
+   */
+  private armMatchSafetyTimer(room: InternalRoom): void {
+    if (room.matchSafetyTimer) {
+      clearTimeout(room.matchSafetyTimer);
+      room.matchSafetyTimer = null;
+    }
+    if (room.phase !== "playing" || room.songStartedAt === null) return;
+    const durationSec = room.selectedSong?.durationSec;
+    const songMs =
+      typeof durationSec === "number" && durationSec > 0
+        ? Math.round(durationSec * 1000)
+        : MATCH_MAX_DURATION_FALLBACK_MS;
+    const elapsed = Date.now() - room.songStartedAt;
+    const remaining = Math.max(0, songMs - elapsed) + MATCH_RESULTS_GRACE_MS;
+    room.matchSafetyTimer = setTimeout(() => {
+      room.matchSafetyTimer = null;
+      this.forceTransitionToResults(room);
+    }, remaining);
+  }
+
+  private clearMatchSafetyTimer(room: InternalRoom): void {
+    if (!room.matchSafetyTimer) return;
+    clearTimeout(room.matchSafetyTimer);
+    room.matchSafetyTimer = null;
+  }
+
+  /**
+   * Last-resort "the song should be over by now" path. Synthesises a
+   * `final` from each unfinished player's last `live` snapshot so the
+   * standings show their actual progress (score + accuracy + max
+   * combo) instead of zeros. Players who already sent
+   * `player:finished` keep their authoritative `final` untouched.
+   */
+  private forceTransitionToResults(room: InternalRoom): void {
+    if (room.phase !== "playing") return;
+    for (const p of room.players.values()) {
+      if (p.final !== null) continue;
+      // Mirror what the client would have sent: copy the latest
+      // server-known live values into a final shape. notesPlayed /
+      // totalNotes / hits are zero-default when the player never
+      // submitted a single score update (e.g. chart load failure),
+      // which is exactly what we want — the standings row will read
+      // "didn't play" instead of inventing fake hits.
+      p.final = {
+        score: p.live.score,
+        accuracy: p.live.accuracy,
+        maxCombo: p.live.maxCombo,
+        hits: { ...p.live.hits },
+        notesPlayed: p.live.notesPlayed,
+        totalNotes: p.live.totalNotes,
+      };
+      p.live = { ...p.live, finished: true };
+    }
+    this.transitionToResults(room);
   }
 
   applyScoreUpdate(code: string, sessionId: string, raw: unknown): void {
@@ -780,6 +895,12 @@ class RoomRegistry {
   }
 
   private transitionToResults(room: InternalRoom): void {
+    // Disarm the safety net the moment we flip — whether this was a
+    // clean "everyone finished" transition or the safety net itself
+    // firing, we don't want a stale timer left behind that could fire
+    // again after the room has already moved on (results → lobby →
+    // next song's playing phase reuses the same room object).
+    this.clearMatchSafetyTimer(room);
     room.phase = "results";
     const { standings, winnerId } = this.standingsOf(room);
     this.io
@@ -962,6 +1083,12 @@ class RoomRegistry {
       clearTimeout(room.loadingTimer);
       room.loadingTimer = null;
     }
+    // Belt-and-braces: the safety timer is normally cleared by
+    // transitionToResults before we ever land here, but a "host
+    // cancelled loading" / forced lobby return path can skip results
+    // entirely. Clearing unconditionally keeps the room object
+    // timer-free across phase recycles.
+    this.clearMatchSafetyTimer(room);
     room.phase = "lobby";
     // `selectedMode` is cleared so the host's next tap on a difficulty
     // button re-fires `host:setMode` and the server doesn't carry a

@@ -476,7 +476,19 @@ function ensureCache(
   const judgeY = H * opts.judgeLineY;
   const topY = H * 0.05;
   const cx = W / 2;
-  const bottomHalf = Math.min(294, W * 0.336);
+  // Highway sizing.
+  //
+  // We cap the half-width at 264 (was 294) AND scale by 0.31 of viewport
+  // width (was 0.336) so the trapezoid leaves more breathing room for the
+  // side HUD panels (score/combo, rock-meter, LIVE scoreboard). On wide
+  // screens (≥ ~880px) the cap kicks in and the highway is fixed at
+  // 528px wide; on narrower viewports it shrinks proportionally so the
+  // side cards never crowd the gameplay area regardless of window size.
+  // The 10% reduction in playable width is barely perceptible during
+  // gameplay (lanes scale together, judgment line still hits at the same
+  // y) but materially fixes the "boxes touching the highway" feel that
+  // the original 294/0.336 numbers produced on common laptop sizes.
+  const bottomHalf = Math.min(264, W * 0.31);
   const topHalf = bottomHalf * 0.5;
   const bottomLeftX = cx - bottomHalf;
   const bottomRightX = cx + bottomHalf;

@@ -157,16 +157,31 @@ function normalize(raw: any, source: string): CatalogItem | null {
   // Filter to sets that have at least one 4K mania difficulty so the host
   // doesn't pick something that fails to load for everyone.
   const beats = Array.isArray(raw.beatmaps) ? raw.beatmaps : [];
-  const has4K = beats.some(
+  const fourKBeats = beats.filter(
     (b: any) =>
       (b?.mode_int === 3 || b?.mode === 3 || b?.mode === "mania") &&
       Math.round(Number(b?.cs)) === 4,
   );
-  if (!has4K) return null;
+  if (fourKBeats.length === 0) return null;
+  // Track duration is identical across difficulties of the same beatmapset
+  // (they're all charts of the same song), but we still take the max as a
+  // defensive guard against truncated diffs / odd mirror responses. Prefer
+  // `total_length` (full track), fall back to `hit_length` (time between
+  // first and last hit object) if the mirror omits the former. Both fields
+  // are seconds in the standard osu API. Caps at a sane upper bound so a
+  // junk value (e.g. -1, NaN, 99999) can't blow up the formatter.
+  let durationSec: number | undefined;
+  for (const b of fourKBeats) {
+    const len = Number(b?.total_length ?? b?.hit_length);
+    if (Number.isFinite(len) && len > 0 && len < 60 * 60) {
+      durationSec = Math.max(durationSec ?? 0, Math.round(len));
+    }
+  }
   return {
     beatmapsetId: raw.id,
     title: typeof raw.title === "string" ? raw.title : "Untitled",
     artist: typeof raw.artist === "string" ? raw.artist : "Unknown",
     source,
+    ...(durationSec !== undefined ? { durationSec } : {}),
   };
 }

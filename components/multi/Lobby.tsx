@@ -659,8 +659,25 @@ function HostPane({
                     <span className="text-bone-50/55">{c.artist}</span>{" "}
                     <span className="text-bone-50">— {c.title}</span>
                   </span>
-                  <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/30">
-                    {c.source}
+                  {/* Right column: track length (m:ss) when the mirror
+                      reported `total_length` for at least one 4K diff.
+                      Falls back to the mirror name for legacy / cached
+                      catalogs that pre-date the duration field, so the
+                      column is never empty. `tabular-nums` keeps every
+                      "1:23" vertically aligned across the list, which
+                      is much easier to scan than left-justified mirror
+                      names of varying width. */}
+                  <span
+                    className="shrink-0 font-mono text-[9.5px] uppercase tracking-widest tabular-nums text-bone-50/40"
+                    data-tooltip={
+                      c.durationSec !== undefined
+                        ? `Track length · sourced from ${c.source}`
+                        : `Source mirror · duration not reported`
+                    }
+                  >
+                    {c.durationSec !== undefined
+                      ? formatTrackLength(c.durationSec)
+                      : c.source}
                   </span>
                 </button>
               </li>
@@ -933,6 +950,22 @@ function firstAvailableMode(modes: ModeAvailability): ChartMode {
   return "easy";
 }
 
+/**
+ * `m:ss` formatter for catalog row track lengths. Mirrors
+ * `formatDuration` in MultiGame.tsx / Game.tsx (kept local rather
+ * than imported to avoid pulling Game.tsx into the lobby bundle).
+ * Defensive about junk input — the catalog payload comes from a
+ * 3rd-party search mirror, so any non-finite or negative number
+ * collapses to `"0:00"` instead of throwing or rendering `"NaN:NaN"`.
+ */
+function formatTrackLength(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function HostModeButton({
   mode,
   selected,
@@ -1013,8 +1046,7 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
         <p className="mt-2 max-w-md text-[0.92rem] text-bone-50/65">
           The host of this room chooses the song and difficulty. Hit{" "}
           <span className="font-mono text-bone-50">Mark ready</span> to
-          tell the host you&apos;re good to go — when everyone&apos;s
-          ready, the match starts on its own.
+          tell the host you&apos;re good to go.
         </p>
       </div>
 

@@ -1662,15 +1662,32 @@ function HUD({
   const accuracy = computeAccuracy(stats);
   const total = stats.totalNotes;
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-6xl items-start justify-between gap-2 p-2 sm:gap-3 sm:p-5">
+    // Layout band:
+    //   - `max-w-7xl` (was 6xl) widens the HUD strip on big monitors so the
+    //     score/combo and rock-meter cards drift further outward, away from
+    //     the highway, instead of being pulled tight against the centered
+    //     1152-px band.
+    //   - `sm:px-3` (was sm:p-5) trims the inner horizontal padding so the
+    //     same cards hug the screen edges on narrower laptops, freeing up
+    //     pixels between each card and the trapezoid's widening edges. The
+    //     vertical `sm:py-5` keeps the original top inset so the panels
+    //     don't ride flush against the canvas top.
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-7xl items-start justify-between gap-2 p-2 sm:gap-3 sm:py-5 sm:px-3">
       {/* Combined SCORE + COMBO panel. Same accented chrome as before, but
           combo sits inside the same frame with a dividing rule, so the
           left HUD reads as one cohesive "performance" block instead of
           two competing cards. Internal min-widths shrink at <sm so the
           panel fits 4-lane phones in landscape without crowding the
           rock-meter card on the right. */}
-      <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-3">
-        <div className="min-w-[89px] sm:min-w-[153px]">
+      {/* Score+combo card: shrunk slightly at `sm` (mid-range desktops and
+          laptops, 640–1279 px) so it doesn't visually touch the highway,
+          then restored to its previous proportions at `xl` (≥ 1280 px)
+          where there's plenty of room. The xl tier matches the original
+          gap-4 / px-4 / 153/81 min-widths the user asked for in earlier
+          rounds; the sm tier shaves ~36 px off total width without
+          changing the displayed numbers' font sizes. */}
+      <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-3 sm:px-3 sm:py-3 xl:gap-4 xl:px-4">
+        <div className="min-w-[89px] sm:min-w-[140px] xl:min-w-[153px]">
           <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Score
           </p>
@@ -1687,7 +1704,7 @@ function HUD({
           )}
         </div>
         <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-        <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[81px]">
+        <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[74px] xl:min-w-[81px]">
           <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             Combo
           </p>
@@ -1704,7 +1721,12 @@ function HUD({
         </div>
       </div>
 
-      <div className="brut-card flex w-[143px] flex-col gap-1 px-2.5 py-2 sm:w-[204px] sm:px-4 sm:py-3">
+      {/* Rock-meter card: 204 px on sm matches the previous design (already
+          comfortably clears the highway on the right side after the
+          highway shrink + max-w-7xl band). xl widens to 220 px to soak up
+          extra room on big screens for the song progress bar and the
+          metronome / SFX / FPS buttons. */}
+      <div className="brut-card flex w-[143px] flex-col gap-1 px-2.5 py-2 sm:w-[204px] sm:px-4 sm:py-3 xl:w-[220px]">
         {/* "Now playing" strip — single source of truth for which song is on
             screen during gameplay (the StartCard hands off and disappears,
             so without this the player has nothing to remind them what's

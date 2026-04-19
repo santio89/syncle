@@ -544,7 +544,11 @@ html::-webkit-scrollbar-thumb:hover {
      lines so they soft-wrap inside a sane width. */
   width: max-content;
   max-width: 18rem;
-  text-align: center;
+  /* Left-align so multi-line tooltips (Song / Artist / Mapper, key labels
+     stacked above values, etc.) read down a single column instead of
+     having every short line individually centered. The arrow nub still
+     sits dead center under the trigger via the ::after rule below. */
+  text-align: left;
   box-shadow: 3px 3px 0 0 rgb(var(--shadow));
   animation: tooltipIn 140ms ease-out both;
 }

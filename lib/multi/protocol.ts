@@ -38,6 +38,16 @@ export interface SongRef {
   artist: string;
   /** Which mirror search returned this entry. Diagnostic only. */
   source: string;
+  /**
+   * Track duration in WHOLE seconds. Optional because the field was
+   * added after launch — old servers, manually-crafted SongRefs, and
+   * cached snapshots may omit it. Sourced from the longest 4K mania
+   * difficulty's `total_length` in the search-mirror response, which
+   * matches what the audio engine reports once the .osz is decoded.
+   * Used by the host song picker to show "3:42" instead of the
+   * mirror name in the right column of every catalog row.
+   */
+  durationSec?: number;
 }
 
 export interface CatalogItem extends SongRef {}
@@ -467,6 +477,31 @@ export const MATCH_LEAD_IN_MS = 2_000;
  * clients use it to know when to start the audio buffer.
  */
 export const MATCH_COUNTDOWN_LEAD_MS = MATCH_OVERLAY_MS + MATCH_LEAD_IN_MS;
+
+/**
+ * Server-side safety grace tacked onto the song's expected duration
+ * before the room is force-transitioned to "results". The intent is to
+ * GUARANTEE a results screen even if a player's `player:finished` event
+ * never arrives (chart load failure, frozen tab, lost websocket frame,
+ * client crashed mid-song, etc.). Without this grace the room would
+ * stay stuck in "playing" forever and nobody — not even players who
+ * cleanly finished — would ever see their final standings.
+ *
+ * 12 s is the budget for: last-note judgment window (~1 s) + a generous
+ * round-trip margin for the slowest connected client to send their
+ * `player:finished` packet under network congestion. Tuning this lower
+ * risks cutting off legitimate finishers; tuning higher makes the
+ * results screen feel laggy when one player has flat-out abandoned.
+ */
+export const MATCH_RESULTS_GRACE_MS = 12_000;
+/**
+ * Hard fallback for the safety timer when `selectedSong.durationSec`
+ * isn't known (older mirror responses, hand-crafted SongRefs). 8 min
+ * comfortably exceeds the longest 4K mania charts in the typical osu
+ * catalog, so we prefer an over-long fallback over force-cutting a
+ * real song mid-play.
+ */
+export const MATCH_MAX_DURATION_FALLBACK_MS = 8 * 60 * 1_000;
 
 export function isValidRoomCode(code: string): boolean {
   if (typeof code !== "string") return false;

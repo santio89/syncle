@@ -780,7 +780,14 @@ function CanvasPane({
         // Pause is intentionally absent (multi can't pause without
         // freezing 50 other players); metronome + volume + fps stay so
         // the player keeps the same audio controls they have in solo.
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-6xl items-start gap-3 p-3 sm:p-5">
+        // Layout band mirrors the single-player HUD:
+        //   - `max-w-7xl` lets the left column drift outward on big monitors
+        //     so it doesn't get pulled tight against the centered band.
+        //   - `sm:px-3` (was sm:p-5) hugs the left edge on narrower laptops
+        //     so the score/combo and rock-meter cards have more pixels
+        //     between them and the highway's widening trapezoid.
+        //   - Vertical `sm:py-5` keeps the original top inset.
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-7xl items-start gap-3 p-3 sm:py-5 sm:px-3">
           <div className="flex w-fit flex-col gap-3">
             <PerformancePanel stats={stats} />
             <HealthPanel
@@ -945,13 +952,17 @@ function ScoreboardSidebar({
         }));
 
   return (
-    // The scoreboard is right-aligned inside the SAME `max-w-6xl` band that
+    // The scoreboard is right-aligned inside the SAME `max-w-7xl` band that
     // bounds the score/combo cluster (and that bounds the rock-meter card
     // in single-player). On wide screens this pulls the panel inwards so
-    // both side overlays sit close to the highway, matching the
-    // single-player feel; on narrow viewports the band collapses to the
-    // screen width and the scoreboard ends up flush against the right
-    // padding, which is the right behaviour there too.
+    // both side overlays sit close to (but never on top of) the highway,
+    // matching the single-player feel; on narrow viewports the band
+    // collapses to the screen width and the scoreboard ends up flush
+    // against the right padding, which is the right behaviour there too.
+    // The band was widened from 6xl → 7xl together with the highway-half
+    // shrink (264 in renderer.ts) so big-monitor users see the scoreboard
+    // sit ~50 px clear of the highway's bottom-right corner instead of
+    // grazing it.
     //
     // The wrapper is `pointer-events-none` so it doesn't trap pointer
     // events over empty highway space, but the `<aside>` re-enables them
@@ -965,9 +976,23 @@ function ScoreboardSidebar({
     //     past the canvas. The inner <ol> has `overflow-y-auto`, so when
     //     50 players push past that ceiling the rows scroll INSIDE the
     //     panel and never leak into the gameplay area.
-    <div className="pointer-events-none absolute inset-0 z-10 mx-auto w-full max-w-6xl">
+    <div className="pointer-events-none absolute inset-0 z-10 mx-auto w-full max-w-7xl">
+      {/* Scoreboard widths step up with viewport so it never crowds the
+          highway:
+            - default (mobile / narrow tablet): 240 px, capped further by
+              `max-w-[40vw]` so it never eats more than a screen-half.
+            - sm  (≥ 640 px laptops): 264 px  — fits beside the shrunk
+              highway with a few px of breathing room on common 1024 px
+              viewports.
+            - lg  (≥ 1024 px desktops): 288 px — restores room for long
+              player names once the highway has plenty of side area.
+            - xl  (≥ 1280 px monitors): 310 px — original full-size band.
+          The right-3 sm:right-3 lg:right-5 ladder keeps the panel hugging
+          the screen edge on small screens (where every px of side area
+          counts) and only adds the original 20 px of breathing room on
+          lg+ where the band stops growing relative to the highway. */}
       <aside
-        className="brut-card pointer-events-auto absolute right-3 top-3 flex max-h-[calc(100%-1.5rem)] w-[272px] max-w-[40vw] flex-col p-4 sm:right-5 sm:top-5 sm:max-h-[calc(100%-2.5rem)] sm:w-[310px] sm:p-5"
+        className="brut-card pointer-events-auto absolute right-3 top-3 flex max-h-[calc(100%-1.5rem)] w-[240px] max-w-[40vw] flex-col p-4 sm:right-3 sm:top-5 sm:max-h-[calc(100%-2.5rem)] sm:w-[264px] sm:p-5 lg:right-5 lg:w-[288px] xl:w-[310px]"
       >
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-mono text-[10.2px] uppercase tracking-[0.4em] text-accent">
@@ -1075,8 +1100,12 @@ function formatDuration(seconds: number): string {
 function PerformancePanel({ stats }: { stats: PlayerStats }) {
   const accuracy = computeAccuracy(stats);
   return (
-    <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-4 sm:px-4 sm:py-3">
-      <div className="min-w-[89px] sm:min-w-[153px]">
+    // Score+combo card: shrunk slightly at `sm` (640–1279 px) so it doesn't
+    // visually crowd the highway's expanding edges, restored to its full
+    // proportions at `xl` (≥ 1280 px) where there's room. Mirrors the
+    // single-player HUD card so both modes feel the same.
+    <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-3 sm:px-3 sm:py-3 xl:gap-4 xl:px-4">
+      <div className="min-w-[89px] sm:min-w-[140px] xl:min-w-[153px]">
         <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           Score
         </p>
@@ -1088,7 +1117,7 @@ function PerformancePanel({ stats }: { stats: PlayerStats }) {
         </p>
       </div>
       <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-      <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[81px]">
+      <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[74px] xl:min-w-[81px]">
         <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           Combo
         </p>
