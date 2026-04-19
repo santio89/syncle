@@ -400,7 +400,6 @@ function CreatePane({
           <VisibilityChoice
             id="vis-private"
             label="Private"
-            description="Code-only. Share the room code to invite friends."
             active={visibility === "private"}
             onSelect={() => onVisibility("private")}
             dot="○"
@@ -408,7 +407,6 @@ function CreatePane({
           <VisibilityChoice
             id="vis-public"
             label="Public"
-            description="Anyone can find and join this room from Browse."
             active={visibility === "public"}
             onSelect={() => onVisibility("public")}
             dot="●"
@@ -444,14 +442,12 @@ function CreatePane({
 function VisibilityChoice({
   id,
   label,
-  description,
   active,
   onSelect,
   dot,
 }: {
   id: string;
   label: string;
-  description: string;
   active: boolean;
   onSelect: () => void;
   dot: string;
@@ -463,7 +459,7 @@ function VisibilityChoice({
       role="radio"
       aria-checked={active}
       onClick={onSelect}
-      className={`flex flex-col items-start gap-1 border-2 px-3 py-2 text-left transition-colors ${
+      className={`flex items-center border-2 px-3 py-2.5 text-left transition-colors ${
         active
           ? "border-accent bg-accent/10"
           : "border-bone-50/20 hover:border-accent/60"
@@ -476,9 +472,6 @@ function VisibilityChoice({
       >
         <span className="mr-1">{dot}</span>
         {label}
-      </span>
-      <span className="text-[10.5px] leading-snug text-bone-50/55">
-        {description}
       </span>
     </button>
   );

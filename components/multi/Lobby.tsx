@@ -173,7 +173,12 @@ function PlayerRoster({
         allReady={allReady}
       />
 
-      <ul className="mt-3 space-y-1.5">
+      {/* Cap the roster height so a full 50-player room doesn't push
+          Mark Ready + rename out of view. ~6-7 rows visible (each row
+          is ~36px + 6px gap) before the brutalist scrollbar kicks in;
+          `pr-1` leaves a small gutter so the scrollbar thumb doesn't
+          sit flush against the row borders. */}
+      <ul className="mt-3 max-h-72 space-y-1.5 overflow-y-auto pr-1">
         {snapshot.players.map((p) => (
           <RosterRow
             key={p.id}

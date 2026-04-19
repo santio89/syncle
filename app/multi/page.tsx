@@ -112,7 +112,7 @@ export default function MultiEntryPage() {
       <div className="relative z-10 mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pt-10 pb-16 sm:px-6 sm:pt-16">
         <div>
           <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
-            ░ Up to 50 per room · same song, parallel runs
+            ░ Same song, parallel runs
           </p>
           <h1 className="mt-2 font-display text-[2.36rem] font-bold leading-none sm:text-[3.15rem]">
             Pick a name and a room.

@@ -1013,7 +1013,12 @@ function ScoreboardSidebar({
           {entries.filter((e) => e.online).length} online
         </span>
       </div>
-      <ol className="mt-3 flex-1 space-y-1.5 overflow-y-auto pr-1">
+      {/* Same cap as the lobby roster (~6-7 rows) so the live scoreboard
+          stays compact even on tall viewports — keeps the panel from
+          stretching down to the gameplay canvas ceiling on a 4K monitor
+          when a 50-player room is full. The brutalist scrollbar (wired
+          globally in globals.css) takes over once the cap is hit. */}
+      <ol className="mt-3 max-h-72 flex-1 space-y-1.5 overflow-y-auto pr-1">
         {entries.map((e, i) => {
           const isMe = e.id === me;
           return (
@@ -1085,9 +1090,6 @@ function ScoreboardSidebar({
           );
         })}
       </ol>
-      <p className="mt-3 border-t-2 border-bone-50/10 pt-2 font-mono text-[9.2px] uppercase tracking-widest text-bone-50/40">
-        Updates ~5×/sec · everyone races on the same chart
-      </p>
       </aside>
     </div>
   );
