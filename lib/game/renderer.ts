@@ -321,32 +321,57 @@ const PAST_GRACE_S = 0.16;
  * top and bottom edges. Used purely for visuals — gameplay math
  * (judgeY, topY, note spawn/travel timing) is unchanged.
  *
- * 4% per side (≈32px on a typical 800px tall canvas) is the smallest
- * value where the alpha gradient has enough vertical room to actually
- * READ as a soft falloff. Anything tighter (we tried 1.2% first) just
- * compresses the ramp into a few pixels and the eye still sees a hard
- * line — the gradient is mathematically correct but visually invisible
- * because both the highway color and the page bg are within ~20% value
- * of each other in both themes.
+ * Top and bottom are tuned independently because they sit next to
+ * very different things on screen. The top falls into empty page bg,
+ * so it only needs enough room for the alpha ramp to read as a soft
+ * dissolve (≈26px on an 800px tall canvas). The bottom sits right
+ * below the input button row, so a heavy fade-to-transparent strip
+ * looks like an oppressive black band crowding the buttons — we
+ * keep the strip small AND clamp it to a non-zero alpha floor below
+ * (`BOTTOM_FADE_FLOOR`) so the highway only dims at the bottom edge
+ * instead of disappearing entirely.
  *
- * The new "fade zones" sit between the original edges and the new
- * visual edges; the highway gradient + rails fade their alpha to 0
- * inside these zones so the playfield melts into the page bg instead
- * of cutting at a hard line. Lane gates / judge line are unaffected
- * (they live well inside the fully-opaque region at judgeY).
+ * Earlier work landed at 4% on both sides; we tightened the top to
+ * 3.2% for subtlety and the bottom to 2.4% (combined with the alpha
+ * floor) so the fade no longer reads as a black band right under the
+ * input buttons.
  */
-const EDGE_FADE_PCT = 0.04;
+const EDGE_FADE_PCT_TOP = 0.045;
+const EDGE_FADE_PCT_BOTTOM = 0.038;
+/**
+ * Distance from `judgeY` down to where the trapezoid floor mathematically
+ * ends (`bottomY`). Tuned so the buttons get a clear cushion of
+ * fully-opaque highway BEFORE the fade begins. Combined with the
+ * reduced `EDGE_FADE_BLEED` below, the alpha=1 anchor now sits at
+ * ≈`bottomY - 17px`, so the visible darkening starts ~85px below
+ * `judgeY` and the perceptual midpoint sits ~108px below it — well
+ * separated from the input buttons so the dissolve never reads as
+ * crowding or covering them.
+ */
+const BOTTOM_HIGHWAY_PAD = 100;
+/**
+ * Lowest alpha the highway / rails fade to at the very bottom edge.
+ * Now true 0 — any non-zero floor leaves the trapezoid's bottom edge
+ * visible as a dim shelf, which is exactly the "block" look we kept
+ * fighting. With the short `BOTTOM_HIGHWAY_PAD` + tight ramp this
+ * dissolves cleanly to nothing within ~25px of the buttons, no
+ * residual silhouette.
+ */
+const BOTTOM_FADE_FLOOR = 0;
 /**
  * How far the alpha ramp bleeds INTO the original highway area, as a
  * fraction of the new fade strip height. 0 = fade is contained strictly
  * to the new strip (looks abrupt because both surfaces are similar
  * tones); 1.0 = fade is twice as wide, half inside the new strip and
- * half inside the original highway. 0.5 lands in the sweet spot — the
- * note travel area loses ~16px of "fully opaque" highway at top and
- * bottom but gains a clearly visible ease-in/out, and the boundary
- * between the new and original areas is now invisible.
+ * half inside the original highway. 0.45 keeps the alpha=1 anchor
+ * close to `bottomY` rather than creeping back toward the buttons,
+ * which is what visually separates the dissolve from the button
+ * row. The wider `EDGE_FADE_PCT_BOTTOM` strip compensates so the
+ * ramp itself still spans ~55px on a typical 800px canvas — long
+ * enough that the eye reads it as a smooth gradient rather than a
+ * crisp boundary.
  */
-const EDGE_FADE_BLEED = 0.5;
+const EDGE_FADE_BLEED = 0.45;
 /**
  * Top-of-progress threshold inside which notes (and beat lines) ramp
  * their alpha from 0 → 1 as they enter the highway. Reads as the note
@@ -587,16 +612,20 @@ function ensureCache(
   vignette.addColorStop(1, palette.vignetteOuter);
 
   // Visual edge extension. The trapezoid's geometric "play area" stays
-  // anchored at topY → bottomY (judgeY + 50) — that's where notes live
-  // and where the rails *used* to terminate. We extend outward by
-  // EDGE_FADE_PCT of H on each side and use that extra strip purely for
-  // the fade-to-transparent so the highway melts into the page bg
-  // instead of having a hard edge. Clamped to the canvas so we never
-  // try to draw past the surface even on extreme aspect ratios.
-  const bottomY = judgeY + 50;
-  const fadePx = H * EDGE_FADE_PCT;
-  const topYVisual = Math.max(0, topY - fadePx);
-  const bottomYVisual = Math.min(H, bottomY + fadePx);
+  // anchored at topY → bottomY — that's where notes live and where
+  // the rails *used* to terminate. We extend outward by
+  // `EDGE_FADE_PCT_TOP / _BOTTOM` of H on each side and use that
+  // extra strip purely for the fade-to-transparent so the highway
+  // melts into the page bg instead of having a hard edge. The two
+  // sides are sized independently so the bottom (next to the input
+  // button row) can be tighter than the top. Clamped to the canvas
+  // so we never try to draw past the surface even on extreme aspect
+  // ratios.
+  const bottomY = judgeY + BOTTOM_HIGHWAY_PAD;
+  const fadePxTop = H * EDGE_FADE_PCT_TOP;
+  const fadePxBottom = H * EDGE_FADE_PCT_BOTTOM;
+  const topYVisual = Math.max(0, topY - fadePxTop);
+  const bottomYVisual = Math.min(H, bottomY + fadePxBottom);
 
   // Extrapolate the trapezoid corners along the existing rail slope so
   // the fade-zone widening matches the perspective EXACTLY. If we just
@@ -648,7 +677,10 @@ function ensureCache(
   highway.addColorStop(fadeTopAnchor, rgba(stop0, 1));
   highway.addColorStop(innerMid, rgba(stop1, 1));
   highway.addColorStop(fadeBotAnchor, rgba(stop2, 1));
-  highway.addColorStop(1, rgba(stop2, 0));
+  // Bottom dissolves to `BOTTOM_FADE_FLOOR` instead of 0 — keeps a
+  // faint highway tone behind the input buttons so the fade reads as
+  // a soft dim instead of a hard fade-to-bg band right under them.
+  highway.addColorStop(1, rgba(stop2, BOTTOM_FADE_FLOOR));
 
   // Rail gradient — same fade anchors at unit accent alpha so the
   // rails fade in/out in lockstep with the highway floor. Per-frame
@@ -660,7 +692,9 @@ function ensureCache(
   railGradient.addColorStop(0, rgba(palette.accentRgb, 0));
   railGradient.addColorStop(fadeTopAnchor, rgba(palette.accentRgb, 1));
   railGradient.addColorStop(fadeBotAnchor, rgba(palette.accentRgb, 1));
-  railGradient.addColorStop(1, rgba(palette.accentRgb, 0));
+  // Mirror the highway's bottom floor so the rails dim in lockstep
+  // with the floor instead of vanishing entirely under the buttons.
+  railGradient.addColorStop(1, rgba(palette.accentRgb, BOTTOM_FADE_FLOOR));
 
   const laneX: number[] = [];
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
