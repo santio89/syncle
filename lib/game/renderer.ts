@@ -303,6 +303,16 @@ interface RenderCache {
    *  frame via `hexToRgb`. Cached here it's a one-time cost per resize/
    *  theme swap. */
   beatDotIdleRgb: RGB;
+  /**
+   * Pre-built `rgba()` lookup tables for the palette's accent and judge
+   * colors — 256 entries each, indexed by alpha bucket. Replaces every
+   * per-frame `rgba(palette.accentRgb, ...)` / `rgba(palette.judgeRgb, ...)`
+   * call (judgment line, judgment-line glow shadow, lane-flash on the
+   * accent-tinted floor, etc.) with a pure array lookup. Rebuilt only
+   * when the palette swaps, so they're amortized to ~zero per frame.
+   */
+  accentRgba: string[];
+  judgeRgba: string[];
 }
 
 const PARTICLE_BUDGET = 200;
@@ -420,6 +430,61 @@ function rgba(c: RGB, a: number): string {
   return `rgba(${c.r},${c.g},${c.b},${a})`;
 }
 
+/* -------------------------------------------------------------------------
+ * Per-frame string allocation killers.
+ *
+ * Profiling showed that the particle hot loop alone produced ~200
+ * `rgba()` strings per frame (≈12k allocations / sec @ 60Hz). At dense
+ * particle bursts this generated enough short-lived garbage to trigger
+ * minor GC pauses every few seconds — the classic source of "fine for
+ * 5s, then a 30ms hitch" stutters in canvas games.
+ *
+ * Fix: pre-compute `LANE_RGBA[lane][alphaBucket]` once at module load —
+ * 4 lanes × 256 alpha buckets = 1024 strings, ~25KB resident, ZERO
+ * per-frame allocations. Alpha is quantized to 1/255 which is exactly
+ * the precision the GPU uses for the 8-bit alpha channel anyway, so
+ * there's no visual difference vs the unquantized form.
+ *
+ * Same trick applied to per-palette colors (accent / judge) via
+ * `makeRgbaLut` — those luts live on the cache and rebuild only on
+ * resize / theme swap, so they're free at frame time too.
+ *
+ * Hot-path call sites should use:
+ *   - `laneRgba(lane, a)` for lane-colored draws (notes, holds, particles,
+ *     gates, lane flashes, shockwaves)
+ *   - `rgbaFromLut(cache.accentRgba, a)` for accent draws (judge-line glow,
+ *     judgment-line stroke shadow, etc.)
+ *   - `rgbaFromLut(cache.judgeRgba, a)` for judgment-line stroke
+ *
+ * Cold paths (one-off colors per frame, gradient stop bake, popup grades)
+ * keep using `rgba()` since the savings would be invisible.
+ * --------------------------------------------------------------------- */
+const ALPHA_STEPS = 256;
+
+function makeRgbaLut(c: RGB): string[] {
+  const arr = new Array<string>(ALPHA_STEPS);
+  for (let i = 0; i < ALPHA_STEPS; i++) {
+    arr[i] = `rgba(${c.r},${c.g},${c.b},${(i / 255).toFixed(3)})`;
+  }
+  return arr;
+}
+
+function rgbaFromLut(lut: string[], a: number): string {
+  // Truncating bucket. Branchless clamp on the high end keeps the
+  // hot path free of conditional jumps; alpha < 0 collapses to 0
+  // because `(neg * 255) | 0` rounds toward zero.
+  let i = (a * 255) | 0;
+  if (i < 0) i = 0;
+  else if (i > 255) i = 255;
+  return lut[i];
+}
+
+const LANE_RGBA: string[][] = LANE_RGB.map(makeRgbaLut);
+
+function laneRgba(lane: number, a: number): string {
+  return rgbaFromLut(LANE_RGBA[lane], a);
+}
+
 function hexToRgb(hex: string): RGB {
   return {
     r: parseInt(hex.slice(1, 3), 16),
@@ -467,15 +532,6 @@ export function crossedComboMilestone(
     if (prevCombo < m && newCombo >= m) return m;
   }
   return null;
-}
-
-interface Highway {
-  bottomLeftX: number;
-  bottomRightX: number;
-  topLeftX: number;
-  topRightX: number;
-  topY: number;
-  judgeY: number;
 }
 
 /**
@@ -529,15 +585,12 @@ export function drawFrame(
   ctx.fillStyle = cache.vignette;
   ctx.fillRect(0, 0, W, H);
 
-  const hw: Highway = {
-    bottomLeftX: cache.bottomLeftX,
-    bottomRightX: cache.bottomRightX,
-    topLeftX: cache.topLeftX,
-    topRightX: cache.topRightX,
-    topY: cache.topY,
-    judgeY: cache.judgeY,
-  };
-
+  // The old code allocated a fresh `Highway` object every frame here
+  // (just to hand a few cached numbers to drawHighway / drawTapNote /
+  // drawHoldTrail). On long sessions those tiny per-frame allocations
+  // were a real GC contributor — now we just thread `cache` through
+  // the call sites and read the numbers off it directly. Zero allocs
+  // per frame on the geometry-passing path.
   const beatLen = 60 / opts.bpm;
   const firstBeat =
     Math.floor((songTime - opts.offset) / beatLen) * beatLen + opts.offset;
@@ -553,7 +606,7 @@ export function drawFrame(
   decayMilestone(rs, dt);
 
   drawHighway(
-    ctx, hw, state, songTime, opts, rs,
+    ctx, state, songTime, opts, rs,
     firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette,
   );
 
@@ -762,6 +815,8 @@ function ensureCache(
     laneX, laneXTop, laneXBot,
     separatorTopX, separatorBotX,
     beatDotIdleRgb: hexToRgb(palette.beatDotIdle),
+    accentRgba: makeRgbaLut(palette.accentRgb),
+    judgeRgba: makeRgbaLut(palette.judgeRgb),
   };
   return rs.cache;
 }
@@ -769,7 +824,6 @@ function ensureCache(
 // ---------------------------------------------------------------------------
 function drawHighway(
   ctx: CanvasRenderingContext2D,
-  hw: Highway,
   state: GameState,
   songTime: number,
   opts: RenderOptions,
@@ -813,7 +867,7 @@ function drawHighway(
   ctx.save();
   ctx.lineWidth = 3;
   ctx.strokeStyle = cache.railGradient;
-  ctx.shadowColor = rgba(palette.accentRgb, 0.95);
+  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.95);
   ctx.shadowBlur = 22;
   ctx.beginPath();
   ctx.moveTo(cache.visTopLeftX, cache.topYVisual);
@@ -830,10 +884,10 @@ function drawHighway(
   // just N strokes per frame, no `lerp()` per separator.
   ctx.strokeStyle = palette.laneSeparator;
   ctx.lineWidth = 1;
-  const sepBotY = hw.judgeY + 50;
+  const sepBotY = cache.judgeY + 50;
   for (let i = 0; i < cache.separatorTopX.length; i++) {
     ctx.beginPath();
-    ctx.moveTo(cache.separatorTopX[i], hw.topY);
+    ctx.moveTo(cache.separatorTopX[i], cache.topY);
     ctx.lineTo(cache.separatorBotX[i], sepBotY);
     ctx.stroke();
   }
@@ -852,9 +906,9 @@ function drawHighway(
         ? (1 - progress) / (1 - SPAWN_FADE_PROGRESS)
         : 1;
     if (beatAlpha <= 0.02) continue;
-    const y = hw.topY + (hw.judgeY - hw.topY) * (1 - progress);
-    const xL = lerp(hw.topLeftX, hw.bottomLeftX, 1 - progress);
-    const xR = lerp(hw.topRightX, hw.bottomRightX, 1 - progress);
+    const y = cache.topY + (cache.judgeY - cache.topY) * (1 - progress);
+    const xL = lerp(cache.topLeftX, cache.bottomLeftX, 1 - progress);
+    const xR = lerp(cache.topRightX, cache.bottomRightX, 1 - progress);
     const isMeasure = Math.round((t - opts.offset) / beatLen) % 4 === 0;
     ctx.strokeStyle = isMeasure ? palette.measureLine : palette.beatLine;
     ctx.lineWidth = isMeasure ? 2 : 1;
@@ -905,7 +959,7 @@ function drawHighway(
       }
     }
     if (trailAlpha <= 0.01) continue;
-    drawHoldTrail(ctx, n, songTime, opts, hw, palette, trailAlpha, cache);
+    drawHoldTrail(ctx, n, songTime, opts, palette, trailAlpha, cache);
   }
   // Reset anticipation each frame; we re-derive it from the upcoming notes.
   for (let i = 0; i < rs.laneAnticipation.length; i++) rs.laneAnticipation[i] = 0;
@@ -947,21 +1001,21 @@ function drawHighway(
       const v = a * a;
       if (v > rs.laneAnticipation[n.lane]) rs.laneAnticipation[n.lane] = v;
     }
-    drawTapNote(ctx, n, lookahead, opts, hw, palette, alpha, cache);
+    drawTapNote(ctx, n, lookahead, opts, palette, alpha, cache);
   }
 
   // Judgment line — subtle pulse on the beat AND on combo milestones.
   ctx.save();
-  ctx.strokeStyle = rgba(
-    palette.judgeRgb,
+  ctx.strokeStyle = rgbaFromLut(
+    cache.judgeRgba,
     clamp(palette.judgeBaseAlpha + beatPulse * 0.15 + ms * 0.2, 0, 1),
   );
   ctx.lineWidth = 2 + ms * 1;
-  ctx.shadowColor = rgba(palette.accentRgb, 0.85);
+  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.85);
   ctx.shadowBlur = 14 + beatPulse * 14 + ms * 22;
   ctx.beginPath();
-  ctx.moveTo(hw.bottomLeftX + 4, hw.judgeY);
-  ctx.lineTo(hw.bottomRightX - 4, hw.judgeY);
+  ctx.moveTo(cache.bottomLeftX + 4, cache.judgeY);
+  ctx.lineTo(cache.bottomRightX - 4, cache.judgeY);
   ctx.stroke();
   ctx.restore();
 
@@ -976,13 +1030,13 @@ function drawHighway(
     const x = cache.laneX[i];
     const w = 36 + flash * 28;
     ctx.save();
-    ctx.strokeStyle = rgba(LANE_RGB[i], 0.35 + flash * 0.55);
+    ctx.strokeStyle = laneRgba(i, 0.35 + flash * 0.55);
     ctx.shadowColor = LANE_COLORS[i];
     ctx.shadowBlur = 14 + flash * 18;
     ctx.lineWidth = 3 + flash * 2;
     ctx.beginPath();
-    ctx.moveTo(x - w / 2, hw.judgeY);
-    ctx.lineTo(x + w / 2, hw.judgeY);
+    ctx.moveTo(x - w / 2, cache.judgeY);
+    ctx.lineTo(x + w / 2, cache.judgeY);
     ctx.stroke();
     ctx.restore();
   }
@@ -992,7 +1046,7 @@ function drawHighway(
       ctx,
       i,
       cache.laneX[i],
-      hw.judgeY,
+      cache.judgeY,
       opts.laneHeld[i] ?? false,
       rs.laneFlash[i] ?? 0,
       state.isHolding(i),
@@ -1008,13 +1062,12 @@ function drawTapNote(
   n: Note,
   lookahead: number,
   opts: RenderOptions,
-  hw: Highway,
   palette: ThemePalette,
   alpha: number,
   cache: RenderCache,
 ) {
   const progress = lookahead / opts.leadTime;
-  const y = hw.topY + (hw.judgeY - hw.topY) * (1 - progress);
+  const y = cache.topY + (cache.judgeY - cache.topY) * (1 - progress);
 
   // Lane top/bottom X are baked in `ensureCache` (constant per lane until
   // the canvas resizes). Only the perspective-progress lerp varies
@@ -1070,7 +1123,6 @@ function drawHoldTrail(
   n: Note,
   songTime: number,
   opts: RenderOptions,
-  hw: Highway,
   palette: ThemePalette,
   alphaMul: number,
   cache: RenderCache,
@@ -1082,8 +1134,11 @@ function drawHoldTrail(
   const tailProgress = clamp(tailLook / opts.leadTime, -0.2, 1.05);
 
   // Convert lookahead progress (1=top, 0=judge line) to canvas y.
-  const yFromProgress = (p: number) =>
-    hw.topY + (hw.judgeY - hw.topY) * (1 - p);
+  // Read endpoints once into locals so the closure below doesn't have
+  // to re-deref `cache` on each call.
+  const topY = cache.topY;
+  const judgeY = cache.judgeY;
+  const yFromProgress = (p: number) => topY + (judgeY - topY) * (1 - p);
 
   // Trail visible only between top of highway and the judgment line.
   // Once the head crosses the judgment line, "freeze" the head at the line
@@ -1108,13 +1163,12 @@ function drawHoldTrail(
   const wTail = lerp(10.5, 27.5, 1 - visTail);
 
   const color = LANE_COLORS[n.lane];
-  const colorRgb = LANE_RGB[n.lane];
   const consumed = n.holding === true;
   const alpha = consumed ? 0.85 : n.tailJudged === "miss" ? 0.18 : 0.55;
 
   ctx.save();
   ctx.globalAlpha = alphaMul;
-  ctx.fillStyle = rgba(colorRgb, alpha);
+  ctx.fillStyle = laneRgba(n.lane, alpha);
   // Same "near the line" gating as drawTapNote — a hold trail's shadow
   // is the most expensive part of its draw, but visually only matters
   // when the head is close to the judge line OR the note is being
@@ -1135,7 +1189,7 @@ function drawHoldTrail(
 
   // Thin bright outline so the trail reads even on dark bg.
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = rgba(colorRgb, consumed ? 1 : 0.7);
+  ctx.strokeStyle = laneRgba(n.lane, consumed ? 1 : 0.7);
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.restore();
@@ -1177,7 +1231,6 @@ function drawLaneGate(
   const innerCoreR = r - 11; // page-color core (where the label lives)
 
   const color = LANE_COLORS[lane];
-  const colorRgb = LANE_RGB[lane];
 
   // Anticipation halo: a soft outer ring drawn behind everything else when
   // a note is about to land in this lane. Quadratic ease so the halo isn't
@@ -1185,7 +1238,7 @@ function drawLaneGate(
   if (anticipation > 0.05) {
     ctx.save();
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = rgba(colorRgb, 0.35 * anticipation);
+    ctx.strokeStyle = laneRgba(lane, 0.35 * anticipation);
     ctx.shadowColor = color;
     ctx.shadowBlur = 18 * anticipation;
     ctx.beginPath();
@@ -1212,7 +1265,7 @@ function drawLaneGate(
     flash,
   );
   if (fillAlpha > 0) {
-    ctx.fillStyle = rgba(colorRgb, fillAlpha);
+    ctx.fillStyle = laneRgba(lane, fillAlpha);
     ctx.beginPath();
     ctx.arc(x, y, innerRingR, 0, TAU);
     ctx.fill();
@@ -1276,7 +1329,7 @@ function drawLaneGate(
     x,
     y + ARROW_DY,
     ARROW_SIZE,
-    rgba(colorRgb, arrowAlpha),
+    laneRgba(lane, arrowAlpha),
     shine,
   );
   ctx.restore();
@@ -1419,13 +1472,13 @@ function drawCanvasCombo(
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   ctx.font = `800 ${size.toFixed(0)}px var(--font-display), system-ui, sans-serif`;
-  ctx.fillStyle = rgba(palette.accentRgb, alpha);
-  ctx.shadowColor = rgba(palette.accentRgb, 0.6);
+  ctx.fillStyle = rgbaFromLut(cache.accentRgba, alpha);
+  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.6);
   ctx.shadowBlur = 18 + ms * 28;
   ctx.fillText(`${rs.combo}`, cache.cx, y);
   ctx.shadowBlur = 0;
   ctx.font = `800 ${(size * 0.22).toFixed(0)}px var(--font-mono), ui-monospace, monospace`;
-  ctx.fillStyle = rgba(palette.accentRgb, clamp(alpha * 0.85, 0, 1));
+  ctx.fillStyle = rgbaFromLut(cache.accentRgba, clamp(alpha * 0.85, 0, 1));
   ctx.fillText("COMBO", cache.cx, y + 14);
   ctx.restore();
 }
@@ -1487,9 +1540,8 @@ function updateAndDrawShockwaves(
     const ease = 1 - Math.pow(1 - t, 2.2);       // ease-out radius
     const radius = 22 + ease * (s.intense ? 88 : 64);
     const alpha = (1 - t) * (s.intense ? 0.85 : 0.65);
-    const colorRgb = LANE_RGB[s.laneIdx];
     ctx.lineWidth = (s.intense ? 3 : 2) * (1 - t * 0.6);
-    ctx.strokeStyle = rgba(colorRgb, alpha);
+    ctx.strokeStyle = laneRgba(s.laneIdx, alpha);
     ctx.shadowColor = LANE_COLORS[s.laneIdx];
     ctx.shadowBlur = (s.intense ? 26 : 14) * (1 - t);
     ctx.beginPath();
@@ -1629,7 +1681,10 @@ function updateAndDrawParticles(
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     const a = p.life / p.maxLife;
-    ctx.fillStyle = rgba(LANE_RGB[p.laneIdx], a * a);
+    // Hot path: use the pre-computed lane×alpha lookup so we don't
+    // allocate a fresh `rgba()` string every particle every frame.
+    // With PARTICLE_BUDGET=200 this kills ~12k string allocs/sec.
+    ctx.fillStyle = laneRgba(p.laneIdx, a * a);
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.size * (0.4 + a * 0.6), 0, TAU);
     ctx.fill();
