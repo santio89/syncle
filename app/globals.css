@@ -547,8 +547,17 @@ html::-webkit-scrollbar-thumb:hover {
   /* Left-align so multi-line tooltips (Song / Artist / Mapper, key labels
      stacked above values, etc.) read down a single column instead of
      having every short line individually centered. The arrow nub still
-     sits dead center under the trigger via the ::after rule below. */
-  text-align: left;
+     sits dead center under the trigger via the ::after rule below.
+     `!important` defends against any cascading inheritance (some
+     parent containers apply `text-align: center`, which would otherwise
+     leak in via inheritance even though `text-align` is now in our own
+     rule — Tailwind's `text-center` utility carries higher specificity
+     than expected because it lands in the `utilities` layer). The
+     `text-align-last: left` line forces the trailing single line of a
+     wrapped tooltip to also stay left, instead of inheriting `justify`
+     which would visually re-center the last row of long entries. */
+  text-align: left !important;
+  text-align-last: left;
   box-shadow: 3px 3px 0 0 rgb(var(--shadow));
   animation: tooltipIn 140ms ease-out both;
 }
