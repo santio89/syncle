@@ -13,7 +13,7 @@ const BASE_SFX_LEVEL = 0.45;
 
 /**
  * Convert a slider/perceived value (0..1) to an actual GainNode value
- * using a quadratic ("audio taper") curve.
+ * for the SONG bus, using a quadratic ("audio taper") curve.
  *
  * Human loudness perception is roughly logarithmic in gain — a LINEAR
  * slider (`gain = slider`) feels like "nothing happens until 10%"
@@ -48,6 +48,43 @@ function perceivedToGain(perceived: number): number {
   if (perceived <= 0) return 0;
   if (perceived >= 1) return 1;
   return perceived * perceived;
+}
+
+/**
+ * Convert a slider/perceived value (0..1) to an actual GainNode value
+ * for the SFX bus, using a square-root ("accessibility taper") curve
+ * scaled by BASE_SFX_LEVEL.
+ *
+ * Why SFX uses a different curve than the song:
+ *   With both buses on `perceived²`, the song's drop and the SFX bus's
+ *   drop compound multiplicatively, AND the SFX is already attenuated
+ *   by BASE_SFX_LEVEL on top of the per-hit oscillator volume (~0.22).
+ *   At 20% slider you end up with a perfect hit at -48 dB, which is
+ *   inaudible in any room with ambient noise. Players reported the
+ *   feedback "disappeared" by ~20% master.
+ *
+ *   The fix is the same approach pro games use (Celeste, Hades, most
+ *   rhythm titles): apply a GENTLER curve to feedback than to music.
+ *   Music gets `perceived²` (perceptually linear loudness control);
+ *   SFX gets `√perceived`, so it falls off at half the dB rate of the
+ *   song. The relative balance:
+ *     slider 1.00  →  song 0 dB,    sfx -7 dB    (song dominates, normal mix)
+ *     slider 0.80  →  song -4 dB,   sfx -8 dB    (song dominates, +4 dB)
+ *     slider 0.50  →  song -12 dB,  sfx -10 dB   (about even, both clear)
+ *     slider 0.20  →  song -28 dB,  sfx -14 dB   (SFX +14 dB over song)
+ *     slider 0.05  →  song -52 dB,  sfx -20 dB   (song nearly gone, SFX still useful)
+ *     slider 0     →  both silent
+ *
+ *   This keeps feedback present at low volumes (gameplay-critical),
+ *   keeps the song dominant at normal volumes (expected mix), and
+ *   still anchors both endpoints at true silent and true full so the
+ *   slider behaves honestly. No floor, no muting cliff, just a curve
+ *   that prioritizes feedback when the master is pulled down.
+ */
+function perceivedToSfxGain(perceived: number): number {
+  if (perceived <= 0) return 0;
+  if (perceived >= 1) return BASE_SFX_LEVEL;
+  return BASE_SFX_LEVEL * Math.sqrt(perceived);
 }
 
 /**
@@ -87,10 +124,15 @@ function perceivedToGain(perceived: number): number {
  *   source → songFilter (lowpass) → songGain → master → limiter → destination
  *   sfx    → sfxGain → master → limiter → destination
  *
- * `sfxGain.gain = BASE_SFX_LEVEL * perceivedToGain(songVol)` so master
- * volume controls both buses on the same quadratic taper; the player
- * can never get loud SFX over a quiet song, and 50% slider really
- * sounds like ~50% loudness on both song and SFX.
+ * Master volume routes to two different curves on purpose:
+ *   songGain.gain = perceivedToGain(songVol)       // quadratic (perceptual)
+ *   sfxGain.gain  = perceivedToSfxGain(songVol)    // square-root (accessibility)
+ *
+ * Music uses the perceptual taper so 50% slider feels like ~50% loudness;
+ * SFX uses a gentler taper so input feedback stays audible when the
+ * player pulls the master volume down (otherwise feedback drops below
+ * the noise floor by ~20% slider — see perceivedToSfxGain). Both buses
+ * still anchor at silent (slider 0) and full (slider 1).
  */
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -163,9 +205,8 @@ export class AudioEngine {
       // setVolume() before start()), so the very first tap a player
       // makes — possibly during the lead-in countdown, before any
       // setVolume() call lands — already respects their slider AND
-      // the quadratic taper applied by perceivedToGain().
-      this.sfxGain.gain.value =
-        BASE_SFX_LEVEL * perceivedToGain(this.songVol);
+      // the gentler accessibility taper applied by perceivedToSfxGain().
+      this.sfxGain.gain.value = perceivedToSfxGain(this.songVol);
       this.sfxGain.connect(this.master);
     }
     if (this.ctx!.state === "suspended") {
@@ -457,7 +498,12 @@ export class AudioEngine {
     // the song would suggest.
     if (this.ctx) {
       const t = this.ctx.currentTime;
+      // Two different curves on purpose: song uses perceptual quadratic
+      // (so 50% slider feels like 50% loudness as music); SFX uses a
+      // gentler square-root taper (so input feedback stays audible at
+      // low master volume — see perceivedToSfxGain doc for the dB table).
       const songGainTarget = perceivedToGain(clamped);
+      const sfxGainTarget = perceivedToSfxGain(clamped);
       if (this.songGain) {
         const g = this.songGain.gain;
         g.cancelScheduledValues(t);
@@ -468,7 +514,7 @@ export class AudioEngine {
         const g = this.sfxGain.gain;
         g.cancelScheduledValues(t);
         g.setValueAtTime(g.value, t);
-        g.linearRampToValueAtTime(BASE_SFX_LEVEL * songGainTarget, t + 0.05);
+        g.linearRampToValueAtTime(sfxGainTarget, t + 0.05);
       }
     }
   }
