@@ -201,12 +201,20 @@ summary {
   text-wrap: balance;
 }
 
-/* Trim is reserved for genuine "single-line UI primitives" — things
- * the user perceives as a chip, badge, button, label, tooltip, etc.
- * For these, the half-leading is purely decorative and removing it
- * makes the glyph rest dead-center inside its container. Headings,
- * subtitles, body copy, and other prose stay untrimmed (see the rule
- * above) so the natural typographic rhythm between blocks is preserved. */
+/* Trim is reserved for genuine "single-line UI primitives" the user
+ * perceives as a chip, tag, badge, button, label, or tooltip — i.e.
+ * things that read as a self-contained shape with text inside. For
+ * those the half-leading is purely decorative and removing it makes
+ * the glyph rest dead-center inside its container.
+ *
+ * EVERYTHING ELSE keeps its natural line box: headings, subtitles,
+ * body copy, AND in-card section labels (SCORE/COMBO/NOW PLAYING/
+ * METRONOME/...). Those labels live inside multi-row cards where the
+ * line box doubles as the gap between the label and the value below,
+ * so trimming them collapses the visual rhythm of the whole card.
+ * That's why we deliberately do NOT match plain monospace+uppercase
+ * text here — only elements that ALSO have a border (i.e. an actual
+ * pill recipe) qualify. */
 :where(
   button,
   label,
@@ -220,19 +228,15 @@ summary {
    * recipe (e.g. a third-party widget rendering its own markup). */
   .brut-pill,
   [data-pill],
-  /* Canonical "small label" recipe used across the codebase: monospace
-   * + uppercase + tracked. Anything that combines all three is, by
-   * convention, a status pill / chip / kbd-style label and benefits
-   * from trimmed half-leading. The `[class~="x"]` syntax is a strict
-   * whole-word match against the class list, so it only fires on
-   * elements that explicitly carry these Tailwind utilities (no false
-   * positives from substring partial matches like `tracking-wider`). */
-  [class~="font-mono"][class~="uppercase"][class~="tracking-widest"],
-  /* Bordered chip recipe used by duration tags and other mini badges
-   * where the text isn't uppercase but the container is still a tight
-   * single-line pill — same vertical-centering problem, same fix. */
+  /* Bordered pill / tag / chip recipes — the only "label-shaped"
+   * elements that benefit from trimming. Stacked attribute selectors
+   * are strict whole-word matches against the class list, so only
+   * elements that explicitly carry the matching Tailwind utilities
+   * are affected (no false positives from substring matches like
+   * `tracking-wider` against `tracking-widest`). */
   [class~="border-2"][class~="px-2"][class~="py-0.5"],
   [class~="border-2"][class~="px-1.5"][class~="py-px"],
+  [class~="border"][class~="px-2"][class~="py-0.5"],
   [class~="border"][class~="px-1.5"][class~="py-0.5"],
   [class~="border"][class~="px-1"][class~="py-0.5"]
 ) {
@@ -264,6 +268,7 @@ summary {
  * ------------------------------------------------------------------------- */
 [class~="border-2"][class~="px-2"][class~="py-0.5"],
 [class~="border-2"][class~="px-1.5"][class~="py-px"],
+[class~="border"][class~="px-2"][class~="py-0.5"],
 [class~="border"][class~="px-1.5"][class~="py-0.5"],
 [class~="border"][class~="px-1"][class~="py-0.5"] {
   /* ~5px each side. Calibrated against text-[10.5px]/text-[12.5px] at

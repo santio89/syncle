@@ -1177,7 +1177,7 @@ function PerformancePanel({
           Rock meter
         </p>
         <span
-          className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
+          className="inline-flex shrink-0 items-center border border-accent/60 px-2 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
           data-tooltip={
             stats.totalNotes > 0 && songDuration && songDuration > 0
               ? `${stats.totalNotes.toLocaleString()} notes · ${(stats.totalNotes / songDuration).toFixed(1)} nps`

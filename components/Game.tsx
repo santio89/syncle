@@ -1639,7 +1639,7 @@ function DifficultyTag({
       : `${displayMode(mode).toUpperCase()} · ${modeStars(mode)} / 5 intensity`;
   return (
     <span
-      className="inline-flex shrink-0 items-center border border-accent/60 px-1.5 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
+      className="inline-flex shrink-0 items-center border border-accent/60 px-2 py-0.5 font-mono text-[8.2px] uppercase tracking-widest text-accent sm:text-[9.2px]"
       data-tooltip={tooltip}
     >
       {displayMode(mode)}
@@ -2069,17 +2069,17 @@ function PauseCard({
   onGiveUp: () => void;
 }) {
   return (
-    <div className="brut-card w-full max-w-md p-6 sm:p-8 text-center">
+    <div className="brut-card w-full max-w-md p-7 sm:p-9 text-center">
       <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
         Paused
       </p>
-      <h2 className="mt-2 font-display text-[3.15rem] font-bold leading-none">
+      <h2 className="mt-3 font-display text-[3.15rem] font-bold leading-none">
         ❚❚
       </h2>
-      <p className="mt-3 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
+      <p className="mt-4 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
         Audio is suspended — take your time
       </p>
-      <div className="mt-6 grid grid-cols-2 gap-3">
+      <div className="mt-7 grid grid-cols-2 gap-3">
         <button onClick={onResume} className="brut-btn-accent px-4 py-3">
           ▶ Resume
         </button>
@@ -2087,7 +2087,7 @@ function PauseCard({
           ✕ Give up
         </button>
       </div>
-      <p className="mt-3 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
+      <p className="mt-4 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
         ESC = resume · giving up doesn&rsquo;t save the run
       </p>
     </div>
