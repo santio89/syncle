@@ -187,6 +187,18 @@ function CanvasPane({
   // the client; `loadX()` falls back to the hardcoded default if
   // `window` is missing anyway.
   const [volume, setVolume] = useState<number>(loadVolume);
+  // Mirror the latest volume in a ref so the audio-schedule effect can
+  // read it without listing `volume` in its deps. Re-triggering that
+  // effect on every slider tick would tear down and restart the
+  // playing source, which would re-anchor `startedAtCtxTime` and
+  // desync the player from the rest of the room. The ref lets us
+  // honor the user's volume on the *initial* `audio.start()` fade-in
+  // target while leaving the live `setVolume()` call (in the volume
+  // effect below) responsible for subsequent slider changes.
+  const volumeRef = useRef(volume);
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
   const [metronome, setMetronome] = useState<boolean>(loadMetronome);
   // Per-input feedback SFX (hit / miss / release / combo-milestone +
   // the song-duck whiff cue). Persisted via the same shared
@@ -329,15 +341,23 @@ function CanvasPane({
     const schedule = () => {
       if (cancelled) return;
       try {
+        // Use the user's saved volume for the initial fade-in target
+        // (read via ref so this effect doesn't restart on slider moves
+        // — see `volumeRef` declaration). Without this, every multi
+        // start used to ramp to a hardcoded 0.85 and then snap up to
+        // the user's actual volume on the next render via
+        // `setVolume()`, which produced a small audible step at the
+        // top of every song.
+        const startVol = volumeRef.current;
         if (delayMs >= 0) {
           // Future start — normal countdown lead-in.
-          audio.start(delayMs / 1000, 0.85);
+          audio.start(delayMs / 1000, startVol);
         } else {
           // Past start — seek to the right offset so we sound in time.
           // We give ourselves a tiny 50ms head-start so the fade-in doesn't
           // cut into the very first frame after mount.
           const offset = -delayMs / 1000;
-          audio.start(0.05, 0.85, offset);
+          audio.start(0.05, startVol, offset);
         }
         // Mark the audio engine's clock as trustworthy now that
         // `start()` has anchored `startedAtCtxTime` to the right
