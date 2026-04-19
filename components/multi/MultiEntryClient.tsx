@@ -508,9 +508,6 @@ function JoinPane({
           spellCheck={false}
           className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-3 text-center font-mono text-[1.05rem] uppercase tracking-[0.4em] text-bone-50 outline-none focus:border-accent transition-colors"
         />
-        <p className="mt-1 font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
-          Six characters · A–Z, 2–9 · {cleanCode.length}/{ROOM_CODE_LENGTH}
-        </p>
       </label>
 
       <button
@@ -635,11 +632,6 @@ function BrowsePane({
         <div className="border-2 border-dashed border-bone-50/20 px-4 py-6 text-center">
           <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/55">
             No public rooms right now
-          </p>
-          <p className="mt-1 text-[11.5px] text-bone-50/55">
-            Be the first — flip to{" "}
-            <span className="text-bone-50/80">Create</span> and set
-            visibility to public.
           </p>
         </div>
       )}
