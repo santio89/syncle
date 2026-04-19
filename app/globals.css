@@ -341,6 +341,20 @@ html::-webkit-scrollbar-thumb:hover {
    * buttons reading as a single blue color block rather than blue-on-
    * white (dark mode) or blue-on-black (light mode). */
   box-shadow: 5px 5px 0 0 rgb(var(--shadow-accent));
+  /* Same press / lift transition timings as `.brut-btn` so the two
+   * button variants feel identical on interaction. Without these the
+   * accent button was a static rectangle while the secondary button
+   * lifted on hover, which made the pair (e.g. "Try again" + "Home"
+   * on the results screen) feel inconsistent. */
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.brut-btn-accent:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 6px 6px 0 0 rgb(var(--shadow-accent));
+}
+.brut-btn-accent:active {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0 0 rgb(var(--shadow-accent));
 }
 
 /* Big play CTA on the home page. Square on >=sm, full-width banner below. */

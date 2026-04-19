@@ -142,5 +142,11 @@ export const INITIAL_STATS: PlayerStats = {
   hits: { perfect: 0, great: 0, good: 0, miss: 0 },
   notesPlayed: 0,
   totalNotes: 0,
-  health: 0.6,
+  // Rock meter starts empty (0) and fills as the player lands hits, so
+  // the bar visibly grows from nothing during the run instead of
+  // pre-loading the player at 60%. Hitting a perfect adds +0.012,
+  // great/good +0.006, miss -0.04 — see `lib/game/engine.ts`. The bar
+  // is purely a UI indicator (no game-over threshold), so starting at
+  // 0 is safe.
+  health: 0,
 };

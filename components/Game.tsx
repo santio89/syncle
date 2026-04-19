@@ -979,6 +979,10 @@ export default function Game() {
             error={error ?? previewError}
             metronome={metronome}
             onToggleMetronome={() => setMetronome((m) => !m)}
+            sfx={sfx}
+            onToggleSfx={() => setSfx((s) => !s)}
+            fpsLock={fpsLock}
+            onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
             songSource={songSource}
             chartMode={chartMode}
             onChangeMode={setChartMode}
@@ -1084,6 +1088,10 @@ function StartCard({
   error,
   metronome,
   onToggleMetronome,
+  sfx,
+  onToggleSfx,
+  fpsLock,
+  onCycleFpsLock,
   songSource,
   chartMode,
   onChangeMode,
@@ -1104,6 +1112,14 @@ function StartCard({
   error: string | null;
   metronome: boolean;
   onToggleMetronome: () => void;
+  /** Master toggle for hit/miss/release SFX — same setting as the in-game HUD's input-feedback toggle (key: N). */
+  sfx: boolean;
+  onToggleSfx: () => void;
+  /** Render frame-rate cap (off / 30 / 60). Same value as the in-game
+   *  HUD's LOCK pill — they share state via the parent so a choice made
+   *  here persists into gameplay and back. */
+  fpsLock: FpsLock;
+  onCycleFpsLock: () => void;
   songSource: "osu" | "fallback" | null;
   chartMode: ChartMode;
   onChangeMode: (m: ChartMode) => void;
@@ -1318,6 +1334,13 @@ function StartCard({
         </div>
       </div>
 
+      {/* 2x2 tile grid for the pre-game settings panel. Top row: Best
+          score on the left, FPS Lock cycler on the right. Bottom row:
+          Metronome toggle on the left, Input Feedback toggle on the
+          right. All four tiles share the same border/padding/typography
+          treatment so they read as one cohesive panel, and the three
+          settings tiles all mirror the in-game HUD's state — toggling
+          here is the same as toggling in the HUD chip during play. */}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <div className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
           <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
@@ -1338,6 +1361,47 @@ function StartCard({
               : "no runs yet"}
           </p>
         </div>
+        {/* FPS lock tile — the entire tile is the click target (acts
+            like the <label> tiles next to it), so clicking anywhere on
+            the card — including the "FPS LOCK" caption — cycles
+            off → 30 → 60 → off, mirroring the in-game HUD's LOCK pill.
+            The right-aligned chip is a styled span (not a real button)
+            specifically so a click on it doesn't double-fire — the
+            outer <button> already owns the click. The chip flips to
+            the accent color when capped so the active state matches
+            the HUD pill exactly. */}
+        <button
+          type="button"
+          onClick={onCycleFpsLock}
+          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
+          data-tooltip={
+            fpsLock == null
+              ? "FPS lock off — click to cap at 30 FPS"
+              : `Render frame-rate capped at ${fpsLock} FPS — click to ${
+                  fpsLock === 30 ? "cap at 60" : "uncap"
+                }`
+          }
+          aria-label="Cycle render FPS lock"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              FPS lock
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest border px-1.5 py-0.5 transition-colors ${
+                fpsLock == null
+                  ? "border-bone-50/30 text-bone-50/60"
+                  : "border-accent text-accent"
+              }`}
+            >
+              {fpsLock == null ? "OFF" : fpsLock}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            click to cycle off / 30 / 60
+          </span>
+        </button>
         <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
           <div className="flex items-center justify-between gap-3">
             <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
@@ -1352,6 +1416,22 @@ function StartCard({
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
             press M to toggle in-game
+          </span>
+        </label>
+        <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Input feedback
+            </span>
+            <input
+              type="checkbox"
+              checked={sfx}
+              onChange={onToggleSfx}
+              className="h-[1.05rem] w-[1.05rem] accent-accent"
+            />
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            press N to toggle in-game
           </span>
         </label>
       </div>
@@ -1673,89 +1753,149 @@ function HUD({
     //     vertical `sm:py-5` keeps the original top inset so the panels
     //     don't ride flush against the canvas top.
     <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-7xl items-start justify-between gap-2 p-2 sm:gap-3 sm:py-5 sm:px-3">
-      {/* Combined SCORE + COMBO panel. Same accented chrome as before, but
-          combo sits inside the same frame with a dividing rule, so the
-          left HUD reads as one cohesive "performance" block instead of
-          two competing cards. Internal min-widths shrink at <sm so the
-          panel fits 4-lane phones in landscape without crowding the
-          rock-meter card on the right. */}
-      {/* Score+combo card: shrunk slightly at `sm` (mid-range desktops and
-          laptops, 640–1279 px) so it doesn't visually touch the highway,
-          then restored to its previous proportions at `xl` (≥ 1280 px)
-          where there's plenty of room. The xl tier matches the original
-          gap-4 / px-4 / 153/81 min-widths the user asked for in earlier
-          rounds; the sm tier shaves ~36 px off total width without
-          changing the displayed numbers' font sizes. */}
-      <div className="brut-card-accent flex items-stretch gap-2 px-2.5 py-2 sm:gap-3 sm:px-3 sm:py-3 xl:gap-4 xl:px-4">
-        <div className="min-w-[89px] sm:min-w-[140px] xl:min-w-[153px]">
-          <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
-            Score
-          </p>
-          <p className="font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
-            {stats.score.toLocaleString()}
-          </p>
-          <p className="mt-1 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
-            {accuracy.toFixed(1)}% · {stats.notesPlayed}/{total}
-          </p>
-          {best && (
-            <p className="mt-1 hidden font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50 sm:block">
-              track best {best.score.toLocaleString()}
+      {/* PERFORMANCE card — score + combo + rock meter + hits stats all
+          live here so the left HUD reads as one cohesive "how are you
+          doing right now" block. The rock meter (label, bar, hit
+          breakdown, pause button) used to sit in the right-hand card,
+          but it conceptually belongs with the score/combo numbers
+          since they're all live gameplay state; settings (audio,
+          metronome, FPS) now own the right card exclusively. The bar
+          itself was bumped up a few pixels (`h-3.5 sm:h-[1.05rem]`)
+          so it reads as the headline status indicator of the card
+          instead of a thin afterthought. */}
+      <div className="brut-card-accent flex flex-col gap-2 px-2.5 py-2 sm:gap-2.5 sm:px-3 sm:py-3 xl:gap-3 xl:px-4">
+        {/* Top row keeps the original score+combo split — same
+            min-widths and dividing rule, just nested inside the
+            new vertical card so the rock meter can stack below. */}
+        <div className="flex items-stretch gap-2 sm:gap-3 xl:gap-4">
+          <div className="min-w-[89px] sm:min-w-[140px] xl:min-w-[153px]">
+            <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
+              Score
             </p>
-          )}
+            <p className="font-display text-[1.27rem] font-bold leading-none sm:text-[1.91rem]">
+              {stats.score.toLocaleString()}
+            </p>
+            <p className="mt-1 font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
+              {accuracy.toFixed(1)}% · {stats.notesPlayed}/{total}
+            </p>
+            {best && (
+              <p className="mt-1 hidden font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50 sm:block">
+                track best {best.score.toLocaleString()}
+              </p>
+            )}
+          </div>
+          <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
+          <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[74px] xl:min-w-[81px]">
+            <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
+              Combo
+            </p>
+            <p
+              className={`font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
+                stats.combo > 0 ? "text-accent" : "text-bone-50/40"
+              }`}
+            >
+              {stats.combo}
+            </p>
+            <p className="mt-1 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
+              ×{stats.multiplier}
+            </p>
+          </div>
         </div>
-        <div className="w-px shrink-0 bg-bone-50/20" aria-hidden />
-        <div className="flex min-w-[57px] flex-col items-center justify-center sm:min-w-[74px] xl:min-w-[81px]">
+        {/* Faint rule separates the score/combo numbers from the
+            rock meter group below — without it the two halves of
+            the card look like one big block of mixed types. */}
+        <div className="h-px w-full bg-bone-50/15" aria-hidden />
+        {/* Rock meter label on the left, difficulty tag on the
+            right. The tag tells the player which tier they're
+            actually playing right now — it lives next to the rock
+            meter (the live "performance" block) instead of on the
+            now-playing strip across the screen, since difficulty
+            is part of the gameplay context, not the song
+            metadata. Tag mirrors the lobby picker's name-only
+            chip; the chart density (notes / nps) shows on hover. */}
+        <div className="flex items-center justify-between gap-2">
           <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
-            Combo
+            Rock meter
           </p>
-          <p
-            className={`font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
-              stats.combo > 0 ? "text-accent" : "text-bone-50/40"
-            }`}
-          >
-            {stats.combo}
-          </p>
-          <p className="mt-1 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
-            ×{stats.multiplier}
-          </p>
+          <DifficultyTag
+            mode={chartMode}
+            noteCount={stats.totalNotes > 0 ? stats.totalNotes : null}
+            nps={
+              songDuration && songDuration > 0 && stats.totalNotes > 0
+                ? stats.totalNotes / songDuration
+                : null
+            }
+          />
         </div>
+        {/* Health bar — bumped from `h-[0.78rem]` (~12.5 px) to
+            `h-3.5 sm:h-[1.05rem]` (~14 / 17 px) so it reads as the
+            real status indicator of the card instead of a thin
+            decorative strip. Same color ramp as before so muscle
+            memory stays intact. */}
+        <div className="relative h-3.5 w-full border-2 border-bone-50/40 sm:h-[1.05rem]">
+          <div
+            className="absolute inset-y-0 left-0 transition-[width] duration-200"
+            style={{
+              width: `${stats.health * 100}%`,
+              background:
+                stats.health > 0.6
+                  ? "#3dff8a"
+                  : stats.health > 0.3
+                  ? "#ffd23f"
+                  : "#ff3b6b",
+            }}
+          />
+        </div>
+        <p className="font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
+          P{stats.hits.perfect} · G{stats.hits.great} · g{stats.hits.good} · M
+          {stats.hits.miss}
+        </p>
       </div>
 
-      {/* Rock-meter card: 204 px on sm matches the previous design (already
-          comfortably clears the highway on the right side after the
-          highway shrink + max-w-7xl band). xl widens to 220 px to soak up
-          extra room on big screens for the song progress bar and the
-          metronome / SFX / FPS buttons. */}
-      <div className="brut-card flex w-[143px] flex-col gap-1 px-2.5 py-2 sm:w-[204px] sm:px-4 sm:py-3 xl:w-[220px]">
-        {/* "Now playing" strip — single source of truth for which song is on
-            screen during gameplay (the StartCard hands off and disappears,
-            so without this the player has nothing to remind them what's
-            currently rolling). Title/artist are truncated with `min-w-0` +
-            `truncate` so the brutalist border stays sharp at every width;
-            full text shows in the native title tooltip on hover. */}
+      {/* SETTINGS card — now-playing block on top, then four
+          consistently-styled tiles for the player's audio + perf
+          knobs (Metronome, Input feedback, FPS lock, Volume). All
+          tiles share the same brutalist border + dark inner fill +
+          padding + typography so the strip reads as one cohesive
+          settings block; the parent's `gap-1.5 sm:gap-2` is the
+          single source of vertical spacing between every tile (and
+          between the now-playing block and the first tile), so
+          there are no one-off `mt-*` overrides to remember. The
+          checkbox-style toggles for Metronome and Input feedback
+          mirror the StartCard tile aesthetic from the pre-game
+          menu — same `<label>` wrap, same accent-colored native
+          checkbox — so the player learns the affordance once and
+          recognizes it in both places. */}
+      <div className="brut-card flex w-[143px] flex-col gap-1.5 px-2.5 py-2 sm:w-[212px] sm:gap-2 sm:px-3 sm:py-3 xl:w-[228px]">
+        {/* "Now playing" strip — single source of truth for which
+            song is rolling once the StartCard is gone. Title/artist
+            truncate via `min-w-0` so the card border stays sharp at
+            every width; full text is on hover via `data-tooltip`.
+            The bottom border doubles as the divider between this
+            block and the settings tiles below — same vocabulary as
+            the in-card divider on the left card. */}
         {songTitle && (
           <div className="flex min-w-0 flex-col border-b-2 border-bone-50/15 pb-1.5">
-            {/* Top row: "♪ Now playing" label on the left, current
-                difficulty tag on the right. We keep the tag inside the
-                same card (top-right) instead of absolute-positioning
-                it over the card chrome — that way the song title row
-                below always has predictable horizontal space and the
-                tag never collides with a long title. The tag mirrors
-                the picker's `EASY ★★` format so the player can map
-                the in-game label back to the lobby button at a glance. */}
+            {/* Top row: "♪ Now playing" caption on the left, the
+                pause button on the right. Pause lives here (rather
+                than next to the rock meter on the left card) so
+                the difficulty tag — which IS gameplay state — can
+                sit on the rock meter side, while pause sits with
+                the song info where the player's eye naturally
+                lands when they want to "stop the song". */}
             <div className="flex items-center justify-between gap-2">
               <p className="truncate font-mono text-[8.2px] uppercase tracking-widest text-bone-50/45 sm:text-[9.2px]">
                 ♪ Now playing
               </p>
-              <DifficultyTag
-                mode={chartMode}
-                noteCount={stats.totalNotes > 0 ? stats.totalNotes : null}
-                nps={
-                  songDuration && songDuration > 0 && stats.totalNotes > 0
-                    ? stats.totalNotes / songDuration
-                    : null
-                }
-              />
+              <button
+                onClick={onPause}
+                disabled={paused}
+                className="pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border border-bone-50/40 px-1 py-0.5 text-bone-50/80 transition-colors hover:border-accent hover:text-accent disabled:opacity-40 sm:px-1.5"
+                data-tooltip="Pause (ESC)"
+                aria-label="Pause"
+              >
+                ❚❚<span className="hidden sm:inline"> ESC</span>
+              </button>
             </div>
             <p
               className="truncate font-mono text-[10.2px] font-bold text-bone-50/90 sm:text-[11.2px]"
@@ -1771,13 +1911,6 @@ function HUD({
                 {songArtist}
               </p>
             )}
-            {/* Song progress strip — slim, accent-tinted, shows
-                elapsed/total in mm:ss on the right. Sits under the
-                song row so it visually belongs to the "what's
-                playing" group rather than the rock-meter health
-                stats below. The fill animates in 200ms steps; the
-                source `songProgress` is throttled to ~10Hz from the
-                rAF loop, which is plenty smooth for a thin bar. */}
             {songDuration && songDuration > 0 && (
               <div className="mt-1.5 flex items-center gap-1.5">
                 <div
@@ -1804,83 +1937,92 @@ function HUD({
             )}
           </div>
         )}
-        <div className="flex items-center justify-between gap-1 sm:gap-2">
-          <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
-            Rock meter
-          </p>
-          <div className="flex gap-1">
-            {/* Per-input feedback SFX toggle. Sits left of the
-                metronome so the two "audio feel" knobs read as a
-                pair (the player can think "I want music only" and
-                kill SFX, or "I want a click track but no whiff
-                cue" and turn metronome on / SFX off independently).
-                Same brutalist pill styling as the metronome button
-                — accent border + accent text when on, faded grey
-                when off — so the active/inactive states are
-                instantly legible. */}
-            <button
-              onClick={onToggleSfx}
-              className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
-                sfx
-                  ? "border-accent text-accent"
-                  : "border-bone-50/30 text-bone-50/40"
-              }`}
-              data-tooltip="Toggle input feedback (N)"
-              aria-label="Toggle input sound effects"
-              aria-keyshortcuts="N"
-              aria-pressed={sfx}
-            >
-              {/* Filled-circle "target" glyph echoes the on-canvas
-                  lane gates the player taps — semantically distinct
-                  from the metronome's quarter-note glyph (♩ = beat
-                  tick), so the two pills never read as the same icon
-                  even at the small HUD size. */}
-              ◉<span className="hidden sm:inline"> {sfx ? "ON" : "OFF"}</span>
-            </button>
-            <button
-              onClick={onToggleMetronome}
-              className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
-                metronome
-                  ? "border-accent text-accent"
-                  : "border-bone-50/30 text-bone-50/40"
-              }`}
-              data-tooltip="Toggle metronome (M)"
-              aria-label="Toggle metronome"
-              aria-keyshortcuts="M"
-            >
-              ♩<span className="hidden sm:inline"> {metronome ? "ON" : "OFF"}</span>
-            </button>
-            <button
-              onClick={onPause}
-              disabled={paused}
-              className="pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border border-bone-50/40 px-1 py-0.5 text-bone-50/80 transition-colors hover:border-accent hover:text-accent disabled:opacity-40 sm:px-1.5"
-              data-tooltip="Pause (ESC)"
-              aria-label="Pause"
-            >
-              ❚❚<span className="hidden sm:inline"> ESC</span>
-            </button>
-          </div>
-        </div>
-        <div className="relative h-[0.78rem] w-full border-2 border-bone-50/40">
-          <div
-            className="absolute inset-y-0 left-0 transition-[width] duration-200"
-            style={{
-              width: `${stats.health * 100}%`,
-              background:
-                stats.health > 0.6
-                  ? "#3dff8a"
-                  : stats.health > 0.3
-                  ? "#ffd23f"
-                  : "#ff3b6b",
-            }}
+        {/* Metronome tile — `<label>` so clicking anywhere on the
+            tile (caption included) toggles the checkbox. Native
+            checkbox uses `accent-accent` for the brand color and
+            sits flush right; `pointer-events-auto` is needed
+            because the parent HUD wrapper is `pointer-events-none`. */}
+        <label
+          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5"
+          data-tooltip="Toggle metronome (M)"
+        >
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+            Metronome
+          </span>
+          <input
+            type="checkbox"
+            checked={metronome}
+            onChange={onToggleMetronome}
+            className="h-[14px] w-[14px] cursor-pointer accent-accent"
+            aria-label="Toggle metronome"
+            aria-keyshortcuts="M"
           />
-        </div>
-        <p className="font-mono text-[9.2px] text-bone-50/60 sm:text-[10.2px]">
-          P{stats.hits.perfect} · G{stats.hits.great} · g{stats.hits.good} · M
-          {stats.hits.miss}
-        </p>
-        <div className="mt-1 flex items-center gap-1.5 sm:gap-2">
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/50">
+        </label>
+        <label
+          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5"
+          data-tooltip="Toggle input feedback (N)"
+        >
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+            Input feedback
+          </span>
+          <input
+            type="checkbox"
+            checked={sfx}
+            onChange={onToggleSfx}
+            className="h-[14px] w-[14px] cursor-pointer accent-accent"
+            aria-label="Toggle input sound effects"
+            aria-keyshortcuts="N"
+            aria-pressed={sfx}
+          />
+        </label>
+        {/* FPS lock tile — entire tile is the click target (same
+            pattern as the StartCard FPS lock tile in the pre-game
+            menu). Two-column layout: the left column stacks the
+            "FPS LOCK" caption over the live `### fps` readout (so
+            the caption and the metric it relates to read top-to-
+            bottom), the right column shows the current cap as
+            plain accent / dim text — no chip border, just the
+            value, so the tile feels less busy than the other
+            settings rows. */}
+        <button
+          type="button"
+          onClick={onCycleFpsLock}
+          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5 text-left sm:flex"
+          data-tooltip={
+            fpsLock == null
+              ? "FPS lock off — click to cap at 30 FPS"
+              : `Render frame-rate capped at ${fpsLock} FPS — click to ${
+                  fpsLock === 30 ? "cap at 60" : "uncap"
+                }`
+          }
+          aria-label="Cycle render FPS lock"
+        >
+          <span className="flex flex-col">
+            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+              FPS lock
+            </span>
+            <span className="font-mono text-[9.2px] tabular-nums tracking-widest text-bone-50/40">
+              {fps || "—"}fps
+            </span>
+          </span>
+          <span
+            aria-hidden
+            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
+              fpsLock == null ? "text-bone-50/60" : "text-accent"
+            }`}
+          >
+            {fpsLock == null ? "OFF" : fpsLock}
+          </span>
+        </button>
+        {/* Volume tile — same border / padding / typography as the
+            toggle tiles so it visually belongs to the same row of
+            settings. The "VOL" caption + slider + percentage live
+            on one line; `min-w-0` on the slider is required because
+            <input type="range"> ships with a UA-imposed intrinsic
+            min-width (~120 px) that would otherwise overflow the
+            tile on the narrow mobile card. */}
+        <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2 py-1.5">
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             vol
           </span>
           <input
@@ -1890,58 +2032,11 @@ function HUD({
             step={0.01}
             value={volume}
             onChange={(e) => onVolume(parseFloat(e.target.value))}
-            // min-w-0 is critical: <input type="range"> has a UA-set
-            // intrinsic min-width (~120px) that overrides flex-shrink, so
-            // without it the slider pokes past the card's right edge on
-            // narrow viewports (mobile rock-meter card is only ~143px).
             className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
             aria-label="Music volume"
           />
           <span className="hidden sm:inline font-mono text-[9.2px] tabular-nums text-bone-50/40 w-7 text-right">
             {Math.round(volume * 100)}
-          </span>
-        </div>
-        {/* Extra top margin separates the perf row (FPS lock + FPS
-            readout) from the volume slider above it. Without this the
-            two strips visually merged into one chunk; the `mt-2.5`
-            buys ~10px of breathing room which reads as "different
-            group of controls" without bloating the card. */}
-        <div className="mt-2.5 hidden items-center justify-end gap-1.5 sm:flex">
-          {/* FPS lock toggle — clicking cycles off → 30 → 60 → off. The
-              uncapped state is intentionally a dim "OFF" pill so the
-              eye doesn't read it as the active option; the locked
-              states get the brand accent so the player can confirm at
-              a glance which cap is in effect. */}
-          <button
-            onClick={onCycleFpsLock}
-            type="button"
-            className={`pointer-events-auto font-mono text-[9.2px] uppercase tracking-widest border px-1 py-0.5 transition-colors sm:px-1.5 ${
-              fpsLock == null
-                ? "border-bone-50/30 text-bone-50/50 hover:border-bone-50/60 hover:text-bone-50/80"
-                : "border-accent text-accent"
-            }`}
-            data-tooltip={
-              fpsLock == null
-                ? "FPS lock off — click to cap at 30 FPS"
-                : `Render frame-rate capped at ${fpsLock} FPS — click to ${
-                    fpsLock === 30 ? "cap at 60" : "uncap"
-                  }`
-            }
-            aria-label="Cycle render FPS lock"
-          >
-            LOCK·{fpsLock == null ? "OFF" : fpsLock}
-          </button>
-          <span
-            className={`font-mono text-[9.2px] tabular-nums tracking-widest ${
-              fps >= 55
-                ? "text-bone-50/40"
-                : fps >= 40
-                ? "text-yellow-400/70"
-                : "text-rose-400/80"
-            }`}
-            data-tooltip="Render frames per second"
-          >
-            {fps || "—"} FPS
           </span>
         </div>
       </div>

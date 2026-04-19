@@ -160,7 +160,12 @@ function emptyLive(): LiveScore {
     notesPlayed: 0,
     totalNotes: 0,
     hits: { perfect: 0, great: 0, good: 0, miss: 0 },
-    health: 1,
+    // Server-side mirror of the client's initial rock meter — starts
+    // empty so the lobby/loading snapshot doesn't broadcast a fake 100%
+    // bar before the player has hit a single note. Live updates via
+    // `player:stats` overwrite this almost immediately once the chart
+    // loads.
+    health: 0,
     finished: false,
   };
 }
