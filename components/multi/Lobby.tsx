@@ -427,7 +427,6 @@ function PlayerSettingsCard() {
               className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
               aria-label="Toggle input sound effects"
               aria-keyshortcuts="N"
-              aria-pressed={sfx}
             />
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
@@ -811,7 +810,7 @@ function HostPane({
           </p>
           {selected && (probing || probeError) && (
             <p className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/45">
-              {probing ? "checking difficulties…" : "probe failed"}
+              {probing ? "checking difficulties…" : "couldn't read difficulties"}
             </p>
           )}
         </div>
@@ -861,7 +860,16 @@ function HostPane({
         )}
         {!loading && filtered.length === 0 && (
           <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
-            No tracks match that filter.
+            {/* Distinguish "you typed something that excluded everyone"
+                from "the upstream catalog returned zero rows" — the
+                fix is different in each case (clear the filter vs.
+                hit refresh) and the old single string blamed the
+                filter even when there was no filter. */}
+            {filter.trim()
+              ? "No tracks match that filter."
+              : (catalog && catalog.length === 0)
+                ? "No tracks available — try refreshing."
+                : "No tracks available."}
           </p>
         )}
         <ul>

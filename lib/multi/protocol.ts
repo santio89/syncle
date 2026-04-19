@@ -133,9 +133,12 @@ export interface PlayerSnapshot {
   /**
    * Lobby-level "I'm ready to play whatever the host picks" flag.
    * Distinct from `ready` (which is the per-round "chart downloaded +
-   * decoded" state). When every online player has `lobbyReady=true`
-   * AND the host has selected a song, the server auto-fires the start
-   * (no need for the host to click anything).
+   * decoded" state). Purely an informational signal to the host so
+   * they can see how many players are willing to start; the server
+   * does NOT auto-start on all-ready (that would surprise the host
+   * mid-conversation). The host always has to click "Start match"
+   * themselves — see `setLobbyReady` in `lib/server/io.ts` for the
+   * deliberate no-op around auto-start.
    */
   lobbyReady: boolean;
   /**
@@ -225,9 +228,10 @@ export interface ClientToServerEvents {
 
   /**
    * Toggle this player's lobby-ready flag. Allowed in the lobby phase
-   * only (silently ignored otherwise). When all online players become
-   * ready and the host has selected a song, the server auto-fires the
-   * start — no host click required.
+   * only (silently ignored otherwise). Purely advisory: the server
+   * does NOT auto-start on all-ready — the host always clicks "Start
+   * match" themselves. See `PlayerSnapshot.lobbyReady` for the
+   * rationale (we intentionally don't surprise the host mid-chat).
    */
   "room:setReady": (payload: { ready: boolean }) => void;
 
@@ -357,7 +361,16 @@ export interface ServerToClientEvents {
   "phase:loading": (payload: {
     song: SongRef;
     mode: ChartMode;
-    /** ms wall-clock deadline by which everyone must be ready. */
+    /**
+     * ms wall-clock deadline at which the server force-starts the
+     * countdown, even if not everyone is ready yet. Stragglers stay
+     * in the room and join late: their client keeps downloading +
+     * decoding, then the schedule effect seeks the audio buffer by
+     * `now - startsAt` so they slot into the song timeline at the
+     * right offset. The server emits a soft "starting without X" notice
+     * so the room knows who is hopping in late. If NOBODY is ready by
+     * the deadline, the room bounces back to lobby instead.
+     */
     deadline: number;
   }) => void;
   "phase:countdown": (payload: {
@@ -453,6 +466,17 @@ export const MAX_CHAT_HISTORY = 100;
 export const CHAT_RATE_LIMIT = 6;
 export const CHAT_RATE_WINDOW_MS = 8_000;
 
+/**
+ * Per-player minimum interval (ms) between accepted `client:scoreUpdate`
+ * packets, server-side. The honest client throttles to 5 Hz (one packet
+ * per ~200 ms), so a 100 ms floor still passes legitimate traffic with
+ * jitter headroom while silently dropping a malicious flood that would
+ * otherwise CPU-tax `applyScoreUpdate` and the per-room scoreboard
+ * scheduler. Dropped packets are NOT acked or echoed — the spammer just
+ * sees their writes fail to land.
+ */
+export const SCORE_UPDATE_MIN_INTERVAL_MS = 100;
+
 /* -------------------------------------------------------------------------- */
 /* Match start timing                                                         */
 /* -------------------------------------------------------------------------- */
@@ -481,7 +505,7 @@ export const MATCH_COUNTDOWN_LEAD_MS = MATCH_OVERLAY_MS + MATCH_LEAD_IN_MS;
 /**
  * Server-side safety grace tacked onto the song's expected duration
  * before the room is force-transitioned to "results". The intent is to
- * GUARANTEE a results screen even if a player's `player:finished` event
+ * GUARANTEE a results screen even if a player's `client:finished` event
  * never arrives (chart load failure, frozen tab, lost websocket frame,
  * client crashed mid-song, etc.). Without this grace the room would
  * stay stuck in "playing" forever and nobody — not even players who
@@ -489,7 +513,7 @@ export const MATCH_COUNTDOWN_LEAD_MS = MATCH_OVERLAY_MS + MATCH_LEAD_IN_MS;
  *
  * 12 s is the budget for: last-note judgment window (~1 s) + a generous
  * round-trip margin for the slowest connected client to send their
- * `player:finished` packet under network congestion. Tuning this lower
+ * `client:finished` packet under network congestion. Tuning this lower
  * risks cutting off legitimate finishers; tuning higher makes the
  * results screen feel laggy when one player has flat-out abandoned.
  */

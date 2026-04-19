@@ -670,7 +670,6 @@ function RoomBody({
             results={results}
             chat={chat}
             me={me}
-            isHost={isHost}
             actions={actions}
           />
         );
@@ -695,15 +694,19 @@ function RoomBody({
   // <MultiGame> instance through the transition. Using `snapshot.phase`
   // here (the previous behavior) caused the wrapper to unmount and
   // remount the moment the server flipped the phase — which destroyed
-  // the audio engine, canvas, rAF loop, and `stats` state that gates
-  // the HUD overlays. Visible symptom: the score / combo / rock-meter
-  // panels disappeared for ~2 s while the audio buffer re-decoded and
-  // the first tick of the rAF loop repopulated `stats`, plus a
-  // noticeable gameplay stutter on the first frame as everything
-  // reinitialized. Treating both canvas phases as a single "game"
-  // shell preserves all of that across the transition; the lobby /
-  // loading / results phases still get their own keys so the
-  // fade-in animation re-fires on those screens.
+  // the canvas, rAF loop, and `stats` state that gates the HUD
+  // overlays. Visible symptom: the score / combo / rock-meter panels
+  // disappeared for ~2 s while the first tick of the rAF loop
+  // repopulated `stats`, plus a noticeable gameplay stutter on the
+  // first frame as everything reinitialized. (Audio is no longer in
+  // the danger list — the AudioEngine lives on this page in
+  // `audioEngineRef`, so even a remount of MultiGame doesn't tear
+  // down or re-decode the buffer. The fix here is still important
+  // for the canvas/rAF/stats half.) Treating both canvas phases as
+  // a single "game" shell preserves all of that across the
+  // transition; the lobby / loading / results phases still get
+  // their own keys so the fade-in animation re-fires on those
+  // screens.
   const shellKey = isCanvasPhase ? "game" : snapshot.phase;
   return (
     <div

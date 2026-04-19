@@ -39,6 +39,7 @@ import {
   RoomPhase,
   RoomSnapshot,
   RoomVisibility,
+  SCORE_UPDATE_MIN_INTERVAL_MS,
   ScoreboardEntry,
   ServerToClientEvents,
   SongRef,
@@ -71,7 +72,16 @@ const EMPTY_ROOM_TTL_MS = 10 * 60_000;
  * room resets the clock.
  */
 const INACTIVITY_TTL_MS = 30 * 60_000;
-/** Max wait for everyone to call `client:ready` after host hits start. */
+/**
+ * Max wait between "host hits start" and "force-start the countdown".
+ * If at least one player is ready by this deadline, the room enters
+ * `countdown` with whoever's ready and the stragglers late-join when
+ * their download/decode finishes (see `tryStartCountdown` forced-start
+ * branch and `MultiGame.tsx` schedule effect's negative-`delayMs`
+ * seek). If NOBODY is ready, the room bounces back to `lobby` instead.
+ * Slow loaders are NEVER kicked — that was the old behaviour, replaced
+ * with late-join in the v2 multiplayer pass.
+ */
 const LOADING_DEADLINE_MS = 30_000;
 /**
  * Grace between "everyone ready" and the wall-clock t0 for audio.
@@ -111,6 +121,14 @@ interface InternalPlayer {
    * structure per message — we just push + filter on every send.
    */
   chatTimestamps: number[];
+  /**
+   * Wall-clock of the most recently ACCEPTED `client:scoreUpdate`. Used
+   * to enforce `SCORE_UPDATE_MIN_INTERVAL_MS` so a malicious client can't
+   * flood `applyScoreUpdate` faster than the honest 5 Hz throttle. A
+   * single number is enough — we don't care about a rolling window for
+   * scores, just "was the last accepted packet too recent."
+   */
+  lastScoreUpdateAt: number;
 }
 
 interface InternalRoom {
@@ -150,7 +168,7 @@ interface InternalRoom {
    * room is still in "playing" by then, `forceTransitionToResults`
    * synthesises a `final` from each unfinished player's last `live`
    * snapshot and flips the room to "results" so the results screen
-   * ALWAYS shows up — even if a `player:finished` packet from one of
+   * ALWAYS shows up — even if a `client:finished` packet from one of
    * the clients was lost, the chart never loaded for them, their tab
    * froze, etc. Without this timer the room would otherwise stay in
    * "playing" forever and nobody (not even players who cleanly
@@ -159,6 +177,18 @@ interface InternalRoom {
    * Cleared in every transition out of "playing" (results, lobby).
    */
   matchSafetyTimer: NodeJS.Timeout | null;
+  /**
+   * Wall-clock handle for the countdown→playing flip. Scheduled by
+   * `tryStartCountdown` to fire at `room.startsAt`. Tracked here so
+   * `closeRoom` (and any other forced exit from `countdown`) can
+   * cancel it — without that, an inactivity-close or all-disconnect
+   * during the 5s countdown lead-in would still queue a callback that
+   * fires later and emits `phase:playing` to a `room:CODE` channel
+   * with no live members. Harmless in practice, but it leaves the
+   * `InternalRoom` reference alive in the closure for the duration
+   * and pollutes the metric/log surface.
+   */
+  countdownTimer: NodeJS.Timeout | null;
 }
 
 type Sock = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -426,6 +456,7 @@ class RoomRegistry {
       loadingTimer: null,
       matchSafetyTimer: null,
       inactivityTimer: null,
+      countdownTimer: null,
       lastActivityAt: Date.now(),
     };
     room.players.set(sessionId, {
@@ -442,6 +473,7 @@ class RoomRegistry {
       postChoice: null,
       graceTimer: null,
       chatTimestamps: [],
+      lastScoreUpdateAt: 0,
     });
     this.rooms.set(code, room);
     this.socketIndex.set(socketId, { code, sessionId });
@@ -484,6 +516,7 @@ class RoomRegistry {
       postChoice: null,
       graceTimer: null,
       chatTimestamps: [],
+      lastScoreUpdateAt: 0,
     });
     this.socketIndex.set(socketId, { code, sessionId });
     return { sessionId };
@@ -656,6 +689,10 @@ class RoomRegistry {
     if (room.inactivityTimer) {
       clearTimeout(room.inactivityTimer);
       room.inactivityTimer = null;
+    }
+    if (room.countdownTimer) {
+      clearTimeout(room.countdownTimer);
+      room.countdownTimer = null;
     }
     this.clearMatchSafetyTimer(room);
     this.rooms.delete(room.code);
@@ -892,6 +929,15 @@ class RoomRegistry {
   markLoadFailed(code: string, sessionId: string, reason: string): void {
     const room = this.rooms.get(code);
     if (!room) return;
+    // Only emit the load-failed notice while we're actually in the
+    // loading phase. The client effect runs in async `.then()/.catch()`
+    // chains that resolve *after* the phase may have flipped to
+    // countdown, playing, results, or even back to lobby — for slow
+    // loaders that's exactly the late-join path. Without this guard a
+    // straggler whose download finally errored 40s after the song
+    // already started would emit a misleading room-wide "couldn't
+    // load" toast in the middle of an active match.
+    if (room.phase !== "loading") return;
     const p = room.players.get(sessionId);
     if (!p) return;
     this.emitNotice(
@@ -959,7 +1005,12 @@ class RoomRegistry {
     this.emitSnapshot(room.code);
 
     const delay = Math.max(0, room.startsAt - Date.now());
-    setTimeout(() => {
+    if (room.countdownTimer) {
+      clearTimeout(room.countdownTimer);
+      room.countdownTimer = null;
+    }
+    room.countdownTimer = setTimeout(() => {
+      room.countdownTimer = null;
       if (room.phase !== "countdown") return;
       room.phase = "playing";
       room.songStartedAt = Date.now();
@@ -980,14 +1031,14 @@ class RoomRegistry {
       this.emitSnapshot(room.code);
       // Arm the wall-clock safety net the moment we enter "playing"
       // so even a worst-case "every connected client lost their
-      // player:finished packet" still produces a results screen.
+      // client:finished packet" still produces a results screen.
       this.armMatchSafetyTimer(room);
     }, delay);
   }
 
   /**
    * Schedule (or re-schedule) the per-room safety net that guarantees a
-   * "results" transition even if no `player:finished` event ever
+   * "results" transition even if no `client:finished` event ever
    * arrives. Fires at `songStartedAt + songDurationMs + grace`. Uses a
    * generous fallback duration when the host's `selectedSong` doesn't
    * carry a `durationSec` field (legacy mirror payloads).
@@ -1022,7 +1073,7 @@ class RoomRegistry {
    * `final` from each unfinished player's last `live` snapshot so the
    * standings show their actual progress (score + accuracy + max
    * combo) instead of zeros. Players who already sent
-   * `player:finished` keep their authoritative `final` untouched.
+   * `client:finished` keep their authoritative `final` untouched.
    */
   private forceTransitionToResults(room: InternalRoom): void {
     if (room.phase !== "playing") return;
@@ -1052,6 +1103,18 @@ class RoomRegistry {
     if (!room || room.phase !== "playing") return;
     const p = room.players.get(sessionId);
     if (!p) return;
+    // Per-player rate limit. The honest client throttles to 5 Hz
+    // (~200 ms cadence — see `MultiGame.tsx` `lastScoreSentSigRef`),
+    // so a 100 ms floor still admits real traffic with jitter
+    // headroom while silently dropping a malicious flood. Without
+    // this gate, a hostile client could fire `client:scoreUpdate`
+    // tens of thousands of times per second; each call mutates
+    // `p.live` and arms `scheduleScoreboard`, which is cheap
+    // individually but adds up to real CPU + per-frame allocator
+    // pressure on the room's broadcast tick.
+    const now = Date.now();
+    if (now - p.lastScoreUpdateAt < SCORE_UPDATE_MIN_INTERVAL_MS) return;
+    p.lastScoreUpdateAt = now;
     const score = raw as Partial<LiveScore> | null;
     if (!score || typeof score.score !== "number") return;
     p.live = {
@@ -1310,6 +1373,16 @@ class RoomRegistry {
     // entirely. Clearing unconditionally keeps the room object
     // timer-free across phase recycles.
     this.clearMatchSafetyTimer(room);
+    // Also drop any pending countdown→playing flip. Without this, a
+    // mid-countdown bounce-to-lobby (host cancel, all players leave
+    // and reconnect, etc.) would still queue the deferred "phase:
+    // playing" emit; it's a no-op (the callback short-circuits on
+    // `phase !== "countdown"`), but cancelling here avoids a spurious
+    // `phase:playing` race in pathological reorder scenarios.
+    if (room.countdownTimer) {
+      clearTimeout(room.countdownTimer);
+      room.countdownTimer = null;
+    }
     room.phase = "lobby";
     // `selectedMode` is cleared so the host's next tap on a difficulty
     // button re-fires `host:setMode` and the server doesn't carry a
@@ -1334,6 +1407,12 @@ class RoomRegistry {
 
   refOf(socketId: string) {
     return this.socketIndex.get(socketId);
+  }
+
+  isHostSession(code: string, sessionId: string): boolean {
+    const room = this.rooms.get(code);
+    if (!room) return false;
+    return room.hostId === sessionId;
   }
 
   hasRoom(code: string): boolean {
@@ -1479,6 +1558,17 @@ export function wireSocketServer(io: IO): void {
       try {
         const ref = reg.refOf(socket.id);
         if (!ref) throw new RoomError("NOT_IN_ROOM", "Not in a room");
+        // Host-only: the catalog drives the song picker, which is
+        // exclusively a host UI. Without this gate any guest could
+        // fire `host:catalogRequest` (especially with `refresh: true`)
+        // and force the server to repeatedly hit the upstream osu!
+        // mirrors, ignoring the in-memory cache. Mirrors aren't
+        // rate-limit-friendly, so a single noisy guest could earn the
+        // room a 429 from `nerinyan.moe` / `osu.direct` /
+        // `catboy.best` and brick song selection for everyone.
+        if (!reg.isHostSession(ref.code, ref.sessionId)) {
+          throw new RoomError("NOT_HOST", "Only the host can browse the catalog");
+        }
         const items = await reg.ensureCatalog(ref.code, !!payload?.refresh);
         ack?.(ackOk({ items }));
       } catch (e) {

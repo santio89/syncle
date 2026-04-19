@@ -139,7 +139,13 @@ export interface UseRoomSocket {
   chat: ChatMessage[];
   /** Difficulty the host selected for the current load/play cycle. */
   selectedMode: ChartMode | null;
-  /** Wall-clock ms by which clients must be ready (loading phase only). */
+  /**
+   * Wall-clock ms at which the server force-starts the countdown
+   * (loading phase only). Clients that haven't reported `client:ready`
+   * by this point are NOT kicked — they stay in the room and join
+   * late once their download/decode finishes. The LoadingScreen uses
+   * this to show a countdown chip + tint the progress bar.
+   */
   loadDeadline: number | null;
   /** Most recent error event from the server (transient — clear on action). */
   lastError: { code: string; message: string } | null;

@@ -4,17 +4,33 @@
  * Multiplayer game view: shared canvas highway + live sidebar scoreboard.
  *
  * Audio sync strategy:
- *   - The server picks a wall-clock `startsAt` after every client says
- *     `client:ready` (countdown phase). All clients aim to start their
- *     `AudioEngine` at exactly that moment via `setTimeout(..., delta)`.
- *   - During countdown we render a translucent overlay counting down from
- *     ceil((startsAt - now)/1000). Audio is scheduled inside `start()`
- *     using the engine's existing `delay` arg, so even small browser
- *     timer skews are absorbed into the same fixed lead-in.
- *   - Once `phase` flips to `playing`, the overlay drops and gameplay is
- *     identical to single-player from a feel standpoint. We never re-sync
- *     mid-song — too disruptive — but the wall-clock starting point keeps
- *     everyone within ~50ms of each other for the whole run.
+ *   - The server picks a wall-clock `startsAt` and emits
+ *     `phase:countdown` once EITHER (a) every connected player has
+ *     called `client:ready`, OR (b) the loading deadline elapses with
+ *     at least one player ready (the rest late-join). All clients aim
+ *     to start their `AudioEngine` at exactly `startsAt` via the
+ *     engine's `delay` arg — for late-joiners whose mount happens
+ *     AFTER `startsAt` the schedule effect calls `audio.start(0.05,
+ *     vol, offset)` with `offset = (now - startsAt) / 1000` so they
+ *     slot into the song timeline at the right point.
+ *   - During countdown we render a translucent overlay counting down
+ *     from ceil((startsAt - now)/1000). Audio is scheduled inside
+ *     `start()` using the engine's existing `delay` arg, so even
+ *     small browser timer skews are absorbed into the same fixed
+ *     lead-in.
+ *   - Once `phase` flips to `playing`, the overlay drops and gameplay
+ *     is identical to single-player from a feel standpoint. We never
+ *     re-sync mid-song — too disruptive — but the wall-clock starting
+ *     point keeps everyone within ~50ms of each other for the whole
+ *     run. The `audioStartedRef` guard on the schedule effect prevents
+ *     a second `audio.start()` on the countdown→playing dependency
+ *     change (which would produce an audible click).
+ *   - The `AudioEngine` itself lives on `app/multi/[code]/page.tsx`,
+ *     not here. The page decodes the buffer during `loading` (in
+ *     parallel with the chart download) and passes both the engine
+ *     and an `audioReady` flag to this component as props. That
+ *     ownership keeps the engine alive across phase swaps and lets
+ *     the page-level loading effect drive `client:ready` precisely.
  *
  * Score reporting:
  *   - 5Hz throttled `client:scoreUpdate` while playing.
@@ -1450,7 +1466,6 @@ function HealthPanel({
           className="h-[14px] w-[14px] cursor-pointer accent-accent"
           aria-label="Toggle input sound effects"
           aria-keyshortcuts="N"
-          aria-pressed={sfx}
         />
       </label>
       {/* FPS lock tile — same two-column layout as the single-

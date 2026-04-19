@@ -1,15 +1,26 @@
 import { Judgment, LANE_PITCH } from "./types";
 
 /**
- * Base level of the per-input feedback SFX bus. The actual `sfxGain.gain`
- * value is `BASE_SFX_LEVEL * perceivedToGain(songVol)`, so when the
- * player pulls the master volume down, the hit / miss / release tones
- * fall off in lockstep with the song instead of staying loud over a
- * quiet mix. Picked low (vs the song bus's 1.0 ceiling) so a stack of
- * perfect-pluck + metronome click + combo chime still leaves headroom
- * under the limiter.
+ * Constant attenuation applied to the SFX bus relative to the song
+ * bus. With both buses sharing the same `perceived²` taper (see
+ * `perceivedToSfxGain`), this is the FIXED dB offset between the two
+ * — at any master slider position, peak SFX gain is exactly
+ * `BASE_SFX_LEVEL * peakSongGain`. 0.35 ≈ -9 dB, which keeps the
+ * pluck / miss / release tones clearly subordinate to the song at
+ * every volume (a player set master to 30% still gets the same
+ * "subtle but noticeable" feedback layer they get at 100%, just both
+ * quieter together) while leaving a comfortable transient on top of
+ * the per-hit oscillator volumes (~0.22) so the punch is preserved.
+ *
+ * The previous design used a square-root taper on SFX while the song
+ * used quadratic, intending to keep feedback "audible at low master".
+ * In practice that inverted the mix below ~50% slider — at 20% slider
+ * SFX ended up +14 dB OVER the song. Constant ratio is the standard
+ * fix and is what most rhythm titles do when they expose only one
+ * master slider (Celeste, etc. expose two; we don't, so we bake the
+ * balance into the curves).
  */
-const BASE_SFX_LEVEL = 0.45;
+const BASE_SFX_LEVEL = 0.35;
 
 /**
  * Convert a slider/perceived value (0..1) to an actual GainNode value
@@ -52,39 +63,45 @@ function perceivedToGain(perceived: number): number {
 
 /**
  * Convert a slider/perceived value (0..1) to an actual GainNode value
- * for the SFX bus, using a square-root ("accessibility taper") curve
- * scaled by BASE_SFX_LEVEL.
+ * for the SFX bus. SFX uses the SAME quadratic taper as the song bus,
+ * scaled by `BASE_SFX_LEVEL` — that's a deliberate choice so the mix
+ * balance between music and feedback is CONSTANT across the entire
+ * slider range. Whatever ratio the player likes at master 100% is
+ * what they get at master 30% as well, just both quieter together.
  *
- * Why SFX uses a different curve than the song:
- *   With both buses on `perceived²`, the song's drop and the SFX bus's
- *   drop compound multiplicatively, AND the SFX is already attenuated
- *   by BASE_SFX_LEVEL on top of the per-hit oscillator volume (~0.22).
- *   At 20% slider you end up with a perfect hit at -48 dB, which is
- *   inaudible in any room with ambient noise. Players reported the
- *   feedback "disappeared" by ~20% master.
+ * Why constant-ratio (this version) vs gentler-curve-on-SFX (previous
+ * version): the previous design used `√perceived` on SFX and
+ * `perceived²` on music, with the goal of keeping feedback "audible
+ * at low master volumes". The unintended consequence was a ratio
+ * INVERSION below ~50% slider:
+ *     slider 1.00  →  song 0 dB,    sfx -9 dB    (song dominates, normal mix)
+ *     slider 0.50  →  song -12 dB,  sfx -12 dB   (about even)
+ *     slider 0.20  →  song -28 dB,  sfx -14 dB   (SFX +14 dB OVER song)
+ *     slider 0.05  →  song -52 dB,  sfx -20 dB   (song nearly gone, SFX dominates)
+ * That made the per-input feedback feel "shouty" at low master volumes,
+ * exactly the opposite of the user's intent of pulling the volume down.
  *
- *   The fix is the same approach pro games use (Celeste, Hades, most
- *   rhythm titles): apply a GENTLER curve to feedback than to music.
- *   Music gets `perceived²` (perceptually linear loudness control);
- *   SFX gets `√perceived`, so it falls off at half the dB rate of the
- *   song. The relative balance:
- *     slider 1.00  →  song 0 dB,    sfx -7 dB    (song dominates, normal mix)
- *     slider 0.80  →  song -4 dB,   sfx -8 dB    (song dominates, +4 dB)
- *     slider 0.50  →  song -12 dB,  sfx -10 dB   (about even, both clear)
- *     slider 0.20  →  song -28 dB,  sfx -14 dB   (SFX +14 dB over song)
- *     slider 0.05  →  song -52 dB,  sfx -20 dB   (song nearly gone, SFX still useful)
+ * Constant-ratio fixes that:
+ *     slider 1.00  →  song 0 dB,    sfx -9 dB    (song dominates, normal mix)
+ *     slider 0.50  →  song -12 dB,  sfx -21 dB   (song still dominates, both quieter)
+ *     slider 0.20  →  song -28 dB,  sfx -37 dB   (song still dominates, both quieter)
+ *     slider 0.05  →  song -52 dB,  sfx -61 dB   (both nearly gone, balance preserved)
  *     slider 0     →  both silent
+ * — the song stays exactly 9 dB above SFX everywhere. The trade-off is
+ * that very low master volumes will eventually push SFX below the noise
+ * floor of any noisy environment, but the player is asking for "quiet"
+ * by being there in the first place; if they want feedback prominent
+ * they can come up to a normal volume.
  *
- *   This keeps feedback present at low volumes (gameplay-critical),
- *   keeps the song dominant at normal volumes (expected mix), and
- *   still anchors both endpoints at true silent and true full so the
- *   slider behaves honestly. No floor, no muting cliff, just a curve
- *   that prioritizes feedback when the master is pulled down.
+ * BASE_SFX_LEVEL=0.35 was tuned so the per-hit oscillators (~0.22) +
+ * this taper land at a transient amplitude that sits clearly below
+ * the music peak without losing the punchy "click" character the
+ * pluck synth provides.
  */
 function perceivedToSfxGain(perceived: number): number {
   if (perceived <= 0) return 0;
   if (perceived >= 1) return BASE_SFX_LEVEL;
-  return BASE_SFX_LEVEL * Math.sqrt(perceived);
+  return BASE_SFX_LEVEL * perceived * perceived;
 }
 
 /**
@@ -124,15 +141,17 @@ function perceivedToSfxGain(perceived: number): number {
  *   source → songFilter (lowpass) → songGain → master → limiter → destination
  *   sfx    → sfxGain → master → limiter → destination
  *
- * Master volume routes to two different curves on purpose:
- *   songGain.gain = perceivedToGain(songVol)       // quadratic (perceptual)
- *   sfxGain.gain  = perceivedToSfxGain(songVol)    // square-root (accessibility)
+ * Master volume routes BOTH buses through the same quadratic taper,
+ * with SFX getting a fixed -9 dB attenuation on top:
+ *   songGain.gain = perceivedToGain(songVol)            // perceived²
+ *   sfxGain.gain  = perceivedToSfxGain(songVol)         // 0.35 * perceived²
  *
- * Music uses the perceptual taper so 50% slider feels like ~50% loudness;
- * SFX uses a gentler taper so input feedback stays audible when the
- * player pulls the master volume down (otherwise feedback drops below
- * the noise floor by ~20% slider — see perceivedToSfxGain). Both buses
- * still anchor at silent (slider 0) and full (slider 1).
+ * That keeps the music vs. feedback mix balance CONSTANT across the
+ * entire slider — at 30% master the song still sits ~9 dB above the
+ * input feedback, exactly like at 100% master, just both quieter
+ * together. See `perceivedToSfxGain` for the detailed dB table and
+ * the rationale for moving away from the previous square-root SFX
+ * curve (which inverted the mix at low volumes).
  */
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -205,7 +224,8 @@ export class AudioEngine {
       // setVolume() before start()), so the very first tap a player
       // makes — possibly during the lead-in countdown, before any
       // setVolume() call lands — already respects their slider AND
-      // the gentler accessibility taper applied by perceivedToSfxGain().
+      // the constant -9 dB SFX-vs-song offset baked into
+      // perceivedToSfxGain.
       this.sfxGain.gain.value = perceivedToSfxGain(this.songVol);
       this.sfxGain.connect(this.master);
     }
@@ -498,10 +518,12 @@ export class AudioEngine {
     // the song would suggest.
     if (this.ctx) {
       const t = this.ctx.currentTime;
-      // Two different curves on purpose: song uses perceptual quadratic
-      // (so 50% slider feels like 50% loudness as music); SFX uses a
-      // gentler square-root taper (so input feedback stays audible at
-      // low master volume — see perceivedToSfxGain doc for the dB table).
+      // Both buses share the same quadratic taper, with SFX getting a
+      // fixed -9 dB offset (BASE_SFX_LEVEL = 0.35) so the music vs.
+      // feedback balance stays CONSTANT across the whole slider — see
+      // perceivedToSfxGain doc for the dB table and the rationale for
+      // moving away from the previous square-root SFX curve (which
+      // overcorrected and made SFX dominate at low volumes).
       const songGainTarget = perceivedToGain(clamped);
       const sfxGainTarget = perceivedToSfxGain(clamped);
       if (this.songGain) {

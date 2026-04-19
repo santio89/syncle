@@ -29,14 +29,12 @@ export function ResultsScreen({
   results,
   chat,
   me,
-  isHost,
   actions,
 }: {
   snapshot: RoomSnapshot;
   results: ResultsPayload | null;
   chat: ChatMessage[];
   me: string;
-  isHost: boolean;
   actions: RoomActions;
 }) {
   const router = useRouter();
@@ -49,6 +47,14 @@ export function ResultsScreen({
 
   const standings: Standing[] = useMemo(() => {
     if (results?.standings?.length) return results.standings;
+    // Fallback: derive standings from the live snapshot if the
+    // `phase:results` event was missed (late socket reconnect, slow
+    // network). Includes ALL roster players — late joiners who arrive
+    // mid-song or right at results land here too, with whatever live
+    // stats they accumulated (zero if they never played a note). They
+    // appear at the bottom of the leaderboard, which is the intended
+    // UX: the room sees who's present, late joiners can see what
+    // happened.
     return [...snapshot.players]
       .map((p) => ({
         id: p.id,
@@ -105,7 +111,10 @@ export function ResultsScreen({
           <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             ░ Match complete
           </p>
-          <h2 className="mt-2 font-display text-[1.97rem] font-bold leading-none sm:text-[2.36rem]">
+          <h2
+            className="mt-2 break-words font-display text-[1.97rem] font-bold leading-none sm:text-[2.36rem]"
+            data-tooltip={winner ? winner.name : undefined}
+          >
             {winner ? `${winner.name} wins.` : "No one finished."}
           </h2>
           {winner && (

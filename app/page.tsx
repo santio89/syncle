@@ -248,7 +248,7 @@ export default function HomePage() {
                 </span>
               ) : (
                 <span className="font-mono text-[10.5px] uppercase tracking-widest opacity-70">
-                  no chart found
+                  no chart available
                 </span>
               )}
             </div>

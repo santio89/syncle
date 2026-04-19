@@ -2093,7 +2093,6 @@ function HUD({
             className="h-[14px] w-[14px] cursor-pointer accent-accent"
             aria-label="Toggle input sound effects"
             aria-keyshortcuts="N"
-            aria-pressed={sfx}
           />
         </label>
         {/* FPS lock tile — entire tile is the click target (same
@@ -2345,12 +2344,20 @@ function ResultsCard({
       <p className="font-mono text-[0.79rem] uppercase tracking-[0.4em] text-accent">
         {newBest ? "★ New track best" : "Run complete"}
       </p>
-      <div className="mt-2 flex items-baseline justify-between">
-        <h2 className="font-display text-[1.97rem] sm:text-[2.36rem] font-bold">
+      <div className="mt-2 flex items-baseline justify-between gap-3">
+        {/* `min-w-0 flex-1` lets `truncate` actually engage inside the
+            flex row — without it, long beatmap titles push the grade
+            glyph off the card or wrap onto a second line and shove the
+            grade down with them. The full title still surfaces on
+            hover via `data-tooltip` so nothing is lost. */}
+        <h2
+          className="min-w-0 flex-1 truncate font-display text-[1.97rem] sm:text-[2.36rem] font-bold"
+          data-tooltip={meta.title}
+        >
           {meta.title}
         </h2>
         <span
-          className={`font-display text-[3.95rem] sm:text-[4.74rem] font-bold leading-none ${
+          className={`shrink-0 font-display text-[3.95rem] sm:text-[4.74rem] font-bold leading-none ${
             grade === "S"
               ? "text-accent"
               : grade === "F"
@@ -2364,7 +2371,7 @@ function ResultsCard({
 
       <div className="mt-6 grid grid-cols-2 gap-3 font-mono text-[0.92rem]">
         <Row label="Score" value={stats.score.toLocaleString()} accent />
-        <Row label="Accuracy" value={`${accuracy.toFixed(2)}%`} />
+        <Row label="Accuracy" value={`${accuracy.toFixed(1)}%`} />
         <Row label="Max combo" value={stats.maxCombo.toString()} />
         <Row label="Notes" value={`${stats.notesPlayed}/${stats.totalNotes}`} />
         <Row label="Perfect" value={stats.hits.perfect.toString()} />
