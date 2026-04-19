@@ -191,15 +191,35 @@ summary {
  * paragraphs so the browser's slower line-break optimizer is reserved
  * for prose, not single-line UI text.
  * ------------------------------------------------------------------------- */
-:where(h1, h2, h3, h4, h5, h6,
-       button,
-       label,
-       summary,
-       .brut-btn,
-       .brut-btn-accent,
-       .brut-play-cta,
-       .brut-tooltip,
-       .icon-btn) {
+:where(
+  h1, h2, h3, h4, h5, h6,
+  button,
+  label,
+  summary,
+  .brut-btn,
+  .brut-btn-accent,
+  .brut-play-cta,
+  .brut-tooltip,
+  .icon-btn,
+  /* Explicit opt-ins for one-off pills that don't fit any utility
+   * recipe (e.g. a third-party widget rendering its own markup). */
+  .brut-pill,
+  [data-pill],
+  /* Canonical "small label" recipe used across the codebase: monospace
+   * + uppercase + tracked. Anything that combines all three is, by
+   * convention, a status pill / chip / kbd-style label and benefits
+   * from trimmed half-leading. The `[class~="x"]` syntax is a strict
+   * whole-word match against the class list, so it only fires on
+   * elements that explicitly carry these Tailwind utilities (no false
+   * positives from substring partial matches like `tracking-wider`). */
+  [class~="font-mono"][class~="uppercase"][class~="tracking-widest"],
+  /* Bordered chip recipe used by duration tags and other mini badges
+   * where the text isn't uppercase but the container is still a tight
+   * single-line pill — same vertical-centering problem, same fix. */
+  [class~="border-2"][class~="px-2"][class~="py-0.5"],
+  [class~="border-2"][class~="px-1.5"][class~="py-px"],
+  [class~="border"][class~="px-1.5"][class~="py-0.5"]
+) {
   text-wrap: balance;
   /* Shorthand: trim both edges down to the cap-height (top) and the
    * alphabetic baseline (bottom). Matches what designers eyeball when
