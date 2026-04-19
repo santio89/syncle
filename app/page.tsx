@@ -168,9 +168,8 @@ export default function HomePage() {
           {/* Wordmark mirrors the H1 hero coloring exactly: SYNC pops
               to the full theme foreground (cream in dark, near-black
               in light), LE picks up the accent. The outer span's
-              `text-bone-50/70` only dims the surrounding nav copy
-              (e.g. "OSU MANIA · 4K") — overriding SYNC back to a
-              non-alpha `text-bone-50` keeps the brand mark at the
+              `text-bone-50/70` would dim the brand mark; overriding
+              SYNC back to a non-alpha `text-bone-50` keeps it at the
               same weight it has in the H1, instead of looking like
               washed-out caption text next to the icon. */}
           <span className="font-mono text-[0.79rem] tracking-[0.3em] text-bone-50/70">
