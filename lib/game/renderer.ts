@@ -740,9 +740,24 @@ function ensureCache(
   // side rather than assuming top/bottom strips are equal.
   const stripHTop = stripTop;
   const stripHBot = 1 - stripBot;
-  const fadeTopAnchor = stripTop + stripHTop * EDGE_FADE_BLEED;
-  const fadeBotAnchor = stripBot - stripHBot * EDGE_FADE_BLEED;
-  const innerMid = fadeTopAnchor + 0.7 * (fadeBotAnchor - fadeTopAnchor);
+  // Clamp every computed stop to [0, 1] before handing it to
+  // addColorStop. On extreme aspect ratios (very short viewports, the
+  // multiplayer side panels at narrow widths, certain zoom × DPR
+  // combinations) the layout produces `bottomY > H` or `topY < fadePxTop`,
+  // which makes `stripBot > 1` or `stripTop > 1/(1+EDGE_FADE_BLEED)`.
+  // Either case yields a stop slightly outside [0, 1] (e.g. 1.0105),
+  // and the spec mandates `addColorStop` throw `IndexSizeError` for
+  // anything out of range. The throw aborts the entire frame paint, so
+  // affected players see a permanently blank highway in solo AND multi.
+  // Clamping is safe: `addColorStop` sorts stops internally, so two
+  // stops landing at exactly 1.0 just terminate the gradient cleanly.
+  const fadeTopAnchor = clamp(stripTop + stripHTop * EDGE_FADE_BLEED, 0, 1);
+  const fadeBotAnchor = clamp(stripBot - stripHBot * EDGE_FADE_BLEED, 0, 1);
+  const innerMid = clamp(
+    fadeTopAnchor + 0.7 * (fadeBotAnchor - fadeTopAnchor),
+    0,
+    1,
+  );
   const stop0 = hexToRgb(palette.highwayStops[0]);
   const stop1 = hexToRgb(palette.highwayStops[1]);
   const stop2 = hexToRgb(palette.highwayStops[2]);
