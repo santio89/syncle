@@ -568,7 +568,14 @@ export default function Game() {
     phaseRef.current = phase;
   }, [phase]);
 
-  const pressLane = useCallback((lane: number) => {
+  // `eventTimestamp` is the `performance.now()` moment from the
+  // KeyboardEvent / PointerEvent that caused the press. Passed through
+  // to `audio.inputSongTime()` so we judge against the audio clock at
+  // the EXACT key-down moment, not "audio clock when the React handler
+  // happened to run" — which can lag by 1-15 ms under JS load and is
+  // the dominant cause of "feels off sometimes". Touch callers omit
+  // it; touch latency dwarfs the dispatch component anyway.
+  const pressLane = useCallback((lane: number, eventTimestamp?: number) => {
     const p = phaseRef.current;
     if (p === "paused") return;
     // Always remember the lane is held — the renderer reads heldRef to
@@ -580,7 +587,7 @@ export default function Game() {
     const state = stateRef.current;
     if (!audio || !state) return;
 
-    const songTime = audio.songTime();
+    const songTime = audio.inputSongTime(eventTimestamp);
     const evt = state.hit(lane, songTime);
     if (evt) {
       renderStateRef.current.laneFlash[lane] = 1;
@@ -595,7 +602,7 @@ export default function Game() {
     }
   }, []);
 
-  const releaseLane = useCallback((lane: number) => {
+  const releaseLane = useCallback((lane: number, eventTimestamp?: number) => {
     const p = phaseRef.current;
     if (p === "paused") return;
     heldRef.current[lane] = false;
@@ -606,7 +613,9 @@ export default function Game() {
     if (!audio || !state) return;
 
     // If a hold was active in this lane, judge the tail on release.
-    const tailEvt = state.release(lane, audio.songTime());
+    // Same timestamp correction as pressLane — release timing on hold
+    // tails is just as sensitive as head presses.
+    const tailEvt = state.release(lane, audio.inputSongTime(eventTimestamp));
     if (tailEvt) {
       renderStateRef.current.laneFlash[lane] = 0.6;
       renderStateRef.current.pendingHits.push({
@@ -652,7 +661,10 @@ export default function Game() {
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
       e.preventDefault();
-      pressLane(lane);
+      // Pass the event's `performance.now()` timestamp so the audio
+      // engine can back the songTime up to the actual key-down moment,
+      // cancelling out handler-dispatch lag (see audio.ts inputSongTime).
+      pressLane(lane, e.timeStamp);
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
@@ -660,7 +672,7 @@ export default function Game() {
       if (phase === "paused") return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
-      releaseLane(lane);
+      releaseLane(lane, e.timeStamp);
     };
 
     window.addEventListener("keydown", onKeyDown);

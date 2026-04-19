@@ -1,6 +1,16 @@
 import { Judgment, LANE_PITCH } from "./types";
 
 /**
+ * Base level of the per-input feedback SFX bus. The actual `sfxGain.gain`
+ * value is `BASE_SFX_LEVEL * songVol`, so when the player pulls the master
+ * volume down, the hit / miss / release tones fall off in lockstep instead
+ * of staying loud over a quiet song. Picked low (vs the song bus's 1.0
+ * ceiling) so a stack of perfect-pluck + metronome click + combo chime
+ * still leaves headroom under the limiter.
+ */
+const BASE_SFX_LEVEL = 0.45;
+
+/**
  * Audio engine wrapper around the Web Audio API.
  *
  * Why Web Audio API instead of <audio>?
@@ -8,9 +18,25 @@ import { Judgment, LANE_PITCH } from "./types";
  *   - immune to JS event-loop jitter
  *   - lets us derive "song time" from the audio clock, not requestAnimationFrame
  *
+ * Sync model — read this before changing how songTime is consumed:
+ *   - `songTime()` returns `ctx.currentTime - startedAtCtxTime`, which is
+ *     the audio clock's "next sample to be processed" view of the song
+ *     position. That's the right value for SCHEDULING things forward
+ *     (metronome clicks, future SFX) because they go straight onto the
+ *     same buffer the clock advances.
+ *   - For JUDGING input, prefer `inputSongTime(e.timeStamp)`. It captures
+ *     the audio-clock position at the EXACT performance.now() moment the
+ *     KeyboardEvent fired (eliminating handler-dispatch lag, which the
+ *     browser can hold for 1-15 ms under load) and then subtracts the
+ *     audible-output latency so we compare against the chart-time the
+ *     player ACTUALLY heard at press time, not the buffer-pump time.
+ *     Without these two corrections, a perfectly timed press skews
+ *     inconsistently late by 5-30 ms depending on device + OS audio
+ *     buffer size, which is the dominant cause of "feels off sometimes".
+ *
  * In addition to song playback this engine produces gameplay feedback:
  *   - playHit(lane, judgment) — a short pluck tone in the song's key,
- *     pitched per lane. Perfect hits get a shimmer overtone.
+ *     pitched per lane. Perfect hits get a 5th-up shimmer.
  *   - playMiss() / playEmpty() — a dull thud + a brief volume duck and
  *     low-pass filter sweep on the song. The song literally sounds "off"
  *     for ~250ms when you whiff, like an unplugged guitar moment.
@@ -18,8 +44,11 @@ import { Judgment, LANE_PITCH } from "./types";
  *     specific AudioContext time. Used to verify rhythm sync.
  *
  * Signal graph:
- *   source → songFilter (lowpass) → songGain → master → destination
- *   sfx    → sfxGain → master → destination
+ *   source → songFilter (lowpass) → songGain → master → limiter → destination
+ *   sfx    → sfxGain → master → limiter → destination
+ *
+ * `sfxGain.gain = BASE_SFX_LEVEL * songVol` so master volume controls
+ * both buses; the player can never get loud SFX over a quiet song.
  */
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -88,7 +117,11 @@ export class AudioEngine {
       this.master.connect(this.limiter);
 
       this.sfxGain = this.ctx!.createGain();
-      this.sfxGain.gain.value = 0.6;
+      // Initial level honours the persisted master volume (set via
+      // setVolume() before start()), so the very first tap a player
+      // makes — possibly during the lead-in countdown, before any
+      // setVolume() call lands — already respects their slider.
+      this.sfxGain.gain.value = BASE_SFX_LEVEL * this.songVol;
       this.sfxGain.connect(this.master);
     }
     if (this.ctx!.state === "suspended") {
@@ -275,10 +308,79 @@ export class AudioEngine {
   /**
    * Current song time (seconds since song t=0).
    * Negative during the lead-in countdown.
+   *
+   * This is the "next sample to be processed" time — correct for FORWARD
+   * scheduling (metronome clicks, future SFX). For judging input that the
+   * player just made, prefer {@link inputSongTime} so handler-dispatch lag
+   * and audible-output latency are factored out.
    */
   songTime(): number {
     if (!this.ctx) return 0;
     return this.ctx.currentTime - this.startedAtCtxTime;
+  }
+
+  /**
+   * The audible-output latency: how far behind `ctx.currentTime` the
+   * sample currently leaving the speakers actually is. Set by the audio
+   * subsystem based on driver/buffer size; can be 0 on contexts that
+   * don't expose it (older Safari, certain headless test environments).
+   * Falls back to `baseLatency` (process-internal buffering only) and
+   * finally 0 so callers never have to null-check.
+   */
+  outputLatency(): number {
+    const ctx = this.ctx as (AudioContext & { outputLatency?: number }) | null;
+    if (!ctx) return 0;
+    if (typeof ctx.outputLatency === "number" && ctx.outputLatency >= 0) {
+      return ctx.outputLatency;
+    }
+    if (typeof ctx.baseLatency === "number" && ctx.baseLatency >= 0) {
+      return ctx.baseLatency;
+    }
+    return 0;
+  }
+
+  /**
+   * Song time corresponding to a real-world input event.
+   *
+   * Two corrections vs the raw `songTime()`:
+   *   1. **Dispatch lag** — `eventTimestamp` is the `performance.now()`
+   *      moment the browser created the event (typically the physical
+   *      key press), but the handler may not run for several ms after.
+   *      We back the audio clock up by exactly that gap so the judgment
+   *      uses "audio clock at press", not "audio clock when handler ran".
+   *      Both `performance.now()` and `ctx.currentTime` advance in real
+   *      time, so the gap is directly comparable in seconds.
+   *   2. **Audible-output latency** — `ctx.currentTime` is the next
+   *      sample heading into the audio device, but the player's ear is
+   *      hearing a sample emitted `outputLatency()` seconds earlier.
+   *      Subtracting it means we judge against the chart-time the
+   *      player ACTUALLY heard at press, not the buffer-pump time.
+   *
+   * Without these corrections, a metronome-perfect tap on a device with
+   * a 20ms output buffer reads as "great" instead of "perfect" — a
+   * full timing window off, consistently late, but only on some setups.
+   *
+   * Pass the event's `timeStamp` (KeyboardEvent / PointerEvent / etc).
+   * If undefined, falls back to plain `songTime()` so we degrade
+   * gracefully on synthetic call sites.
+   */
+  inputSongTime(eventTimestamp?: number): number {
+    if (!this.ctx) return 0;
+    if (eventTimestamp == null || !Number.isFinite(eventTimestamp)) {
+      return this.ctx.currentTime - this.startedAtCtxTime - this.outputLatency();
+    }
+    // Cap the dispatch-lag correction at 0..120ms. Negative would mean
+    // the event is "from the future" (clock skew or stale closure on
+    // a paused-then-resumed context); huge positive values usually mean
+    // a queued event from before a tab unfreeze. Either case: don't
+    // let a pathological reading bend the judgment by half a beat.
+    const lagSec = Math.min(
+      0.12,
+      Math.max(0, (performance.now() - eventTimestamp) / 1000),
+    );
+    return (
+      this.ctx.currentTime - lagSec - this.startedAtCtxTime - this.outputLatency()
+    );
   }
 
   /** Convert a song-time value into AudioContext time (for scheduling). */
@@ -289,12 +391,25 @@ export class AudioEngine {
   setVolume(v: number): void {
     const clamped = Math.min(1, Math.max(0, v));
     this.songVol = clamped;
-    if (this.songGain && this.ctx) {
+    // Both buses get a 50ms linear ramp instead of an instant set —
+    // a hard step in gain produces an audible click on the running
+    // signal, especially mid-song. The two ramps run in lockstep so
+    // there's no transient where SFX briefly sit louder/quieter than
+    // the song would suggest.
+    if (this.ctx) {
       const t = this.ctx.currentTime;
-      const g = this.songGain.gain;
-      g.cancelScheduledValues(t);
-      g.setValueAtTime(g.value, t);
-      g.linearRampToValueAtTime(clamped, t + 0.05);
+      if (this.songGain) {
+        const g = this.songGain.gain;
+        g.cancelScheduledValues(t);
+        g.setValueAtTime(g.value, t);
+        g.linearRampToValueAtTime(clamped, t + 0.05);
+      }
+      if (this.sfxGain) {
+        const g = this.sfxGain.gain;
+        g.cancelScheduledValues(t);
+        g.setValueAtTime(g.value, t);
+        g.linearRampToValueAtTime(BASE_SFX_LEVEL * clamped, t + 0.05);
+      }
     }
   }
 
@@ -316,7 +431,20 @@ export class AudioEngine {
   // Gameplay feedback
   // ---------------------------------------------------------------------
 
-  /** A satisfying pluck tone for a successful hit. */
+  /**
+   * A soft pluck tone for a successful hit.
+   *
+   * Sine base voice (was triangle) — sine has no harmonics above the
+   * fundamental, so a stream of taps reads as a melodic chime instead
+   * of the slightly buzzy "pencil tap" the triangle wave produced.
+   * The overall envelope is the same plucked shape (fast-ish attack,
+   * exponential decay over ~350ms); only the timbre is gentler.
+   *
+   * Per-judgment volumes also dropped ~30% so a tight stream of perfect
+   * taps doesn't drown the song. Combined with the master-volume-aware
+   * sfx bus, the player now has a real range of feedback levels — quiet
+   * songs keep the SFX quiet, loud songs let them shine.
+   */
   playHit(lane: number, judgment: Judgment): void {
     if (!this.ctx || !this.sfxGain) return;
     if (!this.sfxOn) return;
@@ -324,18 +452,21 @@ export class AudioEngine {
 
     const freq = LANE_PITCH[lane] ?? 220;
     const vol =
-      judgment === "perfect" ? 0.32 :
-      judgment === "great"   ? 0.24 :
-      judgment === "good"    ? 0.16 : 0.16;
+      judgment === "perfect" ? 0.22 :
+      judgment === "great"   ? 0.17 :
+      judgment === "good"    ? 0.12 : 0.12;
 
-    this.pluck(t, freq, 0.35, vol, "triangle");
+    this.pluck(t, freq, 0.36, vol, "sine");
     if (judgment === "perfect") {
-      // Octave-up shimmer for that "you nailed it" feeling.
-      this.pluck(t + 0.002, freq * 2, 0.22, 0.10, "sine");
-    } else if (judgment === "good") {
-      // Slightly detuned 2nd voice — still musical, but a hint "off".
-      this.pluck(t, freq * 1.012, 0.25, 0.10, "triangle");
+      // 5th-up sine shimmer (was octave-up). The 5th sits inside the
+      // chord most charts use, so the perfect cue feels "in tune" with
+      // the song rather than dropping a bright bell on top.
+      this.pluck(t + 0.002, freq * 1.5, 0.26, 0.075, "sine");
     }
+    // No "good" detune voice — a deliberately dissonant cue read as a
+    // wobble that confused players into thinking the engine itself was
+    // off-pitch. The lower base volume + lack of shimmer is enough to
+    // signal "good, but not great" without an audible warble.
   }
 
   /** A short, soft tone for the release of a hold note's tail. */
@@ -479,7 +610,7 @@ export class AudioEngine {
     freq: number,
     dur: number,
     vol: number,
-    type: OscillatorType = "triangle",
+    type: OscillatorType = "sine",
   ): void {
     if (!this.ctx || !this.sfxGain) return;
     const ctx = this.ctx;
@@ -492,7 +623,11 @@ export class AudioEngine {
 
     const env = ctx.createGain();
     env.gain.setValueAtTime(0, when);
-    env.gain.linearRampToValueAtTime(vol, when + 0.005);
+    // 10ms attack (was 5ms) — at 5ms the leading edge had a faint click
+    // that the ear interpreted as a "tap" on top of the pluck. At 10ms
+    // the attack is still well under one perception threshold (~20ms)
+    // so it reads as instantaneous, but the click is gone.
+    env.gain.linearRampToValueAtTime(vol, when + 0.01);
     env.gain.exponentialRampToValueAtTime(0.0001, when + dur);
 
     osc.connect(env).connect(this.sfxGain);

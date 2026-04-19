@@ -419,14 +419,19 @@ function CanvasPane({
     phaseRef.current = snapshot.phase;
   }, [snapshot.phase]);
 
-  const pressLane = useCallback((lane: number) => {
+  // `eventTimestamp` is the `performance.now()` moment from the
+  // KeyboardEvent / PointerEvent that caused the press — passed through
+  // to `audio.inputSongTime()` so judgments use the audio clock at the
+  // actual key-down moment, not "audio clock when the React handler
+  // happened to run". See audio.ts and Game.tsx for the full rationale.
+  const pressLane = useCallback((lane: number, eventTimestamp?: number) => {
     if (phaseRef.current === "results") return;
     heldRef.current[lane] = true;
     if (phaseRef.current !== "playing") return;
     const audio = audioRef.current;
     const state = stateRef.current;
     if (!audio || !state) return;
-    const songTime = audio.songTime();
+    const songTime = audio.inputSongTime(eventTimestamp);
     const evt = state.hit(lane, songTime);
     if (evt) {
       renderStateRef.current.laneFlash[lane] = 1;
@@ -438,14 +443,14 @@ function CanvasPane({
     }
   }, []);
 
-  const releaseLane = useCallback((lane: number) => {
+  const releaseLane = useCallback((lane: number, eventTimestamp?: number) => {
     if (phaseRef.current === "results") return;
     heldRef.current[lane] = false;
     if (phaseRef.current !== "playing") return;
     const audio = audioRef.current;
     const state = stateRef.current;
     if (!audio || !state) return;
-    const tailEvt = state.release(lane, audio.songTime());
+    const tailEvt = state.release(lane, audio.inputSongTime(eventTimestamp));
     if (tailEvt) {
       renderStateRef.current.laneFlash[lane] = 0.6;
       renderStateRef.current.pendingHits.push({
@@ -483,13 +488,16 @@ function CanvasPane({
       if (lane === undefined) return;
       if (e.repeat) return;
       e.preventDefault();
-      pressLane(lane);
+      // Pass the event's `performance.now()` timestamp so the audio
+      // engine can back the songTime up to the actual key-down moment,
+      // cancelling out handler-dispatch lag (see audio.ts inputSongTime).
+      pressLane(lane, e.timeStamp);
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
-      releaseLane(lane);
+      releaseLane(lane, e.timeStamp);
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
