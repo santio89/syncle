@@ -1803,22 +1803,28 @@ function HUD({
               </p>
             )}
           </div>
-          {/* COMBO column mirrors SCORE's vertical rhythm: top-aligned
-              (no `justify-center`) and the same `mt-1.5` between rows
-              so the label / number / multiplier stack reads with the
-              same beat as the score side. */}
-          <div className="flex min-w-[57px] flex-col items-center sm:min-w-[74px] xl:min-w-[81px]">
+          {/* COMBO column is a 1:1 typographic mirror of SCORE — same
+              min-width strategy (just narrower because the values
+              are short), same left alignment, same font sizes for
+              the label / number / tail rows, same `mt-1.5` rhythm.
+              The ONLY divergences are color-only: the big number
+              flips to accent once a combo is active, and the `×N`
+              multiplier tail is always accent. Keeping every other
+              property identical means the two columns read as a
+              matched pair — same beat, same weight, just two
+              different stats. */}
+          <div className="min-w-[57px] sm:min-w-[74px] xl:min-w-[81px]">
             <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
               Combo
             </p>
             <p
-              className={`mt-1.5 font-display text-[1.53rem] font-bold leading-none tabular-nums sm:text-[2.29rem] ${
+              className={`mt-1.5 font-display text-[1.27rem] font-bold leading-none tabular-nums sm:text-[1.91rem] ${
                 stats.combo > 0 ? "text-accent" : "text-bone-50/40"
               }`}
             >
               {stats.combo}
             </p>
-            <p className="mt-1.5 font-mono text-[10.2px] font-bold text-accent sm:text-[0.76rem]">
+            <p className="mt-1.5 font-mono text-[9.2px] text-accent sm:text-[10.2px]">
               ×{stats.multiplier}
             </p>
           </div>
