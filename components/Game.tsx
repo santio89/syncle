@@ -52,6 +52,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
 import { StatusBadge } from "@/components/StatusBadge";
 import ScrollStrip from "@/components/ScrollStrip";
+import TouchLanes from "@/components/TouchLanes";
 
 type Phase =
   | "idle"
@@ -220,9 +221,16 @@ export default function Game() {
    *  metronome are unaffected). */
   const [sfx, setSfx] = useState<boolean>(loadSfx);
   /** True if the user is on a touch-only device (no physical keyboard).
-   *  Drives the on-screen <TouchLanes> overlay and swaps the "press D F J K"
+   *  Swaps the "press D F J K"
    *  hints in the StartCard for tap-friendly copy. */
   const [touchOnly, setTouchOnly] = useState<boolean>(false);
+  /** True if the device exposes ANY coarse pointer (phone, tablet,
+   *  hybrid touchscreen laptop). Drives the on-screen <TouchLanes>
+   *  overlay so click + finger inputs work alongside (or instead of)
+   *  the keyboard. Distinct from `touchOnly` — a touchscreen laptop
+   *  has both a coarse and a fine pointer, so we want the lane buttons
+   *  visible there too while still showing the keyboard hint copy. */
+  const [coarsePointer, setCoarsePointer] = useState<boolean>(false);
 
   /**
    * Recovered solo run from a previous tab session — set on mount if
@@ -487,13 +495,17 @@ export default function Game() {
     saveSfx(sfx);
   }, [sfx]);
 
-  // Detect touch-only devices on mount.
+  // Detect touch-only devices on mount + whether ANY coarse pointer is
+  // present. `touchOnly` (coarse + no-fine) governs hint COPY (tap vs
+  // keyboard); `coarsePointer` (coarse, regardless of fine) governs
+  // whether to render the on-screen <TouchLanes> overlay so a hybrid
+  // touchscreen laptop can use BOTH fingers and keyboard.
   useEffect(() => {
     if (typeof window !== "undefined" && window.matchMedia) {
-      // pointer:coarse + no fine pointer ⇒ phone/tablet without a real keyboard.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
       const noFine = !window.matchMedia("(any-pointer: fine)").matches;
       setTouchOnly(coarse && noFine);
+      setCoarsePointer(coarse);
     }
   }, []);
 
@@ -502,7 +514,19 @@ export default function Game() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      // Cap DPR. On coarse-pointer devices (phones / tablets) the cap is
+      // tighter (1.5) — most modern phones report DPR 2.5-3, which would
+      // double or triple the per-frame pixel budget on a fillrate-limited
+      // mobile GPU and visibly stutter the highway scroll. 1.5x is still
+      // visually crisp on a small screen and recovers a chunk of GPU
+      // headroom. Desktop / fine-pointer keeps the existing 2x cap so
+      // retina monitors stay sharp.
+      const coarseUA =
+        typeof window !== "undefined" && window.matchMedia
+          ? window.matchMedia("(pointer: coarse)").matches
+          : false;
+      const cap = coarseUA ? 1.5 : 2;
+      const dpr = Math.min(window.devicePixelRatio || 1, cap);
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
@@ -1240,9 +1264,12 @@ export default function Game() {
           />
         )}
 
-      {/* On-screen lane buttons for touch devices. Hidden when a fine
-          pointer is detected so the keyboard player never sees them. */}
-      {touchOnly &&
+      {/* On-screen lane buttons. Shown whenever a coarse pointer is
+          available (mobile, tablet, hybrid touchscreen laptop) so the
+          player can use clicks / fingers in addition to D-F-J-K. The
+          buttons are gated to gameplay phases so they don't intercept
+          UI clicks on the StartCard / PauseCard. */}
+      {coarsePointer &&
         (phase === "playing" || phase === "countdown") && (
           <TouchLanes onPress={pressLane} onRelease={releaseLane} />
         )}
@@ -2512,81 +2539,9 @@ function PauseCard({
   );
 }
 
-/**
- * On-screen lane buttons for touch devices.
- *
- * Four full-bleed columns sit over the bottom two-thirds of the canvas,
- * directly under the lane gates. Each one fires `onPress(lane)` on
- * pointerdown and `onRelease(lane)` on pointerup/cancel — the same
- * functions the keyboard handler uses, so hold notes work identically to
- * keyboard play (touchstart → keydown analogue, touchend → keyup analogue).
- *
- * Implementation notes:
- *   - We use Pointer Events (covers mouse + touch + pen) and call
- *     `setPointerCapture` so the matching pointerup is guaranteed to fire
- *     on the same element even if the finger drifts off the column.
- *   - `touchAction: "none"` prevents the browser from claiming a finger
- *     for scroll/zoom gestures during play.
- *   - The container is `pointer-events-none` so empty space above the
- *     buttons doesn't trap clicks meant for HUD controls; the buttons
- *     themselves re-enable pointer events.
- *   - Visuals are intentionally minimal — the canvas already paints the
- *     lane gates in vivid colour. The buttons add a faint top border and
- *     a brief tint while pressed so the player gets a finger-shadow cue
- *     without visually competing with the highway.
- */
-function TouchLanes({
-  onPress,
-  onRelease,
-}: {
-  onPress: (lane: number) => void;
-  onRelease: (lane: number) => void;
-}) {
-  const colors = ["#ff3b6b", "#ffd23f", "#3dff8a", "#3da9ff"];
-  return (
-    <div
-      className="pointer-events-none absolute inset-x-0 bottom-0 top-1/3 z-10 grid grid-cols-4 select-none"
-      aria-hidden
-    >
-      {[0, 1, 2, 3].map((lane) => (
-        <button
-          key={lane}
-          type="button"
-          aria-label={`Lane ${lane + 1}`}
-          className="pointer-events-auto relative h-full w-full border-t-2 border-bone-50/10 bg-transparent transition-colors duration-75 active:bg-white/10"
-          style={{
-            touchAction: "none",
-            WebkitTapHighlightColor: "transparent",
-            borderTopColor: `${colors[lane]}33`,
-          }}
-          onPointerDown={(e) => {
-            e.preventDefault();
-            (e.currentTarget as HTMLButtonElement).setPointerCapture(
-              e.pointerId,
-            );
-            onPress(lane);
-          }}
-          onPointerUp={(e) => {
-            e.preventDefault();
-            const el = e.currentTarget as HTMLButtonElement;
-            if (el.hasPointerCapture(e.pointerId)) {
-              el.releasePointerCapture(e.pointerId);
-            }
-            onRelease(lane);
-          }}
-          onPointerCancel={(e) => {
-            const el = e.currentTarget as HTMLButtonElement;
-            if (el.hasPointerCapture(e.pointerId)) {
-              el.releasePointerCapture(e.pointerId);
-            }
-            onRelease(lane);
-          }}
-          onContextMenu={(e) => e.preventDefault()}
-        />
-      ))}
-    </div>
-  );
-}
+// On-screen lane buttons live in `components/TouchLanes.tsx` (shared
+// with multiplayer). See that file for the full rationale on pointer
+// capture, multi-touch lane mapping, and the React-driven highlight.
 
 /**
  * Full-bleed dim layer used to host modal cards (StartCard, PauseCard,

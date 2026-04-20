@@ -44,6 +44,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
+import TouchLanes from "@/components/TouchLanes";
 import { useTheme } from "@/components/ThemeProvider";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import { AudioEngine } from "@/lib/game/audio";
@@ -309,12 +310,20 @@ function CanvasPane({
     renderStateRef.current.cache = undefined;
   }, [theme]);
 
-  // Crisp canvas + DPR resize
+  // Crisp canvas + DPR resize. Mirrors the cap logic in Game.tsx —
+  // coarse-pointer (mobile) clamps DPR to 1.5 instead of 2 so phones
+  // with DPR 2.5-3 don't quietly burn 80 % more per-frame fillrate
+  // than they need to. Keeps the highway scrolling smooth on phones.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const coarseUA =
+        typeof window !== "undefined" && window.matchMedia
+          ? window.matchMedia("(pointer: coarse)").matches
+          : false;
+      const cap = coarseUA ? 1.5 : 2;
+      const dpr = Math.min(window.devicePixelRatio || 1, cap);
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
@@ -717,13 +726,19 @@ function CanvasPane({
     }
   }, [snapshot.phase]);
 
-  /* -------- coarse-pointer detection (drives the <TouchLanes> overlay) ---- */
+  /* -------- pointer-capability detection ---------------------------------
+     `touchOnly` (coarse + no fine) governs hint copy ("tap" vs keyboard).
+     `coarsePointer` (coarse, regardless of fine) governs whether to render
+     the on-screen <TouchLanes> overlay so a hybrid touchscreen laptop can
+     use BOTH fingers and keyboard. See Game.tsx for the same split. */
   const [touchOnly, setTouchOnly] = useState(false);
+  const [coarsePointer, setCoarsePointer] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const coarse = window.matchMedia("(pointer: coarse)").matches;
     const noFine = !window.matchMedia("(any-pointer: fine)").matches;
     setTouchOnly(coarse && noFine);
+    setCoarsePointer(coarse);
   }, []);
 
   /* -------- render loop -------- */
@@ -1172,9 +1187,11 @@ function CanvasPane({
         </Overlay>
       )}
 
-      {/* Touch lane buttons — same component shape as single-player. Only
-          shown for coarse pointers, only during countdown/playing. */}
-      {touchOnly &&
+      {/* Touch / click lane buttons — shared component with solo. Shown
+          whenever a coarse pointer is available (mobile, tablet, hybrid
+          touchscreen laptop), only during countdown/playing so the buttons
+          don't intercept clicks on the lobby / loading / results UI. */}
+      {coarsePointer &&
         (snapshot.phase === "countdown" || snapshot.phase === "playing") && (
           <TouchLanes onPress={pressLane} onRelease={releaseLane} />
         )}
@@ -1182,64 +1199,9 @@ function CanvasPane({
   );
 }
 
-/**
- * On-screen lane buttons for touch devices — see Game.tsx::TouchLanes for
- * the full rationale (pointer capture, touch-action, multi-touch holds).
- * Duplicated here rather than imported to avoid coupling the multiplayer
- * canvas pane to the single-player module.
- */
-function TouchLanes({
-  onPress,
-  onRelease,
-}: {
-  onPress: (lane: number) => void;
-  onRelease: (lane: number) => void;
-}) {
-  const colors = ["#ff3b6b", "#ffd23f", "#3dff8a", "#3da9ff"];
-  return (
-    <div
-      className="pointer-events-none absolute inset-x-0 bottom-0 top-1/3 z-10 grid grid-cols-4 select-none"
-      aria-hidden
-    >
-      {[0, 1, 2, 3].map((lane) => (
-        <button
-          key={lane}
-          type="button"
-          aria-label={`Lane ${lane + 1}`}
-          className="pointer-events-auto relative h-full w-full border-t-2 border-bone-50/10 bg-transparent transition-colors duration-75 active:bg-white/10"
-          style={{
-            touchAction: "none",
-            WebkitTapHighlightColor: "transparent",
-            borderTopColor: `${colors[lane]}33`,
-          }}
-          onPointerDown={(e) => {
-            e.preventDefault();
-            (e.currentTarget as HTMLButtonElement).setPointerCapture(
-              e.pointerId,
-            );
-            onPress(lane);
-          }}
-          onPointerUp={(e) => {
-            e.preventDefault();
-            const el = e.currentTarget as HTMLButtonElement;
-            if (el.hasPointerCapture(e.pointerId)) {
-              el.releasePointerCapture(e.pointerId);
-            }
-            onRelease(lane);
-          }}
-          onPointerCancel={(e) => {
-            const el = e.currentTarget as HTMLButtonElement;
-            if (el.hasPointerCapture(e.pointerId)) {
-              el.releasePointerCapture(e.pointerId);
-            }
-            onRelease(lane);
-          }}
-          onContextMenu={(e) => e.preventDefault()}
-        />
-      ))}
-    </div>
-  );
-}
+// On-screen lane buttons live in `components/TouchLanes.tsx` (shared
+// with single-player). Single source of truth for pointer capture,
+// multi-touch lane mapping, and the React-driven highlight.
 
 /* ------------------------------------------------------------------------ */
 /* Sidebar scoreboard                                                       */
