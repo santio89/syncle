@@ -26,7 +26,12 @@ function formatDuration(sec: number): string {
 
 type LoadState =
   | { status: "loading" }
-  | { status: "ready"; meta: SongMeta; noteCount: number; modes: ModeAvailability }
+  | {
+      status: "ready";
+      meta: SongMeta;
+      noteCount: number;
+      modes: ModeAvailability;
+    }
   | { status: "error"; message: string };
 
 export default function HomePage() {
@@ -199,8 +204,7 @@ export default function HomePage() {
               SYNC<span className="text-accent">LE</span>
             </h1>
             <p className="max-w-xl text-[0.92rem] text-bone-50/80 sm:text-[1.05rem]">
-              A fresh osu!mania track every refresh. Hit the notes, hold the
-              long ones, push your best. Refresh for a new one.
+              A new track every refresh. Hit the notes, push your best!
             </p>
           </div>
 
@@ -511,7 +515,10 @@ export default function HomePage() {
         <span>
           <span className="text-bone-50">SYNC</span>
           <span className="text-accent">LE</span>
-          <span className="text-bone-50/60"> · Random song · Endless retries</span>
+          <span className="text-bone-50/60">
+            {" "}
+            · Random song · Endless retries
+          </span>
         </span>
         {/* Same MultiIcon + ArrowIcon vocabulary as the header buttons
             (Back / Join room / Start) — the loose `░` unicode glyph
