@@ -772,10 +772,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 2200 + laneOffset,
-        noiseVol: 0.58,
+        noiseVol: 0.592,
         dur: 0.085,
         bodyHz: 180,
-        bodyVol: 0.265,
+        bodyVol: 0.271,
         bodyDur: 0.10,
       });
     } else if (judgment === "great") {
@@ -783,10 +783,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 1900 + laneOffset,
-        noiseVol: 0.52,
+        noiseVol: 0.530,
         dur: 0.08,
         bodyHz: 170,
-        bodyVol: 0.23,
+        bodyVol: 0.234,
         bodyDur: 0.09,
       });
     } else {
@@ -800,10 +800,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 1600 + laneOffset,
-        noiseVol: 0.45,
+        noiseVol: 0.460,
         dur: 0.075,
         bodyHz: 160,
-        bodyVol: 0.23,
+        bodyVol: 0.234,
         bodyDur: 0.08,
       });
     }
@@ -907,10 +907,10 @@ export class AudioEngine {
         filterType: "lowpass",
         filterHz: 800,
         filterQ: 0.7,
-        noiseVol: 0.56,
+        noiseVol: 0.572,
         dur: 0.09,
         bodyHz: 140,
-        bodyVol: 0.21,
+        bodyVol: 0.214,
         bodyDur: 0.08,
       });
       return;
