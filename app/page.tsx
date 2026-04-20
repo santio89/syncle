@@ -618,12 +618,11 @@ function RefreshSongButton({
       disabled={loading}
       // Padding is explicit (`px-2 py-1`) rather than the
       // duration-chip recipe (`px-2 py-0.5`) for two reasons:
-      //   1. This is a button that mixes an SVG icon with text;
-      //      the global `text-box: trim-both` on <button> trims
-      //      the text glyphs but not the SVG, so symmetric
-      //      box-padding plus `leading-none` is what makes the
-      //      content actually center optically (not just
-      //      geometrically).
+      //   1. This is a button that mixes a glyph (↻) with text;
+      //      the glyph rides at a larger font size than the
+      //      label, so symmetric box-padding plus `leading-none`
+      //      is what makes the content actually center optically
+      //      (not just geometrically).
       //   2. Stops it from matching the bordered-pill
       //      padding-block override in globals.css that's tuned
       //      for text-only chips and would otherwise stretch the
@@ -633,54 +632,22 @@ function RefreshSongButton({
       aria-label="Roll a new random track"
       aria-busy={loading}
     >
-      <RefreshIcon
-        size={14}
-        className={loading ? "animate-spin" : "transition-transform duration-300 group-hover:-rotate-180"}
-      />
+      {/* Unicode ↻ glyph instead of an SVG so this button matches
+          the browser-lobby's "↻ refresh" affordance one-for-one
+          — two surfaces, same icon, no inconsistency. The glyph
+          still spins / counter-rotates via transform classes, so
+          the loading / hover affordances are unchanged. */}
+      <span
+        aria-hidden
+        className={`inline-block text-[1.05rem] leading-none ${
+          loading
+            ? "animate-spin"
+            : "transition-transform duration-300 group-hover:-rotate-180"
+        }`}
+      >
+        ↻
+      </span>
       <span>new</span>
     </button>
-  );
-}
-
-function RefreshIcon({
-  size = 12,
-  className = "",
-}: {
-  size?: number;
-  className?: string;
-}) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      shapeRendering="geometricPrecision"
-      aria-hidden="true"
-      className={className}
-    >
-      {/* Classic two-arrow refresh — two opposing C-shaped arcs
-          with solid filled arrowheads at the open ends. The pair
-          reads as "cycle / refresh" instantly at small sizes,
-          much faster than a single open ring. Filled arrowheads
-          (instead of stroked polylines) match the brutalist
-          vocabulary of the rest of the app's icons (PlayIcon's
-          solid triangle, MultiIcon's filled squares). Drawn in
-          one path each so the stroke joins are perfectly mitered
-          with no extra junctions. Designed inside a 24×24 grid
-          so the arcs scale crisply at any size and the spinner
-          rotation looks balanced (visual mass on opposite sides
-          of the geometric center). */}
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M12 4.5a7.5 7.5 0 0 0-7.06 4.97L3.06 8.79A9.5 9.5 0 0 1 12 2.5c2.85 0 5.43 1.25 7.18 3.24V3.5h2v6h-6v-2h2.86A7.49 7.49 0 0 0 12 4.5z"
-      />
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M12 19.5a7.5 7.5 0 0 0 7.06-4.97l1.88.68A9.5 9.5 0 0 1 12 21.5a9.49 9.49 0 0 1-7.18-3.24V20.5h-2v-6h6v2H5.96A7.49 7.49 0 0 0 12 19.5z"
-      />
-    </svg>
   );
 }

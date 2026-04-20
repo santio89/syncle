@@ -10,19 +10,20 @@
  *   playing   → <MultiGame> (canvas + sidebar scoreboard)
  *   results   → <ResultsScreen> (final standings, keep playing / leave)
  *
- * If the URL is hit cold (no sessionStorage entry for this code) we present
- * a "join with name" form instead of the lobby — same flow as `/multi`,
- * but pre-filled with the code from the URL.
+ * If the URL is hit cold (no sessionStorage entry for this code) we bounce
+ * back to `/multi?code=XXXXXX`, which auto-selects the Join tab and
+ * pre-fills the code. Centralising the "name + code" form there means
+ * the room page only ever renders for users who actually have a seat
+ * (or are mid-rejoin), and there's no risk of a stale "join with name"
+ * card appearing after someone leaves the room and presses back.
  */
 
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { CopyToast } from "@/components/CopyToast";
 import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { InGameChatWidget } from "@/components/multi/InGameChatWidget";
 import { Lobby } from "@/components/multi/Lobby";
 import { LoadingScreen } from "@/components/multi/LoadingScreen";
@@ -38,8 +39,6 @@ import { isValidRoomCode } from "@/lib/multi/protocol";
 import type { LoadSongResult, ChartMode } from "@/lib/game/chart";
 import { loadSongById } from "@/lib/game/chart";
 import { AudioEngine } from "@/lib/game/audio";
-
-const NAME_STORAGE_KEY = "syncle.multi.name";
 
 export default function MultiRoomPage() {
   const params = useParams();
@@ -81,30 +80,22 @@ export default function MultiRoomPage() {
     actions.leave();
     // router.replace so the kicked /multi/[code] URL is removed
     // from history rather than leaving it as a back-press trap
-    // (re-mounting it would render the join-form fallback, which
-    // a kicked player should never see).
+    // (re-mounting it would just bounce the kicked player back to
+    // /multi via the cold-hit redirect, which is wasteful).
     router.replace("/multi");
   }, [kicked, actions, router]);
-
-  // For users who hit /multi/ABCDEF cold without sessionStorage we render
-  // a quick join form. Once they submit, the snapshot arrives and we drop
-  // straight into the lobby.
-  const [pendingName, setPendingName] = useState("");
-  const [joinError, setJoinError] = useState<string | null>(null);
-  const [joining, setJoining] = useState(false);
 
   // Tracks whether the user already has a session for THIS room cached in
   // sessionStorage — set when they came in via Create or Join from the
   // /multi entry page (which writes the sessionId before navigating).
-  // While true, we never show the manual JoinForm — `useRoomSocket`
-  // auto-rejoins on connect and the snapshot lands a beat later.
-  // Without this guard the JoinForm would briefly flash between the
-  // socket connecting and the rejoin's snapshot arriving, asking for a
-  // name even though the player just typed one and clicked "Create".
-  // If the auto-rejoin fails (room expired / kicked from server side)
-  // the hook clears the stored session and surfaces a `lastError`; the
-  // effect below re-reads storage on each error so we can gracefully
-  // fall back to the JoinForm.
+  // While true, `useRoomSocket` auto-rejoins on connect and the snapshot
+  // lands a beat later — we just show the "joining…" connecting card in
+  // the meantime. If false (cold URL hit, or back-navigation after a
+  // leave cleared the session) we kick the user back to `/multi` instead
+  // of rendering a redundant inline join form here. If the auto-rejoin
+  // fails (room expired / kicked from server side) the hook clears the
+  // stored session and surfaces a `lastError`; the effect below re-reads
+  // storage on each error so the redirect path can engage.
   const [hasStoredSession, setHasStoredSession] = useState<boolean>(() => {
     if (typeof window === "undefined" || !valid) return false;
     try {
@@ -114,20 +105,6 @@ export default function MultiRoomPage() {
     }
   });
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const stored = window.localStorage.getItem(NAME_STORAGE_KEY);
-      if (stored) setPendingName(stored);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  // Re-evaluate whether the stored session is still around whenever a
-  // rejoin error fires (the hook deletes it on failure) or whenever
-  // we successfully obtain a `me` (so subsequent rejoin failures —
-  // e.g. server bounce — also trip the fallback correctly).
   useEffect(() => {
     if (typeof window === "undefined" || !valid) return;
     try {
@@ -141,7 +118,7 @@ export default function MultiRoomPage() {
 
   // We "have a seat" once the server has sent us a snapshot containing our
   // sessionId. Otherwise we either (a) are mid-rejoin and waiting, or
-  // (b) need to actively join via the join form.
+  // (b) hit the URL cold and are about to be redirected to /multi.
   const me = useMemo(() => {
     if (!snapshot || !sessionId) return null;
     return snapshot.players.find((p) => p.id === sessionId) ?? null;
@@ -168,8 +145,9 @@ export default function MultiRoomPage() {
       // collapse the guarded /multi/[code] entry out of history
       // — see its sentinel-pop logic. Pressing browser back from
       // /multi after this lands the user at whatever they were
-      // doing BEFORE joining the room, instead of bouncing back
-      // into a stale "join with name" form on /multi/[code].
+      // doing BEFORE joining the room. (Even if it didn't, the
+      // cold-hit redirect on /multi/[code] would now bounce the
+      // user back to /multi instead of resurrecting a stale form.)
       router.replace("/multi");
     },
   });
@@ -453,38 +431,22 @@ export default function MultiRoomPage() {
     };
   }, []);
 
-  /* ------------- join form (for cold URL hits) ------------- */
-  const handleJoin = useCallback(async () => {
-    const name = pendingName.trim();
-    if (!name) return;
-    setJoining(true);
-    setJoinError(null);
-    const res = await actions.join(code, name);
-    if (!res.ok) {
-      setJoinError(res.message);
-      setJoining(false);
-      return;
-    }
-    try {
-      window.localStorage.setItem(NAME_STORAGE_KEY, name);
-    } catch {
-      /* ignore */
-    }
-    setJoining(false);
-  }, [pendingName, actions, code]);
-
   if (!valid) {
     return <InvalidCodeScreen code={String(rawCode)} onBack={() => router.push("/multi")} />;
   }
 
-  // Show join form only when:
-  //   - we're connected to the server,
-  //   - we don't have a seat in the room yet, AND
-  //   - we have NO stored session for this room (i.e. cold URL hit).
-  // For Create/Join flows from /multi the sessionId is already in
-  // sessionStorage, so the hook will rejoin automatically — there's no
-  // sense asking for a name a second time.
+  // Cold URL hit: connected to the server, no seat in the room, AND no
+  // stored session for this code. Bounce to `/multi?code=XXXXXX` so the
+  // entry page can present the proper Join tab (with the code prefilled
+  // and the saved display name restored from localStorage). This avoids
+  // duplicating the join form here and removes the awkward "join with
+  // name" card that would otherwise appear if a player pressed back
+  // after leaving the lobby (which clears their stored session).
   const needsJoin = conn === "connected" && !me && !hasStoredSession;
+  useEffect(() => {
+    if (!needsJoin) return;
+    router.replace(`/multi?code=${encodeURIComponent(code)}`);
+  }, [needsJoin, router, code]);
 
   // Gameplay phases need to break out of the page's max-width container so
   // the canvas can fill the whole viewport (minus the header), matching the
@@ -522,8 +484,9 @@ export default function MultiRoomPage() {
               // can collapse the guarded /multi/[code] entry out of
               // history. With router.push the room URL would still
               // be one back-press behind /multi — pressing browser
-              // back would re-mount /multi/[code] with no session
-              // and surface a stale JoinForm, creating a loop.
+              // back would re-mount /multi/[code] with no session,
+              // which the cold-hit redirect would then immediately
+              // bounce back to /multi (a pointless extra round-trip).
               router.replace("/multi");
             });
           }}
@@ -618,23 +581,15 @@ export default function MultiRoomPage() {
         // every normal website does it.
         <div className="relative z-10 flex-1 overflow-y-auto lg:flex lg:flex-col lg:overflow-hidden">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pt-6 pb-12 sm:px-6 lg:h-full lg:min-h-0 lg:flex-1 lg:pb-6">
-            {needsJoin && (
-              <JoinForm
-                code={code}
-                name={pendingName}
-                onName={setPendingName}
-                onSubmit={handleJoin}
-                busy={joining}
-                error={joinError}
-              />
-            )}
-
-            {/* Connecting card covers two cases:
+            {/* Connecting card covers three cases:
                   1. socket isn't connected yet (initial handshake / reconnecting),
                   2. socket IS connected and we have a stored session for this
                      room, so the hook is mid-rejoin — show "joining" UI rather
-                     than the JoinForm or a blank page. */}
-            {!needsJoin && !me && <ConnectingCard conn={conn} />}
+                     than a blank page,
+                  3. cold URL hit (`needsJoin` true) — the redirect effect
+                     above bounces us to /multi?code=…; this card paints
+                     for the single tick before the navigation lands. */}
+            {!me && <ConnectingCard conn={conn} />}
 
             {me && snapshot && (
               <RoomBody
@@ -657,9 +612,9 @@ export default function MultiRoomPage() {
             )}
 
             {lastError && (
-              // Width-locked to the JoinForm / ConnectingCard above so
-              // the error banner reads as a sibling of that card instead
-              // of a full-bleed strip across the page. Both surfaces use
+              // Width-locked to the ConnectingCard above so the error
+              // banner reads as a sibling of that card instead of a
+              // full-bleed strip across the page. Both surfaces use
               // `mx-auto w-full max-w-md` — keep them in lockstep here.
               <div className="brut-card-accent mx-auto flex w-full max-w-md items-start justify-between gap-3 p-3">
                 <p className="font-mono text-[0.79rem]">
@@ -939,94 +894,6 @@ function ConnectingCard({ conn }: { conn: string }) {
           Free Render servers sleep when idle and take ~30 s to wake on the
           first connection. Once you&rsquo;re in the room, everything else is
           instant.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function JoinForm({
-  code,
-  name,
-  onName,
-  onSubmit,
-  busy,
-  error,
-}: {
-  code: string;
-  name: string;
-  onName: (n: string) => void;
-  onSubmit: () => void;
-  busy: boolean;
-  error: string | null;
-}) {
-  const { copy, copied } = useCopyToClipboard();
-  return (
-    <div className="brut-card mx-auto w-full max-w-md p-5 sm:p-6">
-      <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
-        Joining room
-      </p>
-      {/* Code doubles as a copy-to-clipboard button so the joiner
-          can share the same code with another friend in one click.
-          Mirrors the host's "code + ⧉" button in the lobby. Inline-
-          flex with `w-fit` so the click target is just the code +
-          icon, not the full row. CopyToast pops above on success. */}
-      <div className="relative mt-1 w-fit">
-        <CopyToast visible={copied} />
-        <button
-          type="button"
-          onClick={() => copy(code)}
-          data-tooltip="Copy room code"
-          className="group inline-flex items-center gap-2 font-display text-[1.58rem] font-bold leading-none text-bone-50 transition-colors hover:text-accent"
-        >
-          <span>{code}</span>
-          <span
-            aria-hidden
-            className="text-[1.05rem] leading-none text-bone-50/50 transition-colors group-hover:text-accent"
-          >
-            ⧉
-          </span>
-        </button>
-      </div>
-      <label className="mt-4 block">
-        <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/60">
-          Your name
-        </span>
-        <input
-          autoFocus
-          type="text"
-          value={name}
-          onChange={(e) => onName(e.target.value.slice(0, 20))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") onSubmit();
-          }}
-          placeholder="player"
-          maxLength={20}
-          className="mt-1 block w-full border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent transition-colors"
-        />
-      </label>
-      <button
-        onClick={onSubmit}
-        disabled={busy || !name.trim()}
-        className="brut-btn-accent group mt-4 inline-flex w-full items-center justify-center gap-2 px-4 py-3 disabled:opacity-50"
-      >
-        {busy ? (
-          <span>Joining…</span>
-        ) : (
-          <>
-            <span>Join room</span>
-            <ArrowIcon
-              direction="right"
-              size={15}
-              strokeWidth={2.75}
-              className="transition-transform duration-200 group-hover:translate-x-0.5"
-            />
-          </>
-        )}
-      </button>
-      {error && (
-        <p className="mt-3 border-2 border-rose-500 p-2 font-mono text-[0.79rem] text-rose-400">
-          {error}
         </p>
       )}
     </div>

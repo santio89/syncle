@@ -21,7 +21,7 @@
  * a one-shot dismissable banner explaining what happened.
  */
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
@@ -42,13 +42,25 @@ type Tab = "create" | "join" | "browse";
 
 export default function MultiEntryClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { conn, actions } = useRoomSocket(null);
 
-  const [tab, setTab] = useState<Tab>("create");
+  // If we landed here from `/multi/[code]` with no stored session
+  // (e.g. cold URL hit, or back-press after leaving a lobby), the
+  // room page bounces us here with `?code=XXXXXX`. Default the tab
+  // to "join" in that case so the user immediately sees the right
+  // form. Falls back to "create" otherwise.
+  const initialCode = useMemo(() => {
+    const raw = searchParams?.get("code") ?? "";
+    const cleaned = raw.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, ROOM_CODE_LENGTH);
+    return isValidRoomCode(cleaned) ? cleaned : "";
+  }, [searchParams]);
+
+  const [tab, setTab] = useState<Tab>(initialCode ? "join" : "create");
   const [name, setName] = useState("");
   const [roomName, setRoomName] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("private");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(initialCode);
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
   const [error, setError] = useState<string | null>(null);
   // After ~3s of staying in "connecting" we surface the cold-start hint.
@@ -604,10 +616,25 @@ function BrowsePane({
         <button
           onClick={refresh}
           disabled={loading || conn !== "connected"}
-          className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest leading-none text-bone-50/70 hover:text-accent transition-colors disabled:opacity-40"
           data-tooltip="Refresh list"
         >
-          {loading ? "…refreshing" : "↻ refresh"}
+          {/* Glyph rendered at ~1.4× the label size so the ↻ icon
+              actually reads as an icon rather than another tiny
+              caps letter. `leading-none` keeps the row vertically
+              centred with the label glyphs (which are trimmed
+              tighter by the global text-box rules). Spins while
+              the request is in flight to mirror the home page's
+              "new" button affordance. */}
+          <span
+            aria-hidden
+            className={`inline-block text-[0.95rem] leading-none ${
+              loading ? "animate-spin" : ""
+            }`}
+          >
+            ↻
+          </span>
+          <span>{loading ? "refreshing" : "refresh"}</span>
         </button>
       </div>
 
