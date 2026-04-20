@@ -52,6 +52,7 @@ import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
 import { StatusBadge } from "@/components/StatusBadge";
+import ScrollStrip from "@/components/ScrollStrip";
 
 type Phase =
   | "idle"
@@ -1599,38 +1600,36 @@ function StartCard({
             )}
           </span>
         </div>
-        {/* Picker = 5 fixed Syncle tiers. Top row holds the three "core"
-            tiers everyone recognizes; bottom row holds the two top-end
-            tiers (insane / expert) which only light up when the mapper
-            actually shipped a chart at that level. Disabled buttons stay
-            visible (line-through, dimmed) so the player sees the full
-            ladder and understands what THIS song offers vs the next one. */}
-        <div className="mt-2 grid grid-cols-3 gap-1">
-          {(["easy", "normal", "hard"] as ChartMode[]).map((m) => (
-            <ModeButton
-              key={m}
-              mode={m}
-              enabled={modeAvailability.available[m]}
-              selected={chartMode === m}
-              onPick={onChangeMode}
-              noteCount={modeAvailability.noteCounts[m]}
-              nps={modeAvailability.npsByMode[m]}
-            />
-          ))}
-        </div>
-        <div className="mt-1 grid grid-cols-2 gap-1">
-          {(["insane", "expert"] as ChartMode[]).map((m) => (
-            <ModeButton
-              key={m}
-              mode={m}
-              enabled={modeAvailability.available[m]}
-              selected={chartMode === m}
-              onPick={onChangeMode}
-              noteCount={modeAvailability.noteCounts[m]}
-              nps={modeAvailability.npsByMode[m]}
-            />
-          ))}
-        </div>
+        {/* Picker = 5 fixed Syncle tiers in a single horizontal slider.
+            Used to be split across two grid rows (easy/normal/hard +
+            insane/expert), which doubled the picker's vertical
+            footprint without adding any information density — and a
+            "complex but simple" app shouldn't pay that cost on the
+            most-used control. The strip collapses into a static
+            5-column row when the StartCard has the room to fit all
+            five at their min-widths, and falls back to a Swiper-style
+            drag-to-pan slider on narrow viewports so every tier stays
+            reachable. Disabled tiers stay rendered (dashed, dimmed)
+            so the player still sees the full ladder. */}
+        <ScrollStrip
+          className="mt-2"
+          gapClass="gap-1"
+          ariaLabel="Difficulty picker"
+        >
+          {(["easy", "normal", "hard", "insane", "expert"] as ChartMode[]).map(
+            (m) => (
+              <ModeButton
+                key={m}
+                mode={m}
+                enabled={modeAvailability.available[m]}
+                selected={chartMode === m}
+                onPick={onChangeMode}
+                noteCount={modeAvailability.noteCounts[m]}
+                nps={modeAvailability.npsByMode[m]}
+              />
+            ),
+          )}
+        </ScrollStrip>
       </div>
 
       {/* Tile grid for the pre-game settings panel. On mobile (< sm)
@@ -1801,9 +1800,6 @@ function StartCard({
           </>
         )}
       </button>
-      <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
-        Replay as many times as you want!
-      </p>
     </div>
   );
 }
@@ -1852,7 +1848,7 @@ function ModeButton({
             `${noteCount.toLocaleString()} notes · ${nps.toFixed(1)} nps`
           : `Couldn't fit a ${displayMode(mode)} chart for this song's density profile.`
       }
-      className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+      className={`flex flex-1 min-w-[5.5rem] flex-col items-center justify-center gap-0.5 px-2 py-1.5 font-mono text-[10.5px] uppercase tracking-widest border-2 transition-colors ${
         !enabled
           ? // Distinct "unavailable" treatment: dashed border + much
             // dimmer text/stars. Reads as obviously off vs the solid

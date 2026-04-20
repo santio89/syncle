@@ -403,6 +403,38 @@ html::-webkit-scrollbar-thumb:hover {
 }
 
 /* ---------------------------------------------------------------------------
+ * Horizontal scroll strip (Swiper-style drag-to-scroll)
+ *
+ * Used by the difficulty picker (single-row tier slider) and any other
+ * future "single horizontal row of equal-width tiles that needs to fit
+ * gracefully into narrow containers" pattern. The visible scrollbar is
+ * suppressed (Firefox `scrollbar-width: none`, WebKit `::-webkit-scrollbar`
+ * display:none) because the row is short, the container is small, and
+ * the brutalist 8 px track would dominate the card visually. The strip
+ * still scrolls — we just rely on the cursor change + drag affordance
+ * (handled in the React wrapper) and the children-overflow hint to
+ * communicate scrollability.
+ *
+ * `overscroll-behavior-x: contain` keeps a fast horizontal flick from
+ * also scrolling the page — without this a wide swipe inside a narrow
+ * card would steal the gesture from the page-level scroll on touch
+ * devices. `touch-action: pan-x` does the same job on the inverse
+ * axis (lets vertical swipes still scroll the page through the strip).
+ * ------------------------------------------------------------------------- */
+.scroll-strip {
+  scrollbar-width: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+}
+.scroll-strip::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
+/* ---------------------------------------------------------------------------
  * Theme transition
  *
  * Animate only the props that actually change with theme — never `all`,

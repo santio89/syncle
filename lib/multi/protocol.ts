@@ -217,6 +217,17 @@ export interface RoomSnapshot {
    * scoreboard so peer scores don't churn while play is suspended.
    */
   pausedAt: number | null;
+  /**
+   * Wall-clock ms when the lobby pre-start countdown finishes (and the
+   * server flips into the loading phase). `null` whenever no start is
+   * queued. Set by `host:start` for a brief 3s "starting in 3, 2, 1…"
+   * grace window — every client renders a centered countdown overlay
+   * during that window, the host gets a Cancel button, and the actual
+   * `startLoading` only fires once the timer elapses without a
+   * `host:cancelStart`. Reset to `null` on cancel, on the natural
+   * transition into loading, and on any forced exit back to lobby.
+   */
+  prestartEndsAt: number | null;
   players: PlayerSnapshot[];
   /** Rolling chat backlog (server-trimmed to MAX_CHAT_HISTORY). */
   chat: ChatMessage[];
@@ -361,11 +372,26 @@ export interface ClientToServerEvents {
   "host:setMode": (payload: { mode: ChartMode }) => void;
 
   /**
-   * Host-only: kick the room into the loading phase. Server then waits for
-   * every player's `client:ready` (or a 30s timeout) before transitioning
-   * to countdown.
+   * Host-only: queue the match start. The server does NOT flip into
+   * the loading phase immediately — it stamps `RoomSnapshot.prestartEndsAt`
+   * with `Date.now() + PRESTART_COUNTDOWN_MS`, broadcasts a snapshot,
+   * and schedules the actual `startLoading` to fire when that timestamp
+   * elapses. During the window every client renders a centered "starting
+   * in 3, 2, 1…" overlay; the host's overlay also exposes a Cancel
+   * button (`host:cancelStart`) that aborts the queued start and emits
+   * a "Match cancelled" notice. Once the loading phase actually starts
+   * the server then waits for every player's `client:ready` (or a 30s
+   * timeout) before transitioning to countdown.
    */
   "host:start": (payload: { mode: ChartMode }) => void;
+
+  /**
+   * Host-only: cancel a queued (pre-start) match before the loading
+   * phase begins. Clears `prestartEndsAt`, drops the scheduled timer,
+   * and emits a "Match cancelled" notice so every client's overlay
+   * collapses back to the lobby. No-op if no start is queued.
+   */
+  "host:cancelStart": () => void;
 
   /** Host-only: cancel an in-progress loading phase, return to lobby. */
   "host:cancelLoading": () => void;

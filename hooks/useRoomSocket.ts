@@ -94,9 +94,23 @@ export interface RoomActions {
   /** Host: continuously sync the picker's mode so the server has the
    * authoritative record of which tier is queued. */
   setMode(mode: ChartMode): void;
-  /** Host: explicit start — works whether or not everyone is ready
-   * (host can choose to wait for full quorum or start anyway). */
+  /**
+   * Host: explicit start — works whether or not everyone is ready
+   * (host can choose to wait for full quorum or start anyway).
+   *
+   * The server does NOT flip into the loading phase immediately.
+   * It stamps `RoomSnapshot.prestartEndsAt` with a 3 s countdown and
+   * every client renders a centered "starting in 3, 2, 1…" overlay.
+   * Cancellable via `cancelStart` during that window. See
+   * `host:start` in `lib/multi/protocol.ts` for the full handshake.
+   */
   startMatch(mode: ChartMode): void;
+  /**
+   * Host: cancel a queued (pre-start) match before the loading phase
+   * begins. Server clears `prestartEndsAt`, drops the scheduled timer,
+   * and emits a "Match cancelled" notice. No-op if no start is queued.
+   */
+  cancelStart(): void;
   cancelLoading(): void;
   /**
    * Host: pause an in-progress match. Server stamps `pausedAt` on the
@@ -501,6 +515,10 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
     socketRef.current?.emit("host:start", { mode });
   }, []);
 
+  const cancelStart = useCallback(() => {
+    socketRef.current?.emit("host:cancelStart");
+  }, []);
+
   const cancelLoading = useCallback(() => {
     socketRef.current?.emit("host:cancelLoading");
   }, []);
@@ -603,6 +621,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       selectSong,
       setMode,
       startMatch,
+      cancelStart,
       cancelLoading,
       pauseMatch,
       resumeMatch,
@@ -631,6 +650,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       selectSong,
       setMode,
       startMatch,
+      cancelStart,
       cancelLoading,
       pauseMatch,
       resumeMatch,

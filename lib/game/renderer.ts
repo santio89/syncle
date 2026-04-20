@@ -857,7 +857,19 @@ function ensureCache(
   // the original highway area is preserved (the 0.7 stop still sits
   // 70% of the way down the original gradient, not 70% of the way
   // down the extended gradient).
-  const totalH = bottomYVisual - topYVisual;
+  // Guard the divisor so the strip ratios stay finite. On degenerate
+  // canvas sizes (W or H = 0 during a phase remount; ResizeObserver
+  // firing on a still-collapsed container; the multiplayer canvas
+  // briefly hidden behind the loading screen) the visible top + bottom
+  // extents collapse to the same y, totalH becomes 0, and the divisions
+  // below produce NaN. NaN then propagates through `clamp` (which is
+  // NaN-pass-through with `<` / `>` comparisons) into `addColorStop`,
+  // which the spec mandates throw `TypeError: non-finite double` for
+  // anything but a finite [0, 1] number — taking down the entire
+  // render frame. Clamping to ≥1 keeps the math finite; the rendered
+  // gradient is briefly degenerate but the next ensureCache() rebuild
+  // (with real dimensions) corrects it.
+  const totalH = Math.max(1, bottomYVisual - topYVisual);
   const stripTop = (topY - topYVisual) / totalH;       // start of original area
   const stripBot = (bottomY - topYVisual) / totalH;    // end of original area
   // Compute strip heights independently so a canvas tall enough to
@@ -1841,7 +1853,14 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
+// NaN-safe: a plain `v < lo ? lo : v > hi ? hi : v` returns `NaN` for
+// `NaN` input (both comparisons evaluate false). That's the wrong
+// behavior for downstream consumers — a NaN ratio handed to e.g.
+// `addColorStop` throws "non-finite double" and aborts the entire
+// frame paint. We collapse non-finite inputs to `lo` so the gradient
+// stays valid even when an upstream divide-by-zero leaks through.
 function clamp(v: number, lo: number, hi: number) {
+  if (!Number.isFinite(v)) return lo;
   return v < lo ? lo : v > hi ? hi : v;
 }
 

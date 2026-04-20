@@ -84,6 +84,19 @@ const INACTIVITY_TTL_MS = 30 * 60_000;
  */
 const LOADING_DEADLINE_MS = 30_000;
 /**
+ * Length of the lobby pre-start countdown shown after the host clicks
+ * Start. Every client renders a centered "starting in 3, 2, 1…" overlay
+ * during this window; the host's overlay also exposes a Cancel button
+ * that aborts the queued start. The actual `_doStartLoading` only runs
+ * once this elapses without a `host:cancelStart`.
+ *
+ * Kept short so it doesn't feel laggy — the goal is "yes I really
+ * meant Start, here's a moment to abort", not "load anything in
+ * advance". Anything ≥3 s gives a clear 3-2-1 cadence; less and the
+ * cancel affordance is too tight to actually click.
+ */
+const PRESTART_COUNTDOWN_MS = 3_000;
+/**
  * Grace between "everyone ready" and the wall-clock t0 for audio.
  * Sourced from the shared protocol constant so the server's
  * `phase:countdown` → `phase:playing` window matches exactly the
@@ -174,6 +187,17 @@ interface InternalRoom {
    * safety timer). Mirrored in `RoomSnapshot.pausedAt`.
    */
   pausedAt: number | null;
+  /**
+   * Wall-clock ms when the lobby pre-start countdown finishes (and we
+   * call `_doStartLoading`). `null` whenever no start is queued.
+   * Mirrored on `RoomSnapshot.prestartEndsAt` so every client renders
+   * the centered "starting in N…" overlay against the same clock.
+   */
+  prestartEndsAt: number | null;
+  /** Mode to launch into when the prestart timer elapses. */
+  prestartMode: ChartMode | null;
+  /** Pending timer that calls `_doStartLoading`. Cleared on cancel. */
+  prestartTimer: NodeJS.Timeout | null;
   /** Rolling chat backlog, oldest first, capped at MAX_CHAT_HISTORY. */
   chat: ChatMessage[];
   /** Monotonically-incrementing chat message id (room-scoped). */
@@ -376,6 +400,7 @@ class RoomRegistry {
       startsAt: room.startsAt,
       songStartedAt: room.songStartedAt,
       pausedAt: room.pausedAt,
+      prestartEndsAt: room.prestartEndsAt,
       players,
       chat: room.chat,
     };
@@ -482,6 +507,9 @@ class RoomRegistry {
       startsAt: null,
       songStartedAt: null,
       pausedAt: null,
+      prestartEndsAt: null,
+      prestartMode: null,
+      prestartTimer: null,
       chat: [],
       nextChatId: 1,
       catalog: null,
@@ -740,6 +768,12 @@ class RoomRegistry {
       clearTimeout(room.countdownTimer);
       room.countdownTimer = null;
     }
+    if (room.prestartTimer) {
+      clearTimeout(room.prestartTimer);
+      room.prestartTimer = null;
+    }
+    room.prestartEndsAt = null;
+    room.prestartMode = null;
     this.clearMatchSafetyTimer(room);
     this.rooms.delete(room.code);
   }
@@ -907,15 +941,23 @@ class RoomRegistry {
 
   /* ---- phase transitions ---- */
 
+  /**
+   * Host-clicked "Start": validates the request, queues the
+   * pre-start countdown, and schedules `_doStartLoading` to run
+   * once the timer elapses. The room stays in `lobby` for the
+   * duration of the countdown — we only flip into `loading` when
+   * the timer actually fires (or never, if the host cancels).
+   *
+   * Idempotent: a duplicate `host:start` while a start is already
+   * queued is silently ignored. That keeps a misclicked double-tap
+   * from re-arming the timer or pushing the countdown back.
+   */
   startLoading(code: string, sessionId: string, mode: unknown): void {
     const room = this.rooms.get(code);
     if (!room) throw new RoomError("ROOM_NOT_FOUND", "Room not found");
     if (room.hostId !== sessionId) throw new RoomError("NOT_HOST", "Only host can start");
     if (room.phase !== "lobby") throw new RoomError("BAD_PHASE", "Not in lobby");
     if (!room.selectedSong) throw new RoomError("NO_SONG", "Pick a song first");
-    // Whitelist the 5 Syncle tiers. Keeps the wire format strict so a
-    // malicious / outdated client can't smuggle a bogus mode string into
-    // a room snapshot, and stays in lockstep with the ChartMode union.
     if (
       mode !== "easy" &&
       mode !== "normal" &&
@@ -925,6 +967,70 @@ class RoomRegistry {
     ) {
       throw new RoomError("BAD_MODE", "Invalid difficulty");
     }
+    // Already queued — bail without disturbing the existing timer so
+    // a double-click can't push the countdown back or re-fire snapshots.
+    if (room.prestartEndsAt !== null) return;
+    room.prestartMode = mode;
+    room.prestartEndsAt = Date.now() + PRESTART_COUNTDOWN_MS;
+    if (room.prestartTimer) clearTimeout(room.prestartTimer);
+    room.prestartTimer = setTimeout(() => {
+      // Re-check liveness: room could have closed (inactivity, all
+      // players left) during the 3 s window. Phase could also have
+      // changed if some other path forced us out of lobby.
+      const fresh = this.rooms.get(code);
+      if (!fresh || fresh.phase !== "lobby") return;
+      if (fresh.prestartEndsAt === null) return; // cancelled
+      const queuedMode = fresh.prestartMode;
+      fresh.prestartTimer = null;
+      fresh.prestartEndsAt = null;
+      fresh.prestartMode = null;
+      try {
+        this._doStartLoading(fresh, queuedMode ?? "easy");
+      } catch {
+        // _doStartLoading throws if the song was cleared or some other
+        // pre-condition fell through during the countdown; in that case
+        // we just bounce back to a clean lobby snapshot so the overlay
+        // collapses everywhere.
+        this.emitSnapshot(code);
+      }
+    }, PRESTART_COUNTDOWN_MS);
+    this.emitSnapshot(code);
+  }
+
+  /**
+   * Host-only: cancel a queued (pre-start) match before the loading
+   * phase begins. Clears the prestart timer + fields, broadcasts a
+   * fresh snapshot so every client's overlay collapses, and emits a
+   * "Match cancelled" notice. No-op if no start is queued.
+   */
+  cancelStart(code: string, sessionId: string): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) {
+      throw new RoomError("NOT_HOST", "Only host can cancel start");
+    }
+    if (room.prestartEndsAt === null) return;
+    if (room.prestartTimer) {
+      clearTimeout(room.prestartTimer);
+      room.prestartTimer = null;
+    }
+    room.prestartEndsAt = null;
+    room.prestartMode = null;
+    this.emitNotice(code, "info", "Match cancelled");
+    this.emitSnapshot(code);
+  }
+
+  /**
+   * Internal: actually flip the room into the loading phase. Runs
+   * either at the end of the prestart countdown timer (the normal
+   * path) or directly from any future fast-path that wants to skip
+   * the countdown. Assumes the caller already validated host + lobby
+   * phase + selectedSong + mode.
+   */
+  private _doStartLoading(room: InternalRoom, mode: ChartMode): void {
+    if (room.phase !== "lobby") throw new RoomError("BAD_PHASE", "Not in lobby");
+    if (!room.selectedSong) throw new RoomError("NO_SONG", "Pick a song first");
+    const code = room.code;
     room.phase = "loading";
     room.selectedMode = mode;
     room.startsAt = null;
@@ -1630,6 +1736,17 @@ class RoomRegistry {
       clearTimeout(room.countdownTimer);
       room.countdownTimer = null;
     }
+    // Drop any queued (pre-start) match too. `_doStartLoading` already
+    // cleared these on the natural path, but a forced `transitionToLobby`
+    // (kicks, host disconnect, all-leave, host:cancelMatch from countdown)
+    // could land here mid-prestart and would otherwise leave a stray
+    // timer that fires later and tries to flip a non-lobby room.
+    if (room.prestartTimer) {
+      clearTimeout(room.prestartTimer);
+      room.prestartTimer = null;
+    }
+    room.prestartEndsAt = null;
+    room.prestartMode = null;
     room.phase = "lobby";
     // `selectedMode` is cleared so the host's next tap on a difficulty
     // button re-fires `host:setMode` and the server doesn't carry a
@@ -1860,6 +1977,16 @@ export function wireSocketServer(io: IO): void {
       if (!ref) return;
       try {
         reg.cancelLoading(ref.code, ref.sessionId);
+      } catch (e) {
+        socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
+      }
+    });
+
+    socket.on("host:cancelStart", () => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      try {
+        reg.cancelStart(ref.code, ref.sessionId);
       } catch (e) {
         socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
       }

@@ -26,6 +26,7 @@ import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { InGameChatWidget } from "@/components/multi/InGameChatWidget";
 import { Lobby } from "@/components/multi/Lobby";
 import { LoadingScreen } from "@/components/multi/LoadingScreen";
+import PrestartOverlay from "@/components/multi/PrestartOverlay";
 import { MultiGame } from "@/components/multi/MultiGame";
 import { ResultsScreen } from "@/components/multi/ResultsScreen";
 import { useRoomSocket } from "@/hooks/useRoomSocket";
@@ -597,20 +598,26 @@ export default function MultiRoomPage() {
       ) : (
         // Two-layer wrapper so the page scrollbar lives at the
         // VIEWPORT edge instead of the inner content's right edge:
-        //   - Outer: full-width scroll container (z-10, flex-1,
-        //     overflow-y-auto). Its scrollbar attaches to the
-        //     right side of the viewport because the container
-        //     itself spans the full viewport width.
-        //   - Inner: centered, max-w-7xl, holds all the actual
-        //     content. Padding lives here so the centered column
-        //     keeps the same gutter as before.
+        //   - Outer: full-width container (z-10, flex-1). On
+        //     mobile / tablet it's `overflow-y-auto` so long
+        //     content scrolls the page naturally — the columns
+        //     stack and a phone's viewport can't fit the whole
+        //     lobby anyway. On `lg+` it flips to `overflow-hidden`:
+        //     the lobby is sized to fit the viewport exactly and
+        //     each card carries its own internal scroller (roster,
+        //     catalog, chat). No page-level scrollbar on desktop —
+        //     same feel as a typical productivity app.
+        //   - Inner: centered, max-w-7xl. On `lg+` it's a flex
+        //     column with `h-full` so child screens (the lobby
+        //     grid in particular) can use `lg:h-full` to fill the
+        //     available vertical space.
         // Putting overflow-y-auto on the centered max-w-7xl box
         // (as we did before) made the scrollbar sit at the right
         // edge of the centered box — visibly inset on wide
         // monitors — instead of flush against the viewport like
         // every normal website does it.
-        <div className="relative z-10 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pt-6 pb-12 sm:px-6">
+        <div className="relative z-10 flex-1 overflow-y-auto lg:flex lg:flex-col lg:overflow-hidden">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pt-6 pb-12 sm:px-6 lg:h-full lg:min-h-0 lg:flex-1 lg:pb-6">
             {needsJoin && (
               <JoinForm
                 code={code}
@@ -836,12 +843,37 @@ function RoomBody({
   // their own keys so the fade-in animation re-fires on those
   // screens.
   const shellKey = isCanvasPhase ? "game" : snapshot.phase;
+  // The lobby phase wants to fill the full viewport height on `lg+`
+  // so its internal scrollers (catalog, chat, roster) take over and
+  // the page itself doesn't scroll. `lg:flex lg:min-h-0 lg:flex-1
+  // lg:flex-col` lets the Lobby grid below use `lg:h-full` to claim
+  // the space. Loading / results phases stay in their default
+  // auto-height card layout (they're shorter screens that scroll
+  // with the page on every breakpoint).
+  const isLobbyPhase = snapshot.phase === "lobby" || !inMatch;
+  const shellClasses = isCanvasPhase
+    ? " h-full w-full"
+    : isLobbyPhase
+      ? " lg:flex lg:min-h-0 lg:flex-1 lg:flex-col"
+      : "";
+  // Pre-start countdown overlay — only meaningful in the lobby (the
+  // server clears `prestartEndsAt` the moment it flips to `loading`,
+  // and we never queue starts from any other phase). Gating on
+  // `phase === "lobby"` is belt-and-braces against any race where a
+  // late snapshot still carries the field after the transition has
+  // landed locally.
+  const showPrestart =
+    snapshot.phase === "lobby" && snapshot.prestartEndsAt !== null;
   return (
-    <div
-      key={shellKey}
-      className={`phase-shell${isCanvasPhase ? " h-full w-full" : ""}`}
-    >
+    <div key={shellKey} className={`phase-shell${shellClasses}`}>
       {inner}
+      {showPrestart && snapshot.prestartEndsAt !== null && (
+        <PrestartOverlay
+          endsAt={snapshot.prestartEndsAt}
+          isHost={isHost}
+          onCancel={actions.cancelStart}
+        />
+      )}
     </div>
   );
 }

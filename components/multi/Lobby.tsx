@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import { CopyToast } from "@/components/CopyToast";
+import ScrollStrip from "@/components/ScrollStrip";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
@@ -75,8 +76,15 @@ import {
 
 import { ChatPanel } from "./ChatPanel";
 
-const MODES_TOP: ChartMode[] = ["easy", "normal", "hard"];
-const MODES_BOTTOM: ChartMode[] = ["insane", "expert"];
+// Single horizontal slider — see HostPane render. Used to be split
+// across two grid rows (easy/normal/hard + insane/expert) but the
+// stacked layout was eating ~2x the vertical space the picker
+// actually needs, which made the lobby card grow taller than the
+// chat / roster columns at typical viewport heights. A single
+// horizontally-scrollable strip keeps the picker at one row tall
+// regardless of breakpoint; the strip wraps to a flex slider with
+// drag-to-pan when the container can't fit all five buttons.
+const MODES: ChartMode[] = ["easy", "normal", "hard", "insane", "expert"];
 
 export function Lobby({
   code,
@@ -122,7 +130,16 @@ export function Lobby({
     // host pane, since the song catalog table is the single biggest
     // chunk of content in the lobby (filter input + 10+ rows of
     // catalog + difficulty grid + start button). 1 / 1.4 ratio.
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(280px,1fr)_minmax(0,1.4fr)]">
+    //
+    // On `lg+` the grid claims the full viewport height (cascaded
+    // from the page wrapper via `lg:h-full lg:min-h-0`) so each
+    // column can carry its own internal scrollers (roster /
+    // catalog / chat) instead of letting any one card push the
+    // whole page into a scroll state. On smaller breakpoints the
+    // grid collapses to a single column and the page scrolls
+    // naturally — appropriate for phones / tablets where
+    // everything stacks vertically anyway.
+    <div className="grid grid-cols-1 gap-6 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(280px,1fr)_minmax(0,1.4fr)]">
       {/* Left column: roster on top, chat below. Both cards share
           `brut-card` styling so they read as one "people in this
           room" panel. Roster sits on top because it has fixed
@@ -130,7 +147,7 @@ export function Lobby({
           button) that the user wants to glance at; chat is
           conversational and drifts to the bottom where it can grow
           vertically without pushing anything important out of view. */}
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4 lg:h-full lg:min-h-0">
         <PlayerRoster
           snapshot={snapshot}
           meId={meId}
@@ -139,16 +156,21 @@ export function Lobby({
           allReady={allReady}
           matchInProgress={matchInProgress}
         />
-        {/* Chat wrapper: tall enough to surface ~20+ messages
-            before the inner scroll kicks in (vs. the previous
-            ~12), but capped so a single chatty room doesn't push
-            the input field into the next viewport. The inner
-            messages area inside ChatPanel already auto-scrolls
-            to the bottom on new messages and pauses auto-scroll
-            while you're reading history — so the full server
-            backlog (capped at MAX_CHAT_HISTORY = 100) is always
-            reachable by scrolling inside the panel. */}
-        <div className="h-[36rem] min-h-[20rem]">
+        {/* Chat wrapper:
+            - Mobile / tablet (`< lg`): fixed `h-[36rem]` so the
+              input doesn't drift off-screen on a long chat — the
+              page scrolls to reach it and the inner scroller
+              handles message overflow.
+            - Desktop (`lg+`): `flex-1 min-h-0` so chat fills
+              whatever vertical space remains under the roster,
+              with `min-h-[20rem]` as a floor so it never collapses
+              to a sliver. The inner messages area inside ChatPanel
+              auto-scrolls to the bottom on new messages and
+              pauses auto-scroll while you're reading history —
+              so the full server backlog (capped at
+              MAX_CHAT_HISTORY = 100) is always reachable by
+              scrolling inside the panel. */}
+        <div className="h-[36rem] min-h-[20rem] lg:h-auto lg:min-h-0 lg:flex-1">
           <ChatPanel
             chat={chat}
             meId={meId}
@@ -184,23 +206,31 @@ export function Lobby({
           pane is more useful: it shows what's playing and the
           live scoreboard so the host knows what they're walking
           into when the round ends. */}
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4 lg:h-full lg:min-h-0">
         <PlayerSettingsCard />
-        {matchInProgress ? (
-          <MatchInProgressPane
-            snapshot={snapshot}
-            scoreboard={scoreboard}
-          />
-        ) : isHost ? (
-          <HostPane
-            snapshot={snapshot}
-            actions={actions}
-            code={code}
-            allReady={allReady}
-          />
-        ) : (
-          <GuestPane snapshot={snapshot} />
-        )}
+        {/* Pane wrapper: takes the rest of the column on `lg+` so
+            the host pane's catalog scroller can grow into the
+            available height instead of being capped at a fixed
+            ~24rem. Each pane root carries `flex h-full flex-col`
+            already, so `lg:flex-1 lg:min-h-0` here is the only
+            extra plumbing needed. */}
+        <div className="lg:flex-1 lg:min-h-0">
+          {matchInProgress ? (
+            <MatchInProgressPane
+              snapshot={snapshot}
+              scoreboard={scoreboard}
+            />
+          ) : isHost ? (
+            <HostPane
+              snapshot={snapshot}
+              actions={actions}
+              code={code}
+              allReady={allReady}
+            />
+          ) : (
+            <GuestPane snapshot={snapshot} />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -563,9 +593,7 @@ function ReadyQuorumBar({
     <div className="mt-3 space-y-1">
       <div className="flex items-baseline justify-between font-mono text-[9.5px] uppercase tracking-widest text-bone-50/55">
         <span>
-          {allReady
-            ? "All ready — host can start"
-            : "Ready quorum"}
+          {allReady ? "All ready" : "Ready quorum"}
         </span>
         <span className={allReady ? "text-accent" : "text-bone-50/70"}>
           {ready} / {total}
@@ -785,7 +813,12 @@ function HostPane({
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ChartMode>("easy");
   const [filter, setFilter] = useState("");
-  const [starting, setStarting] = useState(false);
+  // The "starting" state is now driven entirely by the server snapshot
+  // (`prestartEndsAt !== null`). The 3 s prestart countdown overlay
+  // doubles as the click debounce — between click and next snapshot the
+  // server is idempotent on `host:start`, so we don't need a local
+  // optimistic flag. See PRESTART_COUNTDOWN_MS in `lib/server/io.ts`.
+  const starting = snapshot.prestartEndsAt !== null;
 
   // Per-song probe — see previous comment block.
   const [modeProbe, setModeProbe] = useState<ModeAvailability | null>(null);
@@ -868,7 +901,6 @@ function HostPane({
 
   const handleStart = () => {
     if (!canStart) return;
-    setStarting(true);
     actions.startMatch(mode);
   };
 
@@ -911,25 +943,45 @@ function HostPane({
         </div>
       </div>
 
-      {/* Selected preview */}
-      <div className="mt-4 border-2 border-bone-50/20 px-3 py-2">
+      {/* Selected preview. When a song IS picked the whole tile
+          flips into the accent palette (blue border + faint blue
+          fill + accent label) so the host's eye snaps to "yes, a
+          song is queued" without having to read the text. The
+          empty state stays neutral so it doesn't shout for
+          attention before there's anything to confirm. */}
+      <div
+        className={`mt-4 border-2 px-3 py-2 transition-colors ${
+          selected
+            ? "border-accent/70 bg-accent/[0.06]"
+            : "border-bone-50/20"
+        }`}
+      >
         <div className="flex items-center justify-between gap-3">
-          <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
+          <p
+            className={`font-mono text-[10.5px] uppercase tracking-widest ${
+              selected ? "text-accent" : "text-bone-50/50"
+            }`}
+          >
             Selected
           </p>
           {selected && (probing || probeError) && (
-            <p className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/45">
+            <p
+              className={`font-mono text-[9.5px] uppercase tracking-widest ${
+                probeError ? "text-rose-400" : "text-accent/70"
+              }`}
+            >
               {probing ? "checking difficulties…" : "couldn't read difficulties"}
             </p>
           )}
         </div>
         {selected ? (
           <p
-            className="mt-0.5 truncate font-mono text-[0.92rem] text-bone-50/90"
+            className="mt-0.5 truncate font-mono text-[0.92rem]"
             data-tooltip={`${selected.artist} — ${selected.title}`}
           >
-            <span className="text-bone-50/60">{selected.artist}</span> —{" "}
-            <span className="text-bone-50">{selected.title}</span>
+            <span className="text-accent/65">{selected.artist}</span>{" "}
+            <span className="text-accent/40">—</span>{" "}
+            <span className="font-bold text-accent">{selected.title}</span>
           </p>
         ) : (
           <p className="mt-0.5 font-mono text-[0.92rem] text-bone-50/40">
@@ -956,16 +1008,22 @@ function HostPane({
         </button>
       </div>
 
-      {/* Catalog has its own scroller capped at ~24rem (≈ 12-14
-          rows) so the difficulty grid + Start button stay anchored
-          near the bottom of the host pane instead of being pushed
-          off-screen by a long catalog. `min-h-[10rem]` keeps the
-          loading / empty states from collapsing the table to
-          nothing. The internal scrollbar lives flush against the
-          card's right edge — that's expected here because the
-          catalog is a self-contained "list-with-its-own-scroll"
-          widget, not part of the page flow. */}
-      <div className="mt-2 max-h-[24rem] min-h-[10rem] flex-1 overflow-y-auto border-2 border-bone-50/10">
+      {/* Catalog has its own internal scroller so the difficulty
+          grid + Start button stay anchored near the bottom of the
+          host pane instead of being pushed off-screen by a long
+          catalog.
+          - Mobile / tablet (`< lg`): capped at `max-h-[24rem]`
+            (≈ 12-14 rows) so the host pane fits sensibly in a
+            scrolling page flow.
+          - Desktop (`lg+`): cap is lifted (`lg:max-h-none`) and
+            `flex-1` lets the catalog absorb whatever vertical
+            space remains in the host pane after the header,
+            selected box, filter row, difficulty grid, and Start
+            button — typically a much larger window than 24rem,
+            which means more rows visible without scrolling.
+          `min-h-[10rem]` keeps the loading / empty states from
+          collapsing the table to nothing. */}
+      <div className="mt-2 max-h-[24rem] min-h-[10rem] flex-1 overflow-y-auto border-2 border-bone-50/10 lg:max-h-none">
         {error && (
           <p className="border-b-2 border-rose-500 p-3 font-mono text-[0.79rem] text-rose-400">
             {error}
@@ -1032,34 +1090,31 @@ function HostPane({
         </ul>
       </div>
 
-      <div className="mt-4 space-y-1">
-        <div className="grid grid-cols-3 gap-1">
-          {MODES_TOP.map((m) => (
-            <HostModeButton
-              key={m}
-              mode={m}
-              selected={mode === m}
-              probe={modeProbe}
-              probing={probing}
-              hasSelectedSong={!!selected}
-              onPick={setMode}
-            />
-          ))}
-        </div>
-        <div className="grid grid-cols-2 gap-1">
-          {MODES_BOTTOM.map((m) => (
-            <HostModeButton
-              key={m}
-              mode={m}
-              selected={mode === m}
-              probe={modeProbe}
-              probing={probing}
-              hasSelectedSong={!!selected}
-              onPick={setMode}
-            />
-          ))}
-        </div>
-      </div>
+      {/* Single-row tier slider. `flex-1 min-w-[5.5rem]` on each
+          button means: when the strip has more space than the five
+          mins combined (desktop / wide cards), the buttons share the
+          extra width equally and the strip looks like a static
+          5-column row; when the strip is narrower (cramped lobby on
+          a small viewport / when the right column is squeezed by a
+          long roster), the min-widths force overflow and ScrollStrip
+          enables drag-to-pan. */}
+      <ScrollStrip
+        className="mt-4"
+        gapClass="gap-1"
+        ariaLabel="Difficulty picker"
+      >
+        {MODES.map((m) => (
+          <HostModeButton
+            key={m}
+            mode={m}
+            selected={mode === m}
+            probe={modeProbe}
+            probing={probing}
+            hasSelectedSong={!!selected}
+            onPick={setMode}
+          />
+        ))}
+      </ScrollStrip>
 
       {probeError && (
         <p className="mt-2 font-mono text-[10.5px] uppercase tracking-widest text-rose-400">
@@ -1080,7 +1135,11 @@ function HostPane({
           <span>Pick an available difficulty</span>
         ) : (
           <>
-            <span>{allReady ? "Start match" : "Start anyway"}</span>
+            <span>
+              {allReady
+                ? "EVERYONE IS READY. START MATCH"
+                : "WAITING FOR PLAYERS. START ANYWAY"}
+            </span>
             <span
               aria-hidden
               className="inline-block transition-transform duration-200 group-hover:translate-x-0.5"
@@ -1090,11 +1149,6 @@ function HostPane({
           </>
         )}
       </button>
-      <p className="mt-4 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
-        {allReady
-          ? "Everyone is ready — start whenever you want"
-          : "Start now to override unready players · or wait for the quorum"}
-      </p>
     </div>
   );
 }
@@ -1349,7 +1403,7 @@ function HostModeButton({
       onClick={() => enabled && onPick(mode)}
       disabled={disabled}
       data-tooltip={reason ?? densityTooltip}
-      className={`flex flex-col items-center justify-center gap-0.5 font-mono text-[10.5px] uppercase tracking-widest border-2 py-1.5 transition-colors ${
+      className={`flex flex-1 min-w-[5.5rem] flex-col items-center justify-center gap-0.5 px-2 py-1.5 font-mono text-[10.5px] uppercase tracking-widest border-2 transition-colors ${
         selected && available
           ? "border-accent bg-accent text-ink-900"
           : disabled

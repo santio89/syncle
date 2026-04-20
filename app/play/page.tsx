@@ -60,10 +60,18 @@ export default function PlayPage() {
           />
           <span>Syncle</span>
         </Link>
-        <div className="flex items-center gap-2 sm:gap-3">
-          <span className="hidden font-mono text-[10.5px] uppercase tracking-[0.3em] text-bone-50/40 sm:inline">
-            Single player · v0.2
+        {/* Center cluster — mirrors the /multi header (room code +
+            ConnectionPill in the middle slot). The page title sits
+            here so the bar reads back-button · title · controls
+            on every screen. Hidden on <sm because the back link +
+            home + theme already crowd the row on a 320px viewport
+            and the title is redundant with the URL there. */}
+        <div className="hidden flex-1 items-center justify-center sm:flex">
+          <span className="font-mono text-[10.5px] uppercase tracking-[0.3em] text-bone-50/40">
+            Single player
           </span>
+        </div>
+        <div className="flex items-center gap-2 sm:gap-3">
           <HomeButton />
           <ThemeToggle />
         </div>
