@@ -747,45 +747,63 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
 
     // Lane brightness offset. Lane 0 (leftmost) gets the warmest
-    // tap, lane 3 (rightmost) the crispest. Spread is small enough
-    // that the ear reads it as "slight texture variation" rather
-    // than 4 distinct pitches.
-    const laneOffset = (lane - 1.5) * 300;
+    // tap, lane 3 (rightmost) the crispest. Spread intentionally
+    // small (±180 Hz) so 4 lanes read as "slight texture variation"
+    // rather than 4 distinct pitches — and so the brightest lane
+    // doesn't drift too far from empty-press territory now that the
+    // base cutoffs sit much closer to empty's 800 Hz.
+    const laneOffset = (lane - 1.5) * 120;
 
+    // Cutoffs sit close to empty-press's 800 Hz lowpass so the hit
+    // sound reads as a sibling timbre — same muted-drum family,
+    // just a touch brighter to mark "you connected with a note".
+    // Body frequencies pulled down toward empty's 140 Hz for the
+    // same coherence reason; perfect is the brightest, good the
+    // dullest, but the whole hit family stays in empty's
+    // neighborhood instead of jumping to a stick-on-snare timbre.
+    // Volume ladder (perceived, post-lowpass): empty ≈ 0.32 → good
+    // ≈ 0.34 → great ≈ 0.38 → perfect ≈ 0.44. Every hit lands above
+    // empty so any successful judgment feels stronger than a whiff
+    // tap, the steps are small enough to read as one drum family
+    // (not three different instruments), and the ceiling sits at
+    // 0.44 so even a perfect doesn't punch through the song mix.
     if (judgment === "perfect") {
       this.playDrum({
         when: t,
         filterType: "lowpass",
-        filterHz: 5500 + laneOffset,
-        noiseVol: 0.678,
+        filterHz: 2200 + laneOffset,
+        noiseVol: 0.58,
         dur: 0.085,
-        bodyHz: 220,
-        bodyVol: 0.291,
+        bodyHz: 180,
+        bodyVol: 0.265,
         bodyDur: 0.10,
       });
     } else if (judgment === "great") {
       this.playDrum({
         when: t,
         filterType: "lowpass",
-        filterHz: 4500 + laneOffset,
-        noiseVol: 0.533,
+        filterHz: 1900 + laneOffset,
+        noiseVol: 0.52,
         dur: 0.08,
-        bodyHz: 200,
-        bodyVol: 0.213,
+        bodyHz: 170,
+        bodyVol: 0.23,
         bodyDur: 0.09,
       });
     } else {
-      // "good" (or anything else that reaches here): softer drum,
-      // body-dominant. Lower cutoff = less stick brightness through,
-      // so it reads as a pad-like tap but still drum-shaped.
+      // "good" (or anything else that reaches here): softest drum,
+      // closest to empty-press in both cutoff and body. Reads as a
+      // padded tap — still distinguishable from empty by a small
+      // brightness lift, but timbrally the nearest to it. Sits a
+      // hair ABOVE empty so even the loosest valid hit feels at
+      // least as substantial as a whiff press.
       this.playDrum({
         when: t,
         filterType: "lowpass",
-        filterHz: 3500 + laneOffset,
-        noiseVol: 0.407,
+        filterHz: 1600 + laneOffset,
+        noiseVol: 0.45,
         dur: 0.075,
-        bodyHz: 180,
-        bodyVol: 0.155,
+        bodyHz: 160,
+        bodyVol: 0.23,
         bodyDur: 0.08,
       });
     }
@@ -889,10 +907,10 @@ export class AudioEngine {
         filterType: "lowpass",
         filterHz: 800,
         filterQ: 0.7,
-        noiseVol: 0.561,
+        noiseVol: 0.56,
         dur: 0.09,
         bodyHz: 140,
-        bodyVol: 0.204,
+        bodyVol: 0.21,
         bodyDur: 0.08,
       });
       return;
