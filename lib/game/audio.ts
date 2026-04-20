@@ -442,6 +442,14 @@ export class AudioEngine {
       throw new Error("Audio not loaded");
     }
     this.stop();
+    // Pay every "first time" SFX cost during the silent lead-in instead
+    // of at the moment the player taps the first note. Does the 17K-
+    // sample noise-buffer build, JIT-compiles playDrum / scheduleClick /
+    // the miss-sawtooth path, and warms up Web Audio's worker pool so
+    // the first audible interaction doesn't pay any of those overheads
+    // synchronously on the audio thread (which previously surfaced as a
+    // small visual stutter at song onset).
+    this.prewarmSfx();
     // `volume` is the slider/perceived value (0..1); the actual GainNode
     // value goes through perceivedToGain() so 50% slider really sounds
     // like ~50% loudness. We store the perceived form on songVol so any
@@ -1158,6 +1166,92 @@ export class AudioEngine {
       osc.connect(benv).connect(this.sfxGain);
       osc.start(t);
       osc.stop(t + opts.bodyDur + 0.05);
+    }
+  }
+
+  /**
+   * One-time SFX warm-up. Builds the noise buffer eagerly (so the
+   * first `playDrum` doesn't pay a 17K-sample `Math.random()` loop
+   * synchronously) and schedules an inaudible dry-run of every SFX
+   * code path so V8 has JIT-compiled them and Web Audio has the
+   * underlying worker graph alive before the first audible cue.
+   *
+   * "Inaudible" here means peak gain ≈ 1e-4 (~ -80 dB), well below
+   * the noise floor at any reasonable master volume. The audio thread
+   * still walks the full node graph and pays the one-time scheduling
+   * cost, but the user never hears it. Critically: this runs DURING
+   * `start()`, which is itself invoked at the front of the 8s pre-
+   * countdown — by the time the song is actually audible the JIT is
+   * hot and the noise buffer is cached.
+   *
+   * Idempotent: subsequent `start()` calls re-pay the dry-run cost
+   * (it's microseconds) but the noise buffer survives.
+   */
+  private prewarmSfx(): void {
+    if (!this.ctx || !this.sfxGain) return;
+    // Force the lazy noise buffer NOW so the first real `playDrum`
+    // call (almost certainly the player's first tap) doesn't have to
+    // build it on the spot.
+    this.getNoiseBuffer();
+
+    const t = this.ctx.currentTime + 0.001;
+
+    // Hit / release / empty path — exercises createBufferSource +
+    // createBiquadFilter("highpass" / "lowpass") + createGain envelope
+    // + body sine, all wired through `sfxGain`.
+    this.playDrum({
+      when: t,
+      filterType: "lowpass",
+      filterHz: 5000,
+      noiseVol: 0.0001,
+      dur: 0.005,
+      bodyHz: 220,
+      bodyVol: 0.0001,
+      bodyDur: 0.005,
+    });
+    this.playDrum({
+      when: t,
+      filterType: "highpass",
+      filterHz: 4500,
+      noiseVol: 0.0001,
+      dur: 0.005,
+    });
+
+    // Real-miss sawtooth path — distinct biquad / oscillator config
+    // from `playDrum`, so JIT it independently.
+    {
+      const ctx = this.ctx;
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(140, t);
+      const filt = ctx.createBiquadFilter();
+      filt.type = "lowpass";
+      filt.frequency.value = 700;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.0001, t + 0.001);
+      env.gain.exponentialRampToValueAtTime(0.00001, t + 0.005);
+      osc.connect(filt).connect(env).connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.01);
+    }
+
+    // Metronome click path — sine osc, no filter. The first audible
+    // click hits at the first beat past songTime=0 (the rAF loop
+    // skips negative-time beats), so without this warmup the very
+    // first click would JIT this code path live.
+    {
+      const ctx = this.ctx;
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = 1500;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.0001, t + 0.001);
+      env.gain.exponentialRampToValueAtTime(0.00001, t + 0.005);
+      osc.connect(env).connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.01);
     }
   }
 

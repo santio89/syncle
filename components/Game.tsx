@@ -1427,6 +1427,10 @@ function resetRenderState(rs: RenderState): void {
   rs.pendingHits.length = 0;
   rs.combo = 0;
   rs.milestone = null;
+  // New chart → leading-edge cursor must point back to the start of the
+  // notes array, otherwise the renderer would skip every note in the
+  // freshly-loaded song.
+  rs.firstVisibleIdx = 0;
 }
 
 function computeAccuracy(stats: PlayerStats): number {

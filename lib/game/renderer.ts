@@ -226,6 +226,19 @@ export interface RenderState {
   combo: number;
   /** Latest combo-milestone flash, or null. Decayed in-place. */
   milestone: MilestoneFlash | null;
+  /**
+   * Monotonic "leading edge" cursor into `state.notes`. Renderer's per-frame
+   * note loops start scanning here instead of at index 0, skipping notes that
+   * are far enough in the past to no longer contribute any pixels (their
+   * past-grace fade plus judged fade have both elapsed). Cuts the per-frame
+   * iteration count from O(songProgress · density) down to O(visibleWindow).
+   *
+   * Conservative advancement: only step forward when the current note's
+   * latest relevant time (`endT` for holds, `t` for taps) is well outside
+   * BOTH fade windows, so we never skip a note that could still draw a
+   * trailing fade pixel.
+   */
+  firstVisibleIdx: number;
   /** Cached canvas geometry + gradients (only rebuilt when canvas size changes). */
   cache?: RenderCache;
 }
@@ -517,6 +530,7 @@ export function createRenderState(): RenderState {
     pendingHits: [],
     combo: 0,
     milestone: null,
+    firstVisibleIdx: 0,
   };
 }
 
@@ -616,6 +630,7 @@ export function prewarmRenderer(
     ],
     combo: 100,
     milestone: { strength: 0.8, combo: 100 },
+    firstVisibleIdx: 0,
     cache: realRs.cache,
   };
 
@@ -1085,7 +1100,28 @@ function drawHighway(
   // hot path is called twice per frame, so this saves measurable GC.
   const notes = state.notes;
   const len = notes.length;
-  for (let i = 0; i < len; i++) {
+
+  // Advance the leading-edge cursor PAST any notes whose latest relevant
+  // time (endT for holds, t for taps) is well beyond both fade windows.
+  // Once advanced, those notes can't draw any pixels this frame or any
+  // subsequent frame, so skipping them lets the per-frame cost scale with
+  // the visible window instead of the song's elapsed length. Buffer (0.3s)
+  // exceeds PAST_GRACE_S + JUDGED_FADE_S so we never elide a note that
+  // could still contribute to a trailing fade.
+  // Clamp on entry — a fresh GameState (new song / restart) resets `notes`
+  // but the cursor lives on `rs`; bounds check protects against that race.
+  if (rs.firstVisibleIdx > len) rs.firstVisibleIdx = 0;
+  while (rs.firstVisibleIdx < len) {
+    const n = notes[rs.firstVisibleIdx];
+    const lastT = isHold(n) ? (n.endT as number) : n.t;
+    if (songTime > lastT + 0.3) {
+      rs.firstVisibleIdx++;
+    } else {
+      break;
+    }
+  }
+  const startIdx = rs.firstVisibleIdx;
+  for (let i = startIdx; i < len; i++) {
     const n = notes[i];
     if (!isHold(n)) continue;
     const headLook = n.t - songTime;
@@ -1116,7 +1152,7 @@ function drawHighway(
   }
   // Reset anticipation each frame; we re-derive it from the upcoming notes.
   for (let i = 0; i < rs.laneAnticipation.length; i++) rs.laneAnticipation[i] = 0;
-  for (let i = 0; i < len; i++) {
+  for (let i = startIdx; i < len; i++) {
     const n = notes[i];
     const lookahead = n.t - songTime;
     if (lookahead > opts.leadTime + 0.05) {
@@ -1558,7 +1594,13 @@ function drawJudgmentPopups(
 ) {
   ctx.save();
   ctx.textAlign = "center";
-  for (const ev of events) {
+  // Indexed loop (not for...of) per the project's hot-path convention —
+  // every frame allocates one fewer Iterator object. Events array is
+  // capped at 32 by the engine, but this runs every frame for the entire
+  // session so the savings add up.
+  const evLen = events.length;
+  for (let i = 0; i < evLen; i++) {
+    const ev = events[i];
     const age = songTime - ev.at;
     if (age < 0 || age > 0.6) continue;
     const t = age / 0.6;
