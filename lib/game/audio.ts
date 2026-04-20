@@ -810,10 +810,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 5000 + laneOffset,
-        noiseVol: 0.567,
+        noiseVol: 0.561,
         dur: 0.075,
         bodyHz: 200,
-        bodyVol: 0.226,
+        bodyVol: 0.224,
         bodyDur: 0.09,
       });
     } else if (judgment === "great") {
@@ -821,10 +821,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 4000 + laneOffset,
-        noiseVol: 0.432,
+        noiseVol: 0.428,
         dur: 0.07,
         bodyHz: 180,
-        bodyVol: 0.165,
+        bodyVol: 0.163,
         bodyDur: 0.08,
       });
     } else {
@@ -832,10 +832,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 3000 + laneOffset,
-        noiseVol: 0.329,
+        noiseVol: 0.326,
         dur: 0.065,
         bodyHz: 160,
-        bodyVol: 0.123,
+        bodyVol: 0.122,
         bodyDur: 0.07,
       });
     }
@@ -881,10 +881,10 @@ export class AudioEngine {
         filterType: "lowpass",
         filterHz: 800,
         filterQ: 0.7,
-        noiseVol: 0.567,
+        noiseVol: 0.561,
         dur: 0.09,
         bodyHz: 140,
-        bodyVol: 0.206,
+        bodyVol: 0.204,
         bodyDur: 0.08,
       });
       return;
@@ -911,7 +911,7 @@ export class AudioEngine {
     // energy in the same range as a typical kick + bass, so it
     // needs more raw amplitude than a hit drum to clear the song).
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(0.55, t + 0.005);
+    env.gain.linearRampToValueAtTime(0.545, t + 0.005);
     env.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
 
     osc.connect(filt).connect(env).connect(this.sfxGain);
