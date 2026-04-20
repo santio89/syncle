@@ -1307,8 +1307,8 @@ export default function Game() {
             )}
             <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
               {touchOnly
-                ? "tap the four lanes · hold for sustains"
-                : "D F J K · or ← ↓ ↑ → · M = metronome · ESC = pause · hold for sustains"}
+                ? "tap the four lanes"
+                : "D F J K · or ← ↓ ↑ →"}
             </p>
           </div>
         </Overlay>

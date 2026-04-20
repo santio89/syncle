@@ -1139,7 +1139,7 @@ function CanvasPane({
               </p>
             )}
             <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
-              {touchOnly ? "tap the lanes" : "D F J K · or ← ↓ ↑ →"} · {displayMode(mode)} mode · scoreboard updates live
+              {touchOnly ? "tap the lanes" : "D F J K · or ← ↓ ↑ →"}
             </p>
           </div>
         </Overlay>
