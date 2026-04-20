@@ -1,6 +1,6 @@
 # SYNCLE
 
-A brutalist osu!mania-style 4-key rhythm game in the browser. 
+4K rhythm game. Random song. Endless retries.
 
 > **Status: v0.3** — single-player + multiplayer rooms (Socket.IO).
 

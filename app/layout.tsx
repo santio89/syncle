@@ -23,12 +23,15 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SYNCLE — Random song. Endless retries.",
-  description:
-    "A brutalist 4-key rhythm game. Every refresh loads a fresh osu!mania track. Retry endlessly — push your best on every song.",
+  title: "SYNCLE",
+  description: "4K rhythm game. Random song. Endless retries.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html
       lang="en"
