@@ -93,45 +93,78 @@ export class GameState {
   /**
    * Try to hit a note in the given lane at the current songTime.
    * Returns the resulting judgment, or null if there was no candidate.
+   *
+   * STRICT FIFO judgment ("notelock", as in osu!mania):
+   *   The press is locked to the EARLIEST unjudged note in `lane`
+   *   whose hit window currently contains `songTime` — not the
+   *   closest-timed one. If two same-lane notes both have the
+   *   press time inside their windows (e.g. a jack: t=1.90 and
+   *   t=2.00, press at t=1.95), the earlier note (t=1.90) takes
+   *   the press even though the later note (t=2.00) would be
+   *   closer to "perfect". The later note stays pending and waits
+   *   for the next press.
+   *
+   * Why FIFO (not best-fit):
+   *   - Best-fit lets the player "skip" a slightly-late note by
+   *     pressing the next one early, getting a great/perfect on
+   *     what should have been a recoverable but late press. It
+   *     silently rescues miscounted streams, which removes the
+   *     pressure that makes jacks and dense same-lane patterns
+   *     mean anything.
+   *   - FIFO is the standard rhythm-game contract (osu!mania,
+   *     Quaver, Etterna, Stepmania). Charts are designed around
+   *     it; a player who learns one game expects this rule
+   *     everywhere.
+   *   - An early-but-late press now correctly converts a perfect
+   *     into a good (or even a miss if the player slipped a beat
+   *     entirely), which is the right teaching signal.
+   *
+   * Cross-lane traffic doesn't change anything — the loop just
+   * skips any note whose `lane !== lane`. The cursor walk stays
+   * O(amortized 1) because we still bail as soon as we hit a note
+   * more than 0.6 s in the future (no in-window note can possibly
+   * exist past that gap).
    */
   hit(lane: number, songTime: number): JudgmentEvent | null {
-    let best: { note: Note; delta: number } | null = null;
     for (let i = this.cursor; i < this.notes.length; i++) {
       const n = this.notes[i];
       if (n.judged) continue;
 
       const delta = songTime - n.t;
       if (delta < -TIMING.good) {
+        // Note is still in the future, outside even the largest
+        // hit window. If it's far enough out we can stop scanning
+        // entirely — chart is sorted by `t` so nothing further
+        // can be in window either.
         if (n.t - songTime > 0.6) break;
         continue;
       }
+      // Past the good window — this note is already too late to
+      // hit. `expireMisses` will auto-miss it on the next frame;
+      // for now we just look past it.
       if (delta > TIMING.good) continue;
       if (n.lane !== lane) continue;
 
+      // First in-window unjudged note in the target lane wins —
+      // this is the FIFO / notelock contract. Don't peek further.
       const absDelta = Math.abs(delta);
-      if (!best || absDelta < Math.abs(best.delta)) {
-        best = { note: n, delta };
+      let judgment: Judgment;
+      if (absDelta <= TIMING.perfect) judgment = "perfect";
+      else if (absDelta <= TIMING.great) judgment = "great";
+      else if (absDelta <= TIMING.good) judgment = "good";
+      else return null;
+
+      const evt = this.applyHeadJudgment(n, judgment, delta, songTime);
+
+      // For holds, register this lane as actively held until
+      // release / endT.
+      if (isHold(n)) {
+        this.activeHold[lane] = n;
+        n.holding = true;
       }
+      return evt;
     }
-
-    if (!best) return null;
-
-    const absDelta = Math.abs(best.delta);
-    let judgment: Judgment;
-    if (absDelta <= TIMING.perfect) judgment = "perfect";
-    else if (absDelta <= TIMING.great) judgment = "great";
-    else if (absDelta <= TIMING.good) judgment = "good";
-    else return null;
-
-    const evt = this.applyHeadJudgment(best.note, judgment, best.delta, songTime);
-
-    // For holds, register this lane as actively held until release / endT.
-    if (isHold(best.note)) {
-      this.activeHold[lane] = best.note;
-      best.note.holding = true;
-    }
-
-    return evt;
+    return null;
   }
 
   /**
