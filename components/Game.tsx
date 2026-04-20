@@ -849,6 +849,17 @@ export default function Game() {
       const lane = KEY_TO_LANE[e.code];
       if (lane === undefined) return;
       e.preventDefault();
+      // If a non-text control like the volume slider or a checkbox
+      // stole focus from a recent click, drop it the moment the player
+      // resumes lane input. Without this the focus ring would follow
+      // them around for the rest of the run, AND any held arrow / space
+      // key would keep moving the slider / re-toggling the checkbox in
+      // the background. Skipping `body` (the default activeElement)
+      // keeps this a no-op when nothing is actually focused.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) {
+        active.blur();
+      }
       // Pass the event's `performance.now()` timestamp so the audio
       // engine can back the songTime up to the actual key-down moment,
       // cancelling out handler-dispatch lag (see audio.ts inputSongTime).
@@ -1324,11 +1335,52 @@ export default function Game() {
  * typing into a future chat box / settings field doesn't fire lane keys
  * or pause the game.
  */
+/**
+ * True when the focused element is a TEXT-editing surface (a real text
+ * input, textarea, or contenteditable). Everything else — including the
+ * volume slider (`<input type="range">`), the metronome / SFX
+ * checkboxes (`<input type="checkbox">`), buttons, selects, etc. — is
+ * NOT treated as editable, even though it's an `<input>`.
+ *
+ * Why the narrow definition: the lane-key handler short-circuits on
+ * editable targets so a future chat panel doesn't eat D/F/J/K. But
+ * `<input type="range">` and `<input type="checkbox">` ALSO match
+ * "tagName === INPUT", which previously meant: click the volume
+ * slider once, focus stays on it, and the very next D press is
+ * silently ignored because the handler thinks the player is "typing".
+ * Same trap with the SFX / metronome checkboxes. Players reported
+ * "I touched a setting and now my key presses don't register" — that
+ * was the bug. Restricting the predicate to text-bearing inputs lets
+ * lane keys flow through whatever non-text control happens to hold
+ * focus, while still respecting any actual text field.
+ *
+ * The remaining concern — that arrow keys with focus on the slider
+ * would also tick the slider's value — is handled by the lane
+ * handler calling `e.preventDefault()`, which cancels the browser's
+ * native default action for `<input type="range">` arrow handling.
+ */
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
   const tag = target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  return target.isContentEditable;
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") {
+    const type = (target as HTMLInputElement).type;
+    // Default `<input>` (no type attr) reads as "text" too. Anything
+    // that isn't in the explicit text family is treated as an
+    // interactive control rather than a typing surface.
+    return (
+      type === "text" ||
+      type === "search" ||
+      type === "url" ||
+      type === "email" ||
+      type === "tel" ||
+      type === "password" ||
+      type === "number" ||
+      type === ""
+    );
+  }
+  return false;
 }
 
 /**

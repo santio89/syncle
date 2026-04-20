@@ -669,6 +669,15 @@ function CanvasPane({
       if (lane === undefined) return;
       if (e.repeat) return;
       e.preventDefault();
+      // Drop focus from any non-text control (volume slider, settings
+      // checkbox, etc.) the moment lane input resumes — keeps the
+      // focus ring from following the player around and prevents
+      // stuck arrow-key auto-repeat from secretly nudging the slider.
+      // See Game.tsx for the full rationale.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) {
+        active.blur();
+      }
       // Pass the event's `performance.now()` timestamp so the audio
       // engine can back the songTime up to the actual key-down moment,
       // cancelling out handler-dispatch lag (see audio.ts inputSongTime).
@@ -1926,11 +1935,36 @@ function Spinner() {
 /* Helpers                                                                  */
 /* ------------------------------------------------------------------------ */
 
+/**
+ * True when the focused element is a TEXT-editing surface (a real text
+ * input, textarea, or contenteditable). Everything else — including the
+ * volume slider (`<input type="range">`), the metronome / SFX
+ * checkboxes (`<input type="checkbox">`), buttons, selects, etc. — is
+ * NOT treated as editable, even though it's an `<input>`. Same
+ * rationale as the single-player Game.tsx version: chat / pause-menu
+ * fields still get to swallow keys, but volume / SFX / metronome
+ * controls don't strand the player's lane input the moment they touch
+ * a setting.
+ */
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
   const tag = target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  return target.isContentEditable;
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") {
+    const type = (target as HTMLInputElement).type;
+    return (
+      type === "text" ||
+      type === "search" ||
+      type === "url" ||
+      type === "email" ||
+      type === "tel" ||
+      type === "password" ||
+      type === "number" ||
+      type === ""
+    );
+  }
+  return false;
 }
 
 function computeAccuracy(stats: PlayerStats): number {

@@ -32,14 +32,16 @@ service) — see `render.yaml` and `vercel.json` for the wiring.
 
 ## Controls
 
-| Key            | Action            |
-| -------------- | ----------------- |
-| `D` / `←`      | Lane 1 (red)      |
-| `F` / `↓`      | Lane 2 (yellow)   |
-| `J` / `↑`      | Lane 3 (green)    |
-| `K` / `→`      | Lane 4 (blue)     |
-| `M`            | Toggle metronome  |
-| `T` (in multi) | Open chat         |
+| Key            | Action                       |
+| -------------- | ---------------------------- |
+| `D` / `←`      | Lane 1 (red)                 |
+| `F` / `↓`      | Lane 2 (yellow)              |
+| `J` / `↑`      | Lane 3 (green)               |
+| `K` / `→`      | Lane 4 (blue)                |
+| `M`            | Toggle metronome             |
+| `N`            | Toggle hit/miss feedback SFX |
+| `Esc`          | Pause (solo) · menu (multi)  |
+| `T` (in multi) | Open chat                    |
 
 ## Adding a fallback song
 
