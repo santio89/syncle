@@ -62,6 +62,13 @@ type Phase =
   | "paused"
   | "results";
 
+// "Get ready..." prompt shown before the 3 / 2 / 1 numbers. Three
+// seconds gives the player time to register that the run is starting,
+// shift focus from the menu UI to the canvas, and settle into a
+// "hands on the keys" stance — all before any cognitive load from
+// the numbers. Mirrors the multiplayer match intro so both modes feel
+// identical (see `MATCH_INTRO_PROMPT_MS` in `lib/multi/protocol.ts`).
+const PROMPT_SECONDS = 3;
 const COUNTDOWN_SECONDS = 3;
 
 // Extra silent runway between "1" disappearing and the song actually
@@ -72,7 +79,15 @@ const COUNTDOWN_SECONDS = 3;
 // (leadTime is 1.2s) AND give the player half a second of empty grid to
 // settle before notes start sliding in.
 const LEAD_IN_SECONDS = 2;
-const TOTAL_START_DELAY = COUNTDOWN_SECONDS + LEAD_IN_SECONDS;
+// Total wall-clock between `audio.start()` being called and the first
+// audible audio sample firing. songTime() reads negative across this
+// whole window so notes (always at positive times) stay above the
+// judgment line until the song actually begins. Stages, in order:
+//   "Get ready..." prompt   (PROMPT_SECONDS)
+//   "3 / 2 / 1" numbers     (COUNTDOWN_SECONDS)
+//   silent lead-in highway  (LEAD_IN_SECONDS)
+const TOTAL_START_DELAY =
+  PROMPT_SECONDS + COUNTDOWN_SECONDS + LEAD_IN_SECONDS;
 
 // Each lane accepts EITHER its letter key OR the matching arrow key.
 // 4 lanes only — osu!mania 4K layout.
@@ -121,7 +136,17 @@ export default function Game() {
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState<number>(COUNTDOWN_SECONDS);
+  // Two-stage countdown overlay state, driven by the rAF tick that
+  // replaces the old monotonic `countdown: number`. `phase === "countdown"`
+  // covers the WHOLE PROMPT_SECONDS + COUNTDOWN_SECONDS window; this state
+  // tells the overlay which beat to paint inside that window:
+  //   - { kind: "prompt" }        → "Get ready..." banner, no number
+  //   - { kind: "number"; n: 1|2|3 } → "Get ready" header + the big digit
+  // Mirrors `MultiGame.tsx`'s `countdownOverlay` so both modes share the
+  // same visual rhythm (see protocol.ts MATCH_INTRO_PROMPT_MS).
+  const [countdownStage, setCountdownStage] = useState<
+    { kind: "prompt" } | { kind: "number"; n: number }
+  >({ kind: "prompt" });
   const [stats, setStats] = useState<PlayerStats | null>(null);
   // Throttled song-progress fraction (0..1) used by the rock-meter
   // card's progress bar. Updated alongside `stats` from inside the
@@ -576,23 +601,44 @@ export default function Game() {
       }
 
       setPhase("countdown");
-      setCountdown(COUNTDOWN_SECONDS);
+      setCountdownStage({ kind: "prompt" });
 
-      // Schedule the song to begin AFTER both the countdown and the silent
-      // lead-in. songTime() goes negative during this whole window, so notes
-      // (which all live at positive times) stay above the judgment line —
-      // the highway just slides empty until the first beat actually arrives.
+      // Schedule the song to begin AFTER the prompt + numbers + silent
+      // lead-in. songTime() goes negative across this whole window, so
+      // notes (which all live at positive times) stay above the judgment
+      // line — the highway just slides empty until the first beat
+      // actually arrives.
       audio.start(TOTAL_START_DELAY, volume);
 
+      // Walk the overlay through prompt → numbers → null in lockstep with
+      // the audio scheduling above. We don't push state every vblank —
+      // only when the visible overlay actually changes — so this is free
+      // even on cheap hardware.
       const startedAt = performance.now();
+      let lastKey = "prompt";
       const tickCountdown = () => {
         const elapsed = (performance.now() - startedAt) / 1000;
-        const remaining = COUNTDOWN_SECONDS - elapsed;
-        if (remaining <= 0) {
+        if (elapsed >= PROMPT_SECONDS + COUNTDOWN_SECONDS) {
           setPhase("playing");
           return;
         }
-        setCountdown(Math.ceil(remaining));
+        let nextKey: string;
+        if (elapsed < PROMPT_SECONDS) {
+          nextKey = "prompt";
+          if (lastKey !== nextKey) {
+            lastKey = nextKey;
+            setCountdownStage({ kind: "prompt" });
+          }
+        } else {
+          const remaining =
+            PROMPT_SECONDS + COUNTDOWN_SECONDS - elapsed;
+          const n = Math.max(1, Math.ceil(remaining));
+          nextKey = `n${n}`;
+          if (lastKey !== nextKey) {
+            lastKey = nextKey;
+            setCountdownStage({ kind: "number", n });
+          }
+        }
         requestAnimationFrame(tickCountdown);
       };
       requestAnimationFrame(tickCountdown);
@@ -1239,11 +1285,15 @@ export default function Game() {
         <Overlay translucent>
           <div className="text-center">
             <p className="font-mono text-[0.79rem] uppercase tracking-[0.4em] text-accent">
-              Get ready
+              {countdownStage.kind === "prompt"
+                ? "Get ready..."
+                : "Get ready"}
             </p>
-            <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none text-bone-50 drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
-              {countdown}
-            </p>
+            {countdownStage.kind === "number" && (
+              <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none text-bone-50 drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
+                {countdownStage.n}
+              </p>
+            )}
             <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
               {touchOnly
                 ? "tap the four lanes · hold for sustains"

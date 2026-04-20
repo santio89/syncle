@@ -5,22 +5,31 @@ import { Judgment, LANE_PITCH } from "./types";
  * bus. With both buses sharing the same `perceived²` taper (see
  * `perceivedToSfxGain`), this is the FIXED dB offset between the two
  * — at any master slider position, peak SFX gain is exactly
- * `BASE_SFX_LEVEL * peakSongGain`. 0.385 ≈ -8.3 dB, which keeps the
- * pluck / miss / release tones clearly subordinate to the song at
+ * `BASE_SFX_LEVEL * peakSongGain`. 0.65 ≈ -3.7 dB, which keeps the
+ * pluck / miss / release tones audibly subordinate to the song at
  * every volume (a player set master to 30% still gets the same
- * "subtle but noticeable" feedback layer they get at 100%, just both
- * quieter together) while leaving a comfortable transient on top of
- * the per-hit oscillator volumes (~0.22) so the punch is preserved.
+ * "noticeable but not louder than the song" feedback layer they get
+ * at 100%, just both quieter together).
  *
- * The previous design used a square-root taper on SFX while the song
- * used quadratic, intending to keep feedback "audible at low master".
- * In practice that inverted the mix below ~50% slider — at 20% slider
- * SFX ended up +14 dB OVER the song. Constant ratio is the standard
- * fix and is what most rhythm titles do when they expose only one
- * master slider (Celeste, etc. expose two; we don't, so we bake the
- * balance into the curves).
+ * Why so close to unity (was 0.385 ≈ -8 dB before): the previous
+ * value combined with the master limiter (threshold -2 dB, ratio 8:1)
+ * meant SFX transients were almost entirely eaten when the song ran
+ * near 0 dBFS — players reported hits and metronome ticks were
+ * inaudible above ~80% master and basically gone below 50%. Bumping
+ * the bus +4.5 dB gives SFX peak amps of ~0.21 against a song peak of
+ * ~1.0 at slider 1.0 — the standard "feedback ≈ 20–25 % of song peak"
+ * mix used by most rhythm games (the loudness target the user asked
+ * for in plain English: "at least 20% of the song volume").
+ *
+ * The previous design before THAT used a square-root taper on SFX
+ * while the song used quadratic, intending to keep feedback "audible
+ * at low master". In practice that inverted the mix below ~50% slider
+ * — at 20% slider SFX ended up +14 dB OVER the song. Constant ratio
+ * (this design) is the standard fix and is what most rhythm titles do
+ * when they expose only one master slider (Celeste, etc. expose two;
+ * we don't, so we bake the balance into the curves).
  */
-const BASE_SFX_LEVEL = 0.385;
+const BASE_SFX_LEVEL = 0.65;
 
 /**
  * Convert a slider/perceived value (0..1) to an actual GainNode value
@@ -69,34 +78,39 @@ function perceivedToGain(perceived: number): number {
  * slider range. Whatever ratio the player likes at master 100% is
  * what they get at master 30% as well, just both quieter together.
  *
- * Why constant-ratio (this version) vs gentler-curve-on-SFX (previous
- * version): the previous design used `√perceived` on SFX and
+ * Why constant-ratio (this version) vs gentler-curve-on-SFX (older
+ * version): an even older design used `√perceived` on SFX and
  * `perceived²` on music, with the goal of keeping feedback "audible
  * at low master volumes". The unintended consequence was a ratio
  * INVERSION below ~50% slider:
- *     slider 1.00  →  song 0 dB,    sfx -9 dB    (song dominates, normal mix)
+ *     slider 1.00  →  song 0 dB,    sfx -3.7 dB  (song dominates, normal mix)
  *     slider 0.50  →  song -12 dB,  sfx -12 dB   (about even)
  *     slider 0.20  →  song -28 dB,  sfx -14 dB   (SFX +14 dB OVER song)
  *     slider 0.05  →  song -52 dB,  sfx -20 dB   (song nearly gone, SFX dominates)
  * That made the feedback SFX feel "shouty" at low master volumes,
  * exactly the opposite of the user's intent of pulling the volume down.
  *
- * Constant-ratio fixes that:
- *     slider 1.00  →  song 0 dB,    sfx -9 dB    (song dominates, normal mix)
- *     slider 0.50  →  song -12 dB,  sfx -21 dB   (song still dominates, both quieter)
- *     slider 0.20  →  song -28 dB,  sfx -37 dB   (song still dominates, both quieter)
- *     slider 0.05  →  song -52 dB,  sfx -61 dB   (both nearly gone, balance preserved)
+ * Constant-ratio fixes that — at any slider position, song stays
+ * exactly 3.7 dB above SFX:
+ *     slider 1.00  →  song 0 dB,    sfx -3.7 dB  (song on top, both clearly audible)
+ *     slider 0.50  →  song -12 dB,  sfx -15.7 dB (same balance, both quieter)
+ *     slider 0.20  →  song -28 dB,  sfx -31.7 dB (same balance, both very quiet)
+ *     slider 0.05  →  song -52 dB,  sfx -55.7 dB (both near noise floor, balance preserved)
  *     slider 0     →  both silent
- * — the song stays exactly 9 dB above SFX everywhere. The trade-off is
- * that very low master volumes will eventually push SFX below the noise
- * floor of any noisy environment, but the player is asking for "quiet"
- * by being there in the first place; if they want feedback prominent
- * they can come up to a normal volume.
+ * — the trade-off is that very low master volumes will eventually push
+ * BOTH below the noise floor of any noisy environment, but the player
+ * is asking for "quiet" by being there in the first place; if they
+ * want feedback prominent they can come up to a normal volume.
  *
- * BASE_SFX_LEVEL=0.385 was tuned so the per-hit oscillators (~0.22) +
- * this taper land at a transient amplitude that sits clearly below
- * the music peak without losing the punchy "click" character the
- * pluck synth provides.
+ * BASE_SFX_LEVEL=0.65 + the per-hit oscillator volumes (perfect=0.32,
+ * great=0.25, good=0.18, miss=0.32, metronome downbeat=0.30) was
+ * tuned so peak SFX amplitudes land around 20–25 % of the song peak
+ * at slider 1.0 — clearly audible as a transient layer above the
+ * music without ever rising above it. The earlier 0.385 + 0.22 combo
+ * landed at ~8 % of song peak, which the master limiter (threshold
+ * -1 dB, ratio 6:1) was able to entirely crush whenever the song was
+ * near full level. Players reported "I can't hear my hits or the
+ * metronome at all even at 100%" — this is the fix.
  */
 function perceivedToSfxGain(perceived: number): number {
   if (perceived <= 0) return 0;
@@ -142,12 +156,12 @@ function perceivedToSfxGain(perceived: number): number {
  *   sfx    → sfxGain → master → limiter → destination
  *
  * Master volume routes BOTH buses through the same quadratic taper,
- * with SFX getting a fixed -9 dB attenuation on top:
+ * with SFX getting a fixed -3.7 dB attenuation on top:
  *   songGain.gain = perceivedToGain(songVol)            // perceived²
- *   sfxGain.gain  = perceivedToSfxGain(songVol)         // 0.35 * perceived²
+ *   sfxGain.gain  = perceivedToSfxGain(songVol)         // 0.65 * perceived²
  *
  * That keeps the music vs. feedback mix balance CONSTANT across the
- * entire slider — at 30% master the song still sits ~9 dB above the
+ * entire slider — at 30% master the song still sits ~3.7 dB above the
  * feedback SFX, exactly like at 100% master, just both quieter
  * together. See `perceivedToSfxGain` for the detailed dB table and
  * the rationale for moving away from the previous square-root SFX
@@ -200,16 +214,29 @@ export class AudioEngine {
         (window as any).AudioContext || (window as any).webkitAudioContext;
       this.ctx = new Ctor();
 
-      // Soft-knee limiter at ~ -2 dBFS. It rarely triggers during normal
-      // play but absorbs the brief peaks when a perfect-tap pluck stacks
-      // on top of a metronome click + a high-velocity drum from the song.
-      // Without this, those transients clip on Chrome's default destination
-      // and you hear a tiny crackle. The compressor's small lookahead also
-      // smooths the SFX sum so combo chains don't get harsh.
+      // Soft-knee limiter close to 0 dBFS. It rarely triggers during
+      // normal play but absorbs the brief peaks when a perfect-tap
+      // pluck stacks on top of a metronome click + a high-velocity
+      // drum from the song. Without this, those transients clip on
+      // Chrome's default destination and you hear a tiny crackle.
+      //
+      // Tuning notes (was threshold -2 dB, ratio 8:1, knee 6 dB):
+      //   - threshold raised to -1 dB so the song bus (which can sit
+      //     near 0 dBFS at slider 1.0) doesn't constantly push into
+      //     compression. We only want gain reduction during true SFX
+      //     spikes, not on every loud chorus chord.
+      //   - ratio dropped to 6:1 so the SFX transients that DO push
+      //     past threshold still get most of their energy through —
+      //     the previous 8:1 was crushing them flat (the user could
+      //     not hear hits or metronome at high song volumes).
+      //   - knee tightened to 5 dB so the curve below threshold stays
+      //     genuinely linear. The combo of "near-0 threshold +
+      //     softer ratio + tighter knee" preserves SFX punch while
+      //     still catching the rare clip-risk overshoot.
       this.limiter = this.ctx!.createDynamicsCompressor();
-      this.limiter.threshold.value = -2;   // dB
-      this.limiter.knee.value = 6;
-      this.limiter.ratio.value = 8;
+      this.limiter.threshold.value = -1;   // dB
+      this.limiter.knee.value = 5;
+      this.limiter.ratio.value = 6;
       this.limiter.attack.value = 0.003;
       this.limiter.release.value = 0.18;
       this.limiter.connect(this.ctx!.destination);
@@ -224,7 +251,7 @@ export class AudioEngine {
       // setVolume() before start()), so the very first tap a player
       // makes — possibly during the lead-in countdown, before any
       // setVolume() call lands — already respects their slider AND
-      // the constant -9 dB SFX-vs-song offset baked into
+      // the constant -3.7 dB SFX-vs-song offset baked into
       // perceivedToSfxGain.
       this.sfxGain.gain.value = perceivedToSfxGain(this.songVol);
       this.sfxGain.connect(this.master);
@@ -519,7 +546,7 @@ export class AudioEngine {
     if (this.ctx) {
       const t = this.ctx.currentTime;
       // Both buses share the same quadratic taper, with SFX getting a
-      // fixed -8.3 dB offset (BASE_SFX_LEVEL = 0.385) so the music vs.
+      // fixed -3.7 dB offset (BASE_SFX_LEVEL = 0.65) so the music vs.
       // feedback balance stays CONSTANT across the whole slider — see
       // perceivedToSfxGain doc for the dB table and the rationale for
       // moving away from the previous square-root SFX curve (which
@@ -568,10 +595,12 @@ export class AudioEngine {
    * The overall envelope is the same plucked shape (fast-ish attack,
    * exponential decay over ~350ms); only the timbre is gentler.
    *
-   * Per-judgment volumes also dropped ~30% so a tight stream of perfect
-   * taps doesn't drown the song. Combined with the master-volume-aware
-   * sfx bus, the player now has a real range of feedback levels — quiet
-   * songs keep the SFX quiet, loud songs let them shine.
+   * Per-judgment volumes (raised ~45 % from the previous 0.22/0.17/0.12)
+   * are now sized to land at 20–25 % of the song peak after the SFX bus
+   * gain is applied — clearly audible as a transient layer above the
+   * music without ever rising above it. Lower judgments still scale
+   * down so the player gets non-verbal feedback on accuracy from
+   * loudness alone (perfect feels "snappy", good feels "soft").
    */
   playHit(lane: number, judgment: Judgment): void {
     if (!this.ctx || !this.sfxGain) return;
@@ -580,16 +609,16 @@ export class AudioEngine {
 
     const freq = LANE_PITCH[lane] ?? 220;
     const vol =
-      judgment === "perfect" ? 0.22 :
-      judgment === "great"   ? 0.17 :
-      judgment === "good"    ? 0.12 : 0.12;
+      judgment === "perfect" ? 0.32 :
+      judgment === "great"   ? 0.25 :
+      judgment === "good"    ? 0.18 : 0.18;
 
     this.pluck(t, freq, 0.36, vol, "sine");
     if (judgment === "perfect") {
       // 5th-up sine shimmer (was octave-up). The 5th sits inside the
       // chord most charts use, so the perfect cue feels "in tune" with
       // the song rather than dropping a bright bell on top.
-      this.pluck(t + 0.002, freq * 1.5, 0.26, 0.075, "sine");
+      this.pluck(t + 0.002, freq * 1.5, 0.26, 0.11, "sine");
     }
     // No "good" detune voice — a deliberately dissonant cue read as a
     // wobble that confused players into thinking the engine itself was
@@ -603,10 +632,13 @@ export class AudioEngine {
     if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
     const freq = (LANE_PITCH[lane] ?? 220) * 1.5; // 5th above the head
+    // Volumes scaled in lockstep with `playHit` (see that doc) so a
+    // sustained note's release reads at the same perceptual level as
+    // its head — pulled apart by their pitch, not their loudness.
     const vol =
-      judgment === "perfect" ? 0.18 :
-      judgment === "great"   ? 0.14 :
-      judgment === "good"    ? 0.10 : 0.0;
+      judgment === "perfect" ? 0.26 :
+      judgment === "great"   ? 0.20 :
+      judgment === "good"    ? 0.15 : 0.0;
     if (vol > 0) this.pluck(t, freq, 0.28, vol, "sine");
     if (judgment === "miss") this.playMiss(false);
   }
@@ -632,7 +664,13 @@ export class AudioEngine {
     filt.frequency.value = 700;
 
     const env = this.ctx.createGain();
-    const peak = empty ? 0.11 : 0.20;
+    // Peaks scaled in lockstep with `playHit` (see that doc) — a miss
+    // should sit at roughly the same perceptual loudness as a perfect
+    // hit so the player gets the "ouch" cue at every master volume.
+    // `empty` (clicked an unused lane) is much softer because it's
+    // common during warm-up taps; punishing every stray press would
+    // be obnoxious.
+    const peak = empty ? 0.16 : 0.32;
     env.gain.setValueAtTime(0, t);
     env.gain.linearRampToValueAtTime(peak, t + 0.005);
     env.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
@@ -708,7 +746,12 @@ export class AudioEngine {
     // poking ears. C5 ≈ 523Hz.
     const root = 523.25;
     const intensity = Math.min(1, milestone / 500); // 25 → 0.05, 500+ → 1
-    const baseVol = 0.18 + intensity * 0.18;
+    // baseVol raised in lockstep with `playHit` (see that doc) so the
+    // milestone arpeggio reads as "celebration on top of hit feedback"
+    // instead of getting buried under the song. Spread between low
+    // (0.26) and high (0.48) keeps the 25-combo cue tasteful while
+    // letting the 500+ chime feel earned.
+    const baseVol = 0.26 + intensity * 0.22;
     this.pluck(t,         root,        0.32, baseVol,        "triangle");
     this.pluck(t + 0.06,  root * 1.5,  0.30, baseVol * 0.85, "triangle");
     this.pluck(t + 0.12,  root * 2,    0.36, baseVol * 0.95, "sine");
@@ -718,7 +761,20 @@ export class AudioEngine {
     }
   }
 
-  /** Schedule a metronome click at a given AudioContext time. */
+  /**
+   * Schedule a metronome click at a given AudioContext time.
+   *
+   * Click peaks (downbeat 0.30 / upbeat 0.16) were raised ~65 % from
+   * the previous 0.18 / 0.09. The metronome is high-frequency
+   * (1000–1500 Hz) and very short (~60 ms), so even after the SFX bus
+   * gain (BASE_SFX_LEVEL = 0.65) is applied, the absolute amplitude
+   * still sits below per-hit plucks while landing in the human ear's
+   * most sensitive band — perceptually it reads as "tick" without
+   * dominating the song. Players asked specifically to be able to
+   * follow the rhythm at any master volume; these levels keep the
+   * tick clearly audible from slider 1.0 down to the sub-30 % range
+   * where the song itself starts dropping below conversational level.
+   */
   scheduleClick(when: number, downbeat: boolean): void {
     if (!this.ctx || !this.sfxGain || !this.metronomeOn) return;
     const osc = this.ctx.createOscillator();
@@ -726,7 +782,7 @@ export class AudioEngine {
     osc.frequency.value = downbeat ? 1500 : 1000;
 
     const env = this.ctx.createGain();
-    const peak = downbeat ? 0.18 : 0.09;
+    const peak = downbeat ? 0.30 : 0.16;
     env.gain.setValueAtTime(0, when);
     env.gain.linearRampToValueAtTime(peak, when + 0.002);
     env.gain.exponentialRampToValueAtTime(0.0001, when + 0.06);
