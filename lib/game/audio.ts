@@ -108,26 +108,31 @@ function perceivedToGain(perceived: number): number {
  * slider drops, compensation linearly rises toward `1 +
  * SFX_LOW_VOLUME_BOOST` — i.e. the SFX bus fades MORE SLOWLY than
  * the song bus, so the music vs SFX dB ratio shifts in feedback's
- * favour at quieter masters. Concrete dB ratio table (per-hit
- * drum peak vs song peak, perfect-hit drum ≈ 0.44 combined):
+ * favour at quieter masters. Concrete dB ratio table (perfect-hit
+ * drum combined peak ≈ 0.44 vs song peak 1.0):
  *   slider 1.00  →  44 % of song peak (-7.1 dB)
- *   slider 0.80  →  49 % of song peak (-6.2 dB)
- *   slider 0.50  →  59 % of song peak (-4.6 dB)
- *   slider 0.30  →  64 % of song peak (-3.9 dB)
- *   slider 0.10  →  71 % of song peak (-3.0 dB)
- *   slider 0.05  →  72 % of song peak (-2.8 dB)
- * For miss drums (combined ≈ 0.56) the same table tops out around
- * 92 % at the lowest slider position — STILL below the song peak
- * but very close, which is fine: at 5 % master both are near the
- * noise floor anyway, and "more even" is exactly what the player
- * asked for at quiet volumes.
+ *   slider 0.80  →  50 % of song peak (-6.0 dB)
+ *   slider 0.50  →  60 % of song peak (-4.4 dB)
+ *   slider 0.30  →  66 % of song peak (-3.6 dB)
+ *   slider 0.10  →  73 % of song peak (-2.7 dB)
+ *   slider 0.05  →  74 % of song peak (-2.6 dB)
+ * For miss thuds (peak 0.55) the same table tops out around 93 %
+ * at the lowest slider position — STILL below the song peak but
+ * very close, which is fine: at 5 % master both are near the
+ * noise floor anyway, and "more even at quiet volumes" is exactly
+ * what the player asked for.
  *
- * 0.7 was tuned empirically: smaller (e.g. 0.4) was barely
- * perceptible as a fix at 50 % master; larger (e.g. 1.0) made miss
- * thuds reach unity with the song at very low volumes, which felt
- * like the old square-root inversion bug.
+ * Tuning history (was 0.7, now 0.78): the +0.08 bump adds ~3-5 %
+ * more SFX gain at slider positions below 0.5 on top of the
+ * across-the-board per-source +1 % bumps, addressing reports that
+ * input feedback was still slightly under-leveled in the lower
+ * half of the master slider. Bound stays well clear of the unity
+ * inversion case (compensation max is 1.78, and the loudest
+ * per-source peak is the miss thud at 0.55, so SFX bus peak at
+ * slider → 0 caps around 0.55 × 1.78 = 0.98 — under, never above,
+ * the song peak).
  */
-const SFX_LOW_VOLUME_BOOST = 0.7;
+const SFX_LOW_VOLUME_BOOST = 0.78;
 
 /**
  * Convert a slider/perceived value (0..1) to an actual GainNode value
@@ -165,7 +170,7 @@ const SFX_LOW_VOLUME_BOOST = 0.7;
  * song, which reached the inversion case at ~20 % slider (SFX +14 dB
  * over song). The bounded linear-comp here cannot reach that — by
  * construction SFX bus < song bus * (1 + boost) at every slider
- * position, and the boost is small enough (0.7) that even with the
+ * position, and the boost is small enough (0.78) that even with the
  * hottest per-source drum (miss ≈ 0.56), the absolute SFX peak still
  * rounds to "even with song" at the lowest realistic master, never
  * above.
@@ -234,7 +239,7 @@ function perceivedToSfxGain(perceived: number): number {
  * multiplier that grows as the slider drops:
  *   songGain.gain = perceivedToGain(songVol)            // perceived²
  *   sfxGain.gain  = perceivedToSfxGain(songVol)
- *                 // = perceived² * (1 + 0.7 * (1 - perceived))
+ *                 // = perceived² * (1 + 0.78 * (1 - perceived))
  *
  * At slider 1.0 the SFX bus matches the song bus; as the slider
  * drops, SFX fades MORE SLOWLY than song so the music-vs-feedback dB
@@ -744,10 +749,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 5500 + laneOffset,
-        noiseVol: 0.714,
+        noiseVol: 0.721,
         dur: 0.085,
         bodyHz: 220,
-        bodyVol: 0.306,
+        bodyVol: 0.309,
         bodyDur: 0.10,
       });
     } else if (judgment === "great") {
@@ -755,10 +760,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 4500 + laneOffset,
-        noiseVol: 0.561,
+        noiseVol: 0.567,
         dur: 0.08,
         bodyHz: 200,
-        bodyVol: 0.224,
+        bodyVol: 0.226,
         bodyDur: 0.09,
       });
     } else {
@@ -769,10 +774,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 3500 + laneOffset,
-        noiseVol: 0.428,
+        noiseVol: 0.432,
         dur: 0.075,
         bodyHz: 180,
-        bodyVol: 0.163,
+        bodyVol: 0.165,
         bodyDur: 0.08,
       });
     }
@@ -805,10 +810,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 5000 + laneOffset,
-        noiseVol: 0.561,
+        noiseVol: 0.567,
         dur: 0.075,
         bodyHz: 200,
-        bodyVol: 0.224,
+        bodyVol: 0.226,
         bodyDur: 0.09,
       });
     } else if (judgment === "great") {
@@ -816,10 +821,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 4000 + laneOffset,
-        noiseVol: 0.428,
+        noiseVol: 0.432,
         dur: 0.07,
         bodyHz: 180,
-        bodyVol: 0.163,
+        bodyVol: 0.165,
         bodyDur: 0.08,
       });
     } else {
@@ -827,10 +832,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 3000 + laneOffset,
-        noiseVol: 0.326,
+        noiseVol: 0.329,
         dur: 0.065,
         bodyHz: 160,
-        bodyVol: 0.122,
+        bodyVol: 0.123,
         bodyDur: 0.07,
       });
     }
@@ -876,10 +881,10 @@ export class AudioEngine {
         filterType: "lowpass",
         filterHz: 800,
         filterQ: 0.7,
-        noiseVol: 0.561,
+        noiseVol: 0.567,
         dur: 0.09,
         bodyHz: 140,
-        bodyVol: 0.204,
+        bodyVol: 0.206,
         bodyDur: 0.08,
       });
       return;
