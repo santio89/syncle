@@ -1,4 +1,11 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  useAttemptLeave,
+  useHasActiveLeaveGuard,
+} from "@/components/LeaveGuardProvider";
 
 /**
  * Square 38×38 home icon used in headers across non-landing pages.
@@ -13,6 +20,13 @@ import Link from "next/link";
  * Always navigates to `/`. For "go back to where I came from" we
  * use the existing back-arrow link in the header (keeps "back" and
  * "home" semantically distinct).
+ *
+ * The click is routed through the global LeaveGuardProvider so
+ * that an active multiplayer room or solo run can intercept it and
+ * surface a "Are you sure?" prompt before the navigation actually
+ * runs. When no guard is active (idle pages, homepage), the
+ * intercept is a synchronous pass-through and the click flows
+ * straight through to the router — same UX as a plain Link.
  */
 export function HomeButton({
   className = "",
@@ -20,18 +34,44 @@ export function HomeButton({
 }: {
   className?: string;
   /**
-   * Optional cleanup hook fired before navigation. The multiplayer
-   * room uses this to leave the socket cleanly so the player doesn't
-   * linger in the roster for other clients during the connection
-   * grace window. Called synchronously on click; navigation still
-   * proceeds via the normal Link behavior.
+   * Optional cleanup hook fired before navigation, AFTER the user
+   * confirms a guarded leave. The multiplayer room uses this to
+   * leave the socket cleanly so the player doesn't linger in the
+   * roster for other clients during the connection grace window.
+   * Skipped when the user cancels the leave prompt.
    */
   onNavigate?: () => void;
 }) {
+  const router = useRouter();
+  const attemptLeave = useAttemptLeave();
+  const guarded = useHasActiveLeaveGuard();
   return (
     <Link
       href="/"
-      onClick={onNavigate}
+      // We intercept the click manually so that the guard prompt
+      // can run BEFORE Next.js triggers the soft navigation.
+      // Plain Link `onClick` runs synchronously alongside the
+      // navigation, which would let the user confirm too late.
+      //
+      // `router.replace` when a guard is active so the
+      // LeaveGuardProvider can collapse the guarded URL (e.g.
+      // /multi/[code] / /play) out of history alongside its
+      // popstate sentinel — pressing browser back from / would
+      // otherwise re-mount the guarded page in its "no session"
+      // fallback (JoinForm / fresh random song) and trap the user
+      // in a loop. On unguarded pages we keep the regular
+      // `router.push` so back behaves like a normal link.
+      onClick={(e) => {
+        e.preventDefault();
+        attemptLeave(() => {
+          onNavigate?.();
+          if (guarded) {
+            router.replace("/");
+          } else {
+            router.push("/");
+          }
+        });
+      }}
       className={`icon-btn ${className}`}
       aria-label="Main menu"
       data-tooltip="Main menu"

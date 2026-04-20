@@ -140,6 +140,7 @@ export function MultiGame({
         loadError={loadError}
         actions={actions}
         mode={mode}
+        me={me}
         audioEngine={audioEngine}
         audioReady={audioReady}
       />
@@ -158,6 +159,7 @@ function CanvasPane({
   loadError,
   actions,
   mode,
+  me,
   audioEngine,
   audioReady,
 }: {
@@ -166,9 +168,33 @@ function CanvasPane({
   loadError: string | null;
   actions: RoomActions;
   mode: ChartMode;
+  me: string;
   audioEngine: AudioEngine | null;
   audioReady: boolean;
 }) {
+  // Derive host bit off the snapshot rather than threading a separate
+  // `isHost` prop. `snapshot.hostId` is mirrored on every snapshot and
+  // updates instantly when host promotion happens (e.g. previous host
+  // disconnects mid-pause), which means the in-game pause menu can
+  // appear under the new host without any extra wiring.
+  const isHost = snapshot.hostId === me;
+  // ESC-toggle in-match menu. Flips to `true` when ANY player presses
+  // ESC mid-match, regardless of host status. The actions exposed on
+  // the menu differ by role:
+  //
+  //   - HOST sees [Resume, Pause, Cancel match]. Opening the menu
+  //     does NOT auto-pause for everyone — the host has to click
+  //     "Pause" explicitly. That way an accidental ESC tap doesn't
+  //     grief 49 other players.
+  //   - NON-HOST sees [Resume, Leave]. "Resume" closes the menu;
+  //     "Leave" calls `room:leaveMatch` which flips their server-
+  //     side `inMatch` to false and routes them back to the Lobby
+  //     (where they see a "match in progress" indicator). Leaving
+  //     is THIS player only — the rest of the room keeps playing.
+  //
+  // Forced open whenever the room is paused so every client always
+  // has a path to "Resume" (or "Leave", for non-hosts).
+  const [matchMenuOpen, setMatchMenuOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // Mirror the engine prop into a ref so the existing `audioRef.current?.X`
   // call sites (settings effects, schedule effect, render loop) keep
@@ -243,7 +269,7 @@ function CanvasPane({
     volumeRef.current = volume;
   }, [volume]);
   const [metronome, setMetronome] = useState<boolean>(loadMetronome);
-  // Per-input feedback SFX (hit / miss / release / combo-milestone +
+  // Per-input feedback SFX — the "Feedback" toggle (hit / miss / release / combo-milestone +
   // the song-duck whiff cue). Persisted via the same shared
   // settings store as solo so a player's preference carries across
   // game modes. The engine no-ops the relevant `play*` calls when
@@ -373,6 +399,13 @@ function CanvasPane({
     // also resets it. Lobby return clears `loaded`, then the next
     // round refills it.
     if (audioStartedRef.current) return;
+    // Don't start audio while the host has the match paused. A late
+    // joiner whose download finished mid-pause hits this branch:
+    // we wait for the host to resume (which clears `pausedAt` and
+    // shifts `songStartedAt` forward by the pause duration), then
+    // this effect re-fires and computes the right seek offset
+    // against the post-pause baseline.
+    if (snapshot.pausedAt !== null) return;
     const startsAt = snapshot.startsAt ?? snapshot.songStartedAt;
     if (!startsAt) return;
     const delayMs = startsAt - Date.now();
@@ -416,7 +449,38 @@ function CanvasPane({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioReady, loaded, snapshot.startsAt, snapshot.songStartedAt]);
+  }, [audioReady, loaded, snapshot.startsAt, snapshot.songStartedAt, snapshot.pausedAt]);
+
+  // Pause / resume the AudioContext in lockstep with the room's
+  // `pausedAt` flag. Only fires AFTER the schedule effect has
+  // anchored `audioStartedRef.current = true`; before that, there's
+  // no live source to suspend (the AudioBuffer is decoded but no
+  // source has been started yet — `audio.pause()` would just be a
+  // no-op `ctx.suspend()` that prevents the upcoming `audio.start()`
+  // from running cleanly). Pause/resume on AudioContext freezes
+  // `ctx.currentTime`, so each client's `songTime()` (and therefore
+  // the rAF loop's miss-expiry, score-signature, and end-of-song
+  // checks) freeze automatically without any extra work.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (!audioStartedRef.current) return;
+    if (snapshot.pausedAt !== null) {
+      void audio.pause();
+    } else {
+      void audio.resume();
+    }
+  }, [snapshot.pausedAt]);
+
+  // Mirror `pausedAt` into a ref so the input handlers (which read it
+  // synchronously on every keypress) don't have to be a dep of their
+  // installation effect. Same pattern as `phaseRef` — keeps the
+  // listener bound across the entire match instead of rebinding on
+  // every snapshot tick.
+  const pausedRef = useRef(snapshot.pausedAt !== null);
+  useEffect(() => {
+    pausedRef.current = snapshot.pausedAt !== null;
+  }, [snapshot.pausedAt]);
 
   // Countdown overlay tick.
   //
@@ -468,6 +532,12 @@ function CanvasPane({
     if (phaseRef.current === "results") return;
     heldRef.current[lane] = true;
     if (phaseRef.current !== "playing") return;
+    // Drop lane input while the room is paused. The audio clock is
+    // frozen on every client, so even an honest mash would miss
+    // judge against a stale `songTime` (and a hostile client could
+    // register pre-positioned hits). Held-state stays accurate
+    // because we still flip `heldRef[lane] = true` above.
+    if (pausedRef.current) return;
     const audio = audioRef.current;
     const state = stateRef.current;
     if (!audio || !state) return;
@@ -487,6 +557,11 @@ function CanvasPane({
     if (phaseRef.current === "results") return;
     heldRef.current[lane] = false;
     if (phaseRef.current !== "playing") return;
+    // Mirror `pressLane`: while paused we still clear the held state
+    // (so the player doesn't auto-fire on resume), but we don't run
+    // the engine's tail-judgment — the audio clock is frozen so the
+    // judgment would land at a stale time.
+    if (pausedRef.current) return;
     const audio = audioRef.current;
     const state = stateRef.current;
     if (!audio || !state) return;
@@ -508,7 +583,24 @@ function CanvasPane({
       // Skip when the user is typing in a form field (future chat, name
       // change, etc). Same guard as single-player Game.tsx.
       if (isEditableTarget(e.target)) return;
-      // M = metronome, N = input feedback SFX. Both are local-only
+      // ESC → toggle the in-match menu for any player. Unlike
+      // single-player (where ESC is a hard pause), this is a
+      // confirmation surface: the menu just OPENS — opening it
+      // does not pause the song or change game state. The host
+      // can then click "Pause" / "Cancel match"; non-hosts can
+      // click "Leave". That way an accidental ESC press is purely
+      // a UI artefact for everyone instead of griefing the
+      // session. When the room is already paused we leave the
+      // menu open via the render-side `forceOpen` branch, so ESC
+      // pressed while paused is a no-op rather than a confusing
+      // close that would strand the player without a Resume button.
+      if (e.code === "Escape") {
+        if (snapshot.pausedAt !== null) return;
+        e.preventDefault();
+        setMatchMenuOpen((open) => !open);
+        return;
+      }
+      // M = metronome, N = feedback SFX. Both are local-only
       // toggles (don't affect other players in the room) so binding
       // them here mirrors the single-player HUD without any room
       // protocol implications. Sit above the lane lookup so a player
@@ -552,7 +644,20 @@ function CanvasPane({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [snapshot.phase, pressLane, releaseLane]);
+  }, [snapshot.phase, snapshot.pausedAt, pressLane, releaseLane]);
+
+  // Auto-close the in-match menu when we leave the playing phase
+  // (host clicked "Cancel match" → room flips to lobby; the safety
+  // timer transitioned to results; non-host's `room:leaveMatch`
+  // routed them out of MultiGame entirely — though in that case
+  // this component has unmounted anyway). Without this, the menu
+  // state would persist and pop back open the next time the player
+  // enters a match.
+  useEffect(() => {
+    if (snapshot.phase !== "playing" && snapshot.phase !== "countdown") {
+      setMatchMenuOpen(false);
+    }
+  }, [snapshot.phase]);
 
   /* -------- coarse-pointer detection (drives the <TouchLanes> overlay) ---- */
   const [touchOnly, setTouchOnly] = useState(false);
@@ -866,9 +971,12 @@ function CanvasPane({
         // performance panel), and the rock meter then uses `w-full` to
         // match it pixel-for-pixel — that's what the user sees as "the
         // rock meter is as wide as the score container above".
-        // Pause is intentionally absent (multi can't pause without
-        // freezing 50 other players); metronome + volume + fps stay so
-        // the player keeps the same audio controls they have in solo.
+        // No HUD-level pause button: multiplayer pause is host-only
+        // and reached through the ESC menu (`MatchMenuOverlay`),
+        // since freezing 50 other players is a deliberate decision
+        // not a settings toggle. Metronome + volume + fps stay here
+        // so the player keeps the same audio controls they have in
+        // solo.
         // Layout band mirrors the single-player HUD:
         //   - `max-w-7xl` lets the left column drift outward on big monitors
         //     so it doesn't get pulled tight against the centered band.
@@ -915,6 +1023,49 @@ function CanvasPane({
           </div>
         </div>
       )}
+
+      {/* Pause / in-match-menu overlay.
+       *
+       * Two render-states sit under one component to keep the keyboard
+       * focus + visual style consistent:
+       *
+       *   1. Room paused (`snapshot.pausedAt !== null`) — every player
+       *      sees the dimmed overlay. Host gets [Resume, Cancel match]
+       *      buttons; non-hosts get [Leave] (and a "waiting for host"
+       *      subtitle since they can't resume the room themselves).
+       *
+       *   2. Menu open while still playing (`matchMenuOpen` and
+       *      `pausedAt === null`) — confirmation surface for any
+       *      player. The match keeps running underneath. Host actions
+       *      are [Resume, Pause, Cancel match]; non-host actions are
+       *      [Resume, Leave]. "Leave" calls `room:leaveMatch` which
+       *      flips this client's `inMatch` to false and routes them
+       *      to the Lobby on the next snapshot.
+       *
+       * Both branches are gated on phase ∈ {countdown, playing} so
+       * the menu doesn't ghost over the lobby/results screens. */}
+      {(snapshot.phase === "playing" || snapshot.phase === "countdown") &&
+        (snapshot.pausedAt !== null || matchMenuOpen) && (
+          <MatchMenuOverlay
+            isHost={isHost}
+            paused={snapshot.pausedAt !== null}
+            onResume={() => {
+              if (snapshot.pausedAt !== null && isHost) {
+                actions.resumeMatch();
+              }
+              setMatchMenuOpen(false);
+            }}
+            onPause={() => actions.pauseMatch()}
+            onCancel={() => {
+              actions.cancelMatch();
+              setMatchMenuOpen(false);
+            }}
+            onLeave={() => {
+              actions.leaveMatch();
+              setMatchMenuOpen(false);
+            }}
+          />
+        )}
 
       {countdownLabel !== null && (
         <Overlay translucent>
@@ -1225,9 +1376,10 @@ function PerformancePanel({
   return (
     // Performance card — score + combo + rock meter + hits stats in one
     // cohesive "how are you doing" block. Mirrors the single-player HUD
-    // exactly so both modes share visual vocabulary; the only difference
-    // here is there's no pause button (multi can't pause without
-    // freezing the rest of the room). The rock meter bar is bumped up
+    // exactly so both modes share visual vocabulary; the only
+    // difference here is there's no per-player pause button — pause
+    // is host-only and lives in the ESC menu so the host explicitly
+    // owns "freeze the room". The rock meter bar is bumped up
     // (`h-3.5 sm:h-[1.05rem]`) so it reads as the headline status
     // indicator of the card instead of a thin afterthought.
     // Card layout / spacing is a 1:1 mirror of the single-player
@@ -1314,7 +1466,7 @@ function PerformancePanel({
 
 /**
  * Multiplayer settings card — now-playing strip + per-player audio /
- * perf knobs (Metronome, Input feedback, FPS lock, Volume), all styled
+ * perf knobs (Metronome, Feedback, FPS lock, Volume), all styled
  * as consistent border-tiled rows. The rock meter itself moved up into
  * `PerformancePanel` (where it conceptually belongs alongside score and
  * combo); this card now owns the "settings" half of the HUD exclusively.
@@ -1342,7 +1494,7 @@ function HealthPanel({
   onVolume: (v: number) => void;
   metronome: boolean;
   onToggleMetronome: () => void;
-  /** Per-input feedback SFX toggle (hit / miss / release / milestone). */
+  /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
   fps: number;
@@ -1454,10 +1606,10 @@ function HealthPanel({
       </label>
       <label
         className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Toggle input feedback (N)"
+        data-tooltip="Toggle feedback (N)"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-          Input feedback
+          Feedback
         </span>
         <input
           type="checkbox"
@@ -1535,6 +1687,158 @@ function HealthPanel({
  * see that component for the rationale. Multiplayer hits the same bug
  * on tall LoadingScreen content + short viewports, so the same fix.
  */
+/**
+ * In-match menu + room-wide pause card.
+ *
+ * One component, four button-set permutations driven by `paused` and
+ * `isHost`:
+ *
+ *   - HOST · paused      → [Resume, Cancel match]. Resume re-arms
+ *     the audio for the whole room; cancel ends the match for
+ *     everyone.
+ *   - HOST · not paused  → [Resume, Pause, Cancel match]. The
+ *     match keeps running underneath the menu — Resume just closes
+ *     the menu without changing state; Pause freezes everyone;
+ *     Cancel bounces everyone to the lobby.
+ *   - NON-HOST · paused  → [Leave]. The host owns Resume; non-hosts
+ *     can leave the match at any time. A "waiting for host" note
+ *     reassures the player that the freeze is intentional.
+ *   - NON-HOST · not paused → [Resume, Leave]. Resume closes the
+ *     menu (game keeps running underneath); Leave fires
+ *     `room:leaveMatch` and routes them to the Lobby on the next
+ *     snapshot.
+ *
+ * Buttons fan out to the props injected by `CanvasPane`, which call
+ * the corresponding `actions.*()` socket emits. The server handles
+ * all the idempotency + phase guards, so a stale double-click is safe.
+ */
+function MatchMenuOverlay({
+  isHost,
+  paused,
+  onResume,
+  onPause,
+  onCancel,
+  onLeave,
+}: {
+  isHost: boolean;
+  paused: boolean;
+  onResume: () => void;
+  onPause: () => void;
+  onCancel: () => void;
+  onLeave: () => void;
+}) {
+  const headline = paused ? "Paused" : "Match in progress";
+  const subheading = paused
+    ? isHost
+      ? "Audio is suspended for everyone — resume when you're ready"
+      : "Host paused the match — hang tight, or leave to sit it out in the lobby"
+    : isHost
+      ? "The song is still playing — choose how to proceed"
+      : "The song is still playing — resume to keep playing or leave to sit it out";
+  // Lighter dim while the song is still going (so the player can still
+  // see what they're missing); full dim when paused (everyone is
+  // staring at the same frozen frame, no point pretending).
+  return (
+    <Overlay translucent={!paused}>
+      <div className="brut-card w-full max-w-md p-7 sm:p-9 text-center">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
+          {paused ? "Multiplayer · Paused" : "Multiplayer · Menu"}
+        </p>
+        <h2 className="mt-3 font-display text-[3.15rem] font-bold leading-none">
+          {paused ? "❚❚" : headline}
+        </h2>
+        {paused && (
+          <p className="mt-2 font-mono text-[0.95rem] uppercase tracking-widest text-bone-50/80">
+            {headline}
+          </p>
+        )}
+        <p className="mt-4 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
+          {subheading}
+        </p>
+
+        {isHost ? (
+          // Host actions: [Resume, (Pause when not paused), Cancel match].
+          // Grid column count tracks the visible button count so they
+          // remain evenly spaced.
+          <div className={`mt-7 grid gap-3 ${paused ? "grid-cols-2" : "grid-cols-3"}`}>
+            <button
+              onClick={onResume}
+              className="brut-btn-accent px-3 py-3"
+              data-tooltip={
+                paused
+                  ? "Resume the match for everyone"
+                  : "Close menu and keep playing"
+              }
+            >
+              ▶ Resume
+            </button>
+            {!paused && (
+              <button
+                onClick={onPause}
+                className="brut-btn px-3 py-3"
+                data-tooltip="Pause the match for every player"
+              >
+                ❚❚ Pause
+              </button>
+            )}
+            <button
+              onClick={onCancel}
+              className="brut-btn px-3 py-3"
+              data-tooltip="End the match early — everyone returns to the lobby (no standings recorded)"
+            >
+              ✕ Cancel match
+            </button>
+          </div>
+        ) : (
+          // Non-host actions: [Resume (when not paused), Leave]. We
+          // hide Resume during a pause because there's nothing for
+          // the non-host to resume — they'd just be closing the
+          // overlay over a frozen game with no input registering.
+          // Leaving is the only sensible action while paused.
+          <div className={`mt-7 grid gap-3 ${paused ? "grid-cols-1" : "grid-cols-2"}`}>
+            {!paused && (
+              <button
+                onClick={onResume}
+                className="brut-btn-accent px-3 py-3"
+                data-tooltip="Close menu and keep playing"
+              >
+                ▶ Resume
+              </button>
+            )}
+            <button
+              onClick={onLeave}
+              className="brut-btn px-3 py-3"
+              data-tooltip="Leave this match and watch from the lobby — the rest of the room keeps playing"
+            >
+              ← Leave
+            </button>
+          </div>
+        )}
+
+        {!isHost && paused && (
+          // Subtle reminder that the host is the one who controls the
+          // resume — keeps non-hosts from refreshing the page or
+          // assuming the room hung.
+          <div className="mt-4 flex items-center justify-center gap-3">
+            <Spinner />
+            <p className="font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70">
+              waiting for host…
+            </p>
+          </div>
+        )}
+
+        <p className="mt-4 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
+          {isHost
+            ? paused
+              ? "Resume picks up exactly where the song left off"
+              : "ESC = close menu · cancel doesn't save the run"
+            : "Leaving keeps you in the room — you'll be in the next round automatically"}
+        </p>
+      </div>
+    </Overlay>
+  );
+}
+
 function Overlay({
   children,
   translucent,

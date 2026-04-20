@@ -664,13 +664,21 @@ function PublicRoomRow({
 }) {
   const inProgress = room.phase !== "lobby";
   const full = room.playerCount >= room.maxPlayers;
-  const joinDisabled = disabled || inProgress || full;
+  // Joining a match-in-progress room is allowed: the server flags
+  // late-joiners with `inMatch=false` and the room page routes them
+  // into the Lobby's "match in progress" pane (live scoreboard +
+  // playing-song line + chat) rather than the active gameplay
+  // canvas. They watch out the rest of the round and get pulled
+  // into the next one when the host returns to lobby. Only "room
+  // full" actually blocks the join, since there's literally no
+  // seat to claim.
+  const joinDisabled = disabled || full;
   const reason = disabledReason
     ? disabledReason
     : full
       ? "Room is full"
       : inProgress
-        ? `Match in progress (${room.phase})`
+        ? `Match in progress — you'll join the lobby and wait for the next round`
         : "Join this room";
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-2 border-bone-50/15 px-3 py-2 transition-colors hover:border-accent/60">

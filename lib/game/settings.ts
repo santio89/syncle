@@ -11,7 +11,7 @@ const VOL_KEY = "syncle.volume";
 // roughly 44% perceived loudness with the song bus's quadratic curve
 // and ~70% perceived on the SFX bus's gentler square-root curve. This
 // is the "polite default": loud enough that a brand-new player hears
-// the chart and the input feedback clearly on first launch, quiet
+// the chart and the feedback SFX clearly on first launch, quiet
 // enough that we don't blow out anyone wearing headphones at full
 // system volume. Was 1.0 historically; landing at 50% gives the slider
 // usable headroom in BOTH directions out of the box, which matters

@@ -560,16 +560,45 @@ let sessionPromise: Promise<RawSession> | null = null;
  */
 export async function loadSong(
   mode: ChartMode = DEFAULT_MODE,
-  opts: { force?: boolean; onProgress?: (msg: string) => void } = {},
+  opts: {
+    force?: boolean;
+    onProgress?: (msg: string) => void;
+    /**
+     * When set, bypass the random pool and load this exact
+     * beatmapset. Used by the solo "Resume previous run" path so a
+     * refreshed player gets THEIR song back instead of a brand-new
+     * random roll. Populates the session cache as if the random
+     * picker had landed on this set, so subsequent `loadSong()`
+     * calls (e.g. the difficulty-toggle re-run) reuse the same
+     * session without re-downloading.
+     */
+    forceBeatmapsetId?: number;
+  } = {},
 ): Promise<LoadSongResult> {
-  if (opts.force) sessionPromise = null;
+  if (opts.force || opts.forceBeatmapsetId !== undefined) sessionPromise = null;
   if (!sessionPromise) {
-    sessionPromise = pickSession(opts.onProgress).catch((err) => {
-      // Drop the rejected promise so the next call can retry instead of
-      // serving the same error forever (e.g. user fixes their connection).
-      sessionPromise = null;
-      throw err;
-    });
+    if (opts.forceBeatmapsetId !== undefined) {
+      // Seed the session cache from the per-set extract cache so a
+      // subsequent difficulty toggle (which calls loadSong again
+      // without `forceBeatmapsetId`) reuses this session instead
+      // of rolling a new random song. Mirrors the cache-population
+      // shape of `pickSession` for remote songs.
+      const targetId = opts.forceBeatmapsetId;
+      sessionPromise = (async () => {
+        const ext = await getExtractedCached(targetId, opts);
+        return rawSessionFromExtracted(ext);
+      })().catch((err) => {
+        sessionPromise = null;
+        throw err;
+      });
+    } else {
+      sessionPromise = pickSession(opts.onProgress).catch((err) => {
+        // Drop the rejected promise so the next call can retry instead of
+        // serving the same error forever (e.g. user fixes their connection).
+        sessionPromise = null;
+        throw err;
+      });
+    }
   }
   const session = await sessionPromise;
   return finalize(session, mode);

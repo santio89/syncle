@@ -129,6 +129,28 @@ interface InternalPlayer {
    * scores, just "was the last accepted packet too recent."
    */
   lastScoreUpdateAt: number;
+  /**
+   * Whether this player is participating in the active match. See
+   * `PlayerSnapshot.inMatch` for the routing semantics.
+   *
+   * Lifecycle:
+   *   - Created at `false` (joining lands you in the lobby).
+   *   - Flipped to `true` for every connected player on
+   *     `startLoading`. That includes players who weren't
+   *     `lobbyReady` — pressing Start grabs everyone.
+   *   - Flipped back to `false` for every player on
+   *     `transitionToLobby` (results → lobby, host:cancelMatch).
+   *   - Flipped to `false` mid-match by `room:leaveMatch` (player
+   *     opts out via the in-match menu's "Leave" button). Idempotent.
+   *   - NEW players who join via `joinRoom` while the room is past
+   *     the lobby phase start at `false` — they see the lobby with
+   *     a "match in progress" indicator instead of being silently
+   *     dropped into a half-played song.
+   *   - Survives disconnect/reconnect inside the slot TTL: the
+   *     player's slot retains `inMatch=true` so a mid-song refresh
+   *     resumes the run.
+   */
+  inMatch: boolean;
 }
 
 interface InternalRoom {
@@ -143,6 +165,15 @@ interface InternalRoom {
   selectedMode: ChartMode | null;
   startsAt: number | null;
   songStartedAt: number | null;
+  /**
+   * Wall-clock ms when the host paused an in-progress match; null
+   * when the match is running or no match is active. Set by
+   * `pauseMatch`, cleared by `resumeMatch` (which also bumps
+   * `songStartedAt` forward by the elapsed pause duration so the
+   * audio-clock baseline stays consistent for late joiners and the
+   * safety timer). Mirrored in `RoomSnapshot.pausedAt`.
+   */
+  pausedAt: number | null;
   /** Rolling chat backlog, oldest first, capped at MAX_CHAT_HISTORY. */
   chat: ChatMessage[];
   /** Monotonically-incrementing chat message id (room-scoped). */
@@ -327,6 +358,7 @@ class RoomRegistry {
         live: p.live,
         final: p.final,
         postChoice: p.postChoice,
+        inMatch: p.inMatch,
       });
     }
     players.sort((a, b) => a.joinedAt - b.joinedAt);
@@ -343,6 +375,7 @@ class RoomRegistry {
       selectedMode: room.selectedMode,
       startsAt: room.startsAt,
       songStartedAt: room.songStartedAt,
+      pausedAt: room.pausedAt,
       players,
       chat: room.chat,
     };
@@ -448,6 +481,7 @@ class RoomRegistry {
       selectedMode: null,
       startsAt: null,
       songStartedAt: null,
+      pausedAt: null,
       chat: [],
       nextChatId: 1,
       catalog: null,
@@ -474,6 +508,10 @@ class RoomRegistry {
       graceTimer: null,
       chatTimestamps: [],
       lastScoreUpdateAt: 0,
+      // Brand-new room — definitionally in lobby phase, so the
+      // host is "in lobby". `inMatch` flips to true when they
+      // press Start; for now they're a lobby participant.
+      inMatch: false,
     });
     this.rooms.set(code, room);
     this.socketIndex.set(socketId, { code, sessionId });
@@ -517,6 +555,14 @@ class RoomRegistry {
       graceTimer: null,
       chatTimestamps: [],
       lastScoreUpdateAt: 0,
+      // Late-join routing: if the room is already past the lobby,
+      // this player wasn't in the match when the host pressed Start.
+      // They get the lobby UI with a "match in progress" indicator
+      // — *not* dropped into a half-played song. They can still
+      // chat / change settings / wait for the next round. When the
+      // room cycles back to lobby, this flag stays false but is
+      // ignored (lobby phase routes everyone to the Lobby anyway).
+      inMatch: false,
     });
     this.socketIndex.set(socketId, { code, sessionId });
     return { sessionId };
@@ -891,6 +937,16 @@ class RoomRegistry {
       p.lobbyReady = false;
       p.live = emptyLive();
       p.final = null;
+      // Pull every CONNECTED player into the match. Disconnected
+      // slots (still alive within their TTL) keep their previous
+      // value — if they were `inMatch=true` from a prior round
+      // they'd reconnect into the loading screen, but practically
+      // we just reset both rounds back to a clean false→true
+      // transition for everyone here. Players who join AFTER this
+      // point land at `inMatch=false` (joinRoom default), which
+      // routes them to the lobby with a "match in progress"
+      // indicator.
+      p.inMatch = p.socketId !== null;
       p.postChoice = null;
     }
     if (room.loadingTimer) clearTimeout(room.loadingTimer);
@@ -913,6 +969,158 @@ class RoomRegistry {
     }
     if (room.phase !== "loading") return;
     this.transitionToLobby(room);
+  }
+
+  /**
+   * Host-only: pause an in-progress match. Stamps `room.pausedAt` with
+   * the current wall clock so every client snapshot reconciles to the
+   * paused state on its next render, and clears the match safety
+   * timer so it doesn't fire mid-pause (it would otherwise treat the
+   * paused window as elapsed song time and force-flip to results).
+   *
+   * Idempotent: a double-press of the Pause button or a stale ack
+   * arriving after the host already paused is silently dropped so we
+   * don't blow away the original `pausedAt` timestamp (which would
+   * shorten the post-resume `songStartedAt` shift and produce a
+   * jump in chart position).
+   */
+  pauseMatch(code: string, sessionId: string): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) {
+      throw new RoomError("NOT_HOST", "Only host can pause");
+    }
+    if (room.phase !== "playing") return;
+    if (room.pausedAt !== null) return;
+    room.pausedAt = Date.now();
+    // Clear the safety net for the duration of the pause. We re-arm
+    // it inside `resumeMatch` after shifting `songStartedAt`, so the
+    // remaining-song math comes out right whether the pause lasts
+    // 2 seconds or 20 minutes.
+    this.clearMatchSafetyTimer(room);
+    this.emitNotice(code, "info", "Host paused the match");
+    this.emitSnapshot(code);
+  }
+
+  /**
+   * Host-only: resume a paused match. Adds the elapsed pause duration
+   * to `songStartedAt` so:
+   *   - The match safety timer (which uses `Date.now() - songStartedAt`
+   *     to compute remaining song time) lands at the correct
+   *     wall-clock deadline post-resume.
+   *   - Late joiners that arrive after the pause compute the right
+   *     seek offset on their schedule effect (`now - songStartedAt`
+   *     yields the chart position everyone else is at, since their
+   *     locally-suspended AudioContexts froze for the same window).
+   * Existing connected clients don't need any timestamp adjustment —
+   * their `audio.resume()` call un-suspends an AudioContext that
+   * froze `ctx.currentTime`, so `songTime()` continues seamlessly.
+   *
+   * Idempotent: silently returns if not currently paused.
+   */
+  resumeMatch(code: string, sessionId: string): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) {
+      throw new RoomError("NOT_HOST", "Only host can resume");
+    }
+    if (room.phase !== "playing") return;
+    if (room.pausedAt === null) return;
+    const pauseDuration = Date.now() - room.pausedAt;
+    if (room.songStartedAt !== null) {
+      room.songStartedAt += pauseDuration;
+    }
+    room.pausedAt = null;
+    this.armMatchSafetyTimer(room);
+    this.emitNotice(code, "info", "Host resumed the match");
+    this.emitSnapshot(code);
+  }
+
+  /**
+   * Host-only: hard-cancel an in-progress (countdown / playing /
+   * paused) match and bounce everyone back to the lobby. No standings
+   * are recorded — players see the lobby, not the results screen.
+   *
+   * Lives alongside `cancelLoading` (loading-phase escape hatch) and
+   * `hostReturnToLobby` (results-phase escape hatch); together they
+   * give the host a kill switch from every active phase. Intended UI
+   * surface is the host's in-game pause menu.
+   */
+  cancelMatch(code: string, sessionId: string): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) {
+      throw new RoomError("NOT_HOST", "Only host can cancel");
+    }
+    if (
+      room.phase !== "playing" &&
+      room.phase !== "countdown" &&
+      room.phase !== "loading"
+    ) {
+      return;
+    }
+    this.emitNotice(code, "info", "Host cancelled the match");
+    this.transitionToLobby(room);
+  }
+
+  /**
+   * Per-player "leave the active match and sit in the lobby". Flips
+   * `players[sessionId].inMatch` to false; the client routing on the
+   * next snapshot then takes the player from the match UI back to
+   * the Lobby (which renders a "match in progress" indicator while
+   * the rest of the room keeps playing).
+   *
+   * Idempotent and safe to call from any phase — only does anything
+   * useful while the room is past the lobby. The host is NOT allowed
+   * to leave their own match this way (they'd orphan the room
+   * controls); they have to use `host:cancelMatch` to wind it down.
+   *
+   * Score state is left intact in case the player rejoins later via
+   * a future "rejoin match" affordance; for now there's no way back
+   * in until the next round starts.
+   */
+  leaveMatch(code: string, sessionId: string): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    // Lobby is a no-op (everyone's already in lobby). Results phase
+    // also no-ops — at that point the participant should be on the
+    // results screen, and a "leave" button there already exists via
+    // the "back to lobby" CTA which transitions the whole room.
+    if (
+      room.phase !== "loading" &&
+      room.phase !== "countdown" &&
+      room.phase !== "playing"
+    ) {
+      return;
+    }
+    if (room.hostId === sessionId) {
+      // Hosts have a different escape hatch — cancelMatch — that
+      // ends the match for everyone instead of orphaning the room
+      // with no host in it.
+      throw new RoomError(
+        "HOST_CANT_LEAVE",
+        "Host can't leave the match — cancel it instead",
+      );
+    }
+    const p = room.players.get(sessionId);
+    if (!p) return;
+    if (!p.inMatch) return;
+    p.inMatch = false;
+    // Their `live` row stays on the scoreboard so the lobby's
+    // compact scoreboard for late-joiners + leavers still reflects
+    // who was in the match (and the client can grey-out the row
+    // visually if it wants). We do NOT zero `live` here — that
+    // happens on the next `transitionToLobby`.
+    this.emitSnapshot(code);
+    // Re-check the gates: if this player was the lone hold-out
+    // (e.g. 3-of-3 ready in loading, or 2-of-3 finished in playing
+    // and they were the missing one), removing them from the
+    // participant set should immediately advance the match. Without
+    // this we'd sit on the loading screen / wait for the safety
+    // timer until the full grace window elapsed even though the
+    // remaining players already converged.
+    if (room.phase === "loading") this.checkAllReady(room);
+    else if (room.phase === "playing") this.checkAllFinished(room);
   }
 
   markReady(code: string, sessionId: string): void {
@@ -948,9 +1156,16 @@ class RoomRegistry {
   }
 
   private checkAllReady(room: InternalRoom): void {
-    const connected = [...room.players.values()].filter((p) => p.socketId !== null);
-    if (connected.length === 0) return;
-    if (connected.every((p) => p.ready)) this.tryStartCountdown(room, false);
+    // Only count match participants — late-joiners (`inMatch=false`)
+    // never run the loading screen and so never call `client:ready`,
+    // so including them would keep the all-ready gate permanently
+    // stuck and force the loading deadline to expire on every round
+    // that has a watcher in the lobby.
+    const participants = [...room.players.values()].filter(
+      (p) => p.socketId !== null && p.inMatch,
+    );
+    if (participants.length === 0) return;
+    if (participants.every((p) => p.ready)) this.tryStartCountdown(room, false);
   }
 
   private tryStartCountdown(room: InternalRoom, forced: boolean): void {
@@ -1101,8 +1316,23 @@ class RoomRegistry {
   applyScoreUpdate(code: string, sessionId: string, raw: unknown): void {
     const room = this.rooms.get(code);
     if (!room || room.phase !== "playing") return;
+    // Drop score updates while the host has the match paused. Honest
+    // clients won't emit during a pause anyway (their AudioContext is
+    // suspended, so songTime() — and therefore the score signature —
+    // freezes), but a hostile or out-of-sync client could keep sending
+    // and pollute the scoreboard while the room is frozen. Resuming
+    // re-opens the gate without any extra work.
+    if (room.pausedAt !== null) return;
     const p = room.players.get(sessionId);
     if (!p) return;
+    // Anti-spoof: late-joiners + leavers (`inMatch=false`) sit in the
+    // lobby with the match-in-progress indicator and have NO running
+    // chart; any score update from them is either stale (from a
+    // previous round before they left) or a forged packet trying to
+    // muscle into the scoreboard. Honest clients gate `client:scoreUpdate`
+    // on `me.inMatch && phase === "playing"` so this guard is just
+    // belt-and-braces against a tampered build.
+    if (!p.inMatch) return;
     // Per-player rate limit. The honest client throttles to 5 Hz
     // (~200 ms cadence — see `MultiGame.tsx` `lastScoreSentSigRef`),
     // so a 100 ms floor still admits real traffic with jitter
@@ -1150,8 +1380,18 @@ class RoomRegistry {
     // `playing` means a finished payload requires the song to have
     // actually been running.
     if (room.phase !== "playing") return;
+    // Same reasoning as `applyScoreUpdate`: while the match is paused
+    // the audio clock is frozen everywhere, so an honest client can't
+    // legitimately reach end-of-song. Reject finished payloads during
+    // pause to deny a hostile client the ability to lock in a
+    // pre-baked `final` while everyone else is on hold.
+    if (room.pausedAt !== null) return;
     const p = room.players.get(sessionId);
     if (!p) return;
+    // Same anti-spoof guard as `applyScoreUpdate`. Late-joiners +
+    // leavers can't legitimately reach end-of-song — they aren't
+    // even running the chart locally.
+    if (!p.inMatch) return;
     const final = raw as Partial<FinalStats> | null;
     if (!final || typeof final.score !== "number") return;
     p.final = {
@@ -1173,9 +1413,16 @@ class RoomRegistry {
 
   private checkAllFinished(room: InternalRoom): void {
     if (room.phase !== "playing") return;
-    const connected = [...room.players.values()].filter((p) => p.socketId !== null);
-    if (connected.length === 0) return;
-    if (connected.every((p) => p.final !== null)) this.transitionToResults(room);
+    // Only count match participants — late-joiners + leavers
+    // (`inMatch=false`) are sitting in the lobby with the
+    // match-in-progress indicator and never submit a `final` payload,
+    // so including them would leave the gate permanently open and
+    // force the safety timer to be the only path to results.
+    const participants = [...room.players.values()].filter(
+      (p) => p.socketId !== null && p.inMatch,
+    );
+    if (participants.length === 0) return;
+    if (participants.every((p) => p.final !== null)) this.transitionToResults(room);
   }
 
   private transitionToResults(room: InternalRoom): void {
@@ -1390,6 +1637,12 @@ class RoomRegistry {
     room.selectedMode = null;
     room.startsAt = null;
     room.songStartedAt = null;
+    // Drop any leftover pause state. A `cancelMatch` from the host's
+    // pause menu lands here while `pausedAt` is non-null; clearing
+    // it ensures the next round starts with a clean baseline and the
+    // lobby snapshot doesn't leak a stale "paused" signal back to
+    // clients that might still mis-interpret it.
+    room.pausedAt = null;
     for (const p of room.players.values()) {
       p.ready = false;
       // Coming back from results / loading ALWAYS clears lobby-ready
@@ -1400,6 +1653,11 @@ class RoomRegistry {
       p.live = emptyLive();
       p.final = null;
       p.postChoice = null;
+      // Lobby phase has no notion of "in match"; clear so the next
+      // `startLoading` starts everyone from a clean false→true
+      // transition. Late-joiners during the prior round (who were
+      // already at false) are unaffected.
+      p.inMatch = false;
     }
     this.io.to(`room:${room.code}`).emit("phase:lobby");
     this.emitSnapshot(room.code);
@@ -1617,12 +1875,61 @@ export function wireSocketServer(io: IO): void {
       }
     });
 
+    /* ---- in-match host controls (pause / resume / cancel) ---- */
+    //
+    // All three guard themselves at the registry level (host check +
+    // phase check + paused-state check). The socket wrappers stay
+    // thin so a malformed event from a guest just bounces back as
+    // an "error" toast without mutating any room state.
+
+    socket.on("host:pauseMatch", () => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      try {
+        reg.pauseMatch(ref.code, ref.sessionId);
+      } catch (e) {
+        socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
+      }
+    });
+
+    socket.on("host:resumeMatch", () => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      try {
+        reg.resumeMatch(ref.code, ref.sessionId);
+      } catch (e) {
+        socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
+      }
+    });
+
+    socket.on("host:cancelMatch", () => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      try {
+        reg.cancelMatch(ref.code, ref.sessionId);
+      } catch (e) {
+        socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
+      }
+    });
+
     /* ---- back-to-lobby (any player) ---- */
 
     socket.on("room:returnToLobby", () => {
       const ref = reg.refOf(socket.id);
       if (!ref) return;
       reg.anyReturnToLobby(ref.code, ref.sessionId);
+    });
+
+    /* ---- leave the active match (non-host participant) ---- */
+
+    socket.on("room:leaveMatch", () => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      try {
+        reg.leaveMatch(ref.code, ref.sessionId);
+      } catch (e) {
+        socket.emit("error", ackErr(e) as unknown as { code: string; message: string });
+      }
     });
 
     /* ---- ready / mode (lobby gates) ---- */

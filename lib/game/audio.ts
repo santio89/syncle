@@ -78,7 +78,7 @@ function perceivedToGain(perceived: number): number {
  *     slider 0.50  →  song -12 dB,  sfx -12 dB   (about even)
  *     slider 0.20  →  song -28 dB,  sfx -14 dB   (SFX +14 dB OVER song)
  *     slider 0.05  →  song -52 dB,  sfx -20 dB   (song nearly gone, SFX dominates)
- * That made the per-input feedback feel "shouty" at low master volumes,
+ * That made the feedback SFX feel "shouty" at low master volumes,
  * exactly the opposite of the user's intent of pulling the volume down.
  *
  * Constant-ratio fixes that:
@@ -148,7 +148,7 @@ function perceivedToSfxGain(perceived: number): number {
  *
  * That keeps the music vs. feedback mix balance CONSTANT across the
  * entire slider — at 30% master the song still sits ~9 dB above the
- * input feedback, exactly like at 100% master, just both quieter
+ * feedback SFX, exactly like at 100% master, just both quieter
  * together. See `perceivedToSfxGain` for the detailed dB table and
  * the rationale for moving away from the previous square-root SFX
  * curve (which inverted the mix at low volumes).
@@ -177,7 +177,7 @@ export class AudioEngine {
 
   private metronomeOn = false;
   /**
-   * When false, suppress per-input feedback SFX (hit pluck, miss thud,
+   * When false, suppress the "Feedback" SFX bus (hit pluck, miss thud,
    * release tone, combo-milestone chime, and the song's "duck" cue that
    * stacks on a miss). Independent from `metronomeOn` so a player who
    * wants the rhythm tick but no input SFX (or vice versa) gets that.
@@ -546,7 +546,7 @@ export class AudioEngine {
   }
 
   /**
-   * Master switch for per-input feedback SFX. Mirrors `setMetronome` —
+   * Master switch for the "Feedback" SFX bus. Mirrors `setMetronome` —
    * the engine still functions normally, the gated `playHit` / `playMiss`
    * / `playRelease` / `playComboMilestone` calls just no-op. Cheap,
    * stateless, safe to flip mid-song.

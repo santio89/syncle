@@ -99,6 +99,33 @@ export interface RoomActions {
   startMatch(mode: ChartMode): void;
   cancelLoading(): void;
   /**
+   * Host: pause an in-progress match. Server stamps `pausedAt` on the
+   * room snapshot, every client suspends their AudioContext, and the
+   * room-wide pause overlay appears. No-op outside `playing`.
+   */
+  pauseMatch(): void;
+  /**
+   * Host: resume a paused match. Server shifts `songStartedAt` by the
+   * pause duration, clears `pausedAt`, and re-arms the safety timer.
+   * No-op when not paused.
+   */
+  resumeMatch(): void;
+  /**
+   * Host: hard-cancel an in-progress match (countdown / playing /
+   * paused) and bounce everyone to the lobby. Destructive — no
+   * standings recorded. Used by the host's pause-menu cancel button.
+   */
+  cancelMatch(): void;
+  /**
+   * Non-host participant: leave the active match and sit out the rest
+   * in the lobby (with a "match in progress" indicator). Idempotent
+   * and a no-op for the host (server-side rejection — hosts have to
+   * `cancelMatch` instead of orphaning the room). Reverses on the
+   * next `transitionToLobby` automatically; there's no "rejoin
+   * mid-match" affordance yet.
+   */
+  leaveMatch(): void;
+  /**
    * Any player can fire — pulls everyone back to the lobby from the
    * results phase. The user-facing button is "Back to room" and there's
    * intentionally no host-confirmation gate.
@@ -478,6 +505,22 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
     socketRef.current?.emit("host:cancelLoading");
   }, []);
 
+  const pauseMatch = useCallback(() => {
+    socketRef.current?.emit("host:pauseMatch");
+  }, []);
+
+  const resumeMatch = useCallback(() => {
+    socketRef.current?.emit("host:resumeMatch");
+  }, []);
+
+  const cancelMatch = useCallback(() => {
+    socketRef.current?.emit("host:cancelMatch");
+  }, []);
+
+  const leaveMatch = useCallback(() => {
+    socketRef.current?.emit("room:leaveMatch");
+  }, []);
+
   // Use the new "any player" event so clicking "Back to room" doesn't
   // require host coordination — the first click pulls everyone back.
   const returnToLobby = useCallback(() => {
@@ -561,6 +604,10 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       setMode,
       startMatch,
       cancelLoading,
+      pauseMatch,
+      resumeMatch,
+      cancelMatch,
+      leaveMatch,
       returnToLobby,
       setReady,
       markReady,
@@ -585,6 +632,10 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       setMode,
       startMatch,
       cancelLoading,
+      pauseMatch,
+      resumeMatch,
+      cancelMatch,
+      leaveMatch,
       returnToLobby,
       setReady,
       markReady,

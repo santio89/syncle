@@ -154,6 +154,28 @@ export interface PlayerSnapshot {
   final: FinalStats | null;
   /** Post-results choice. null → undecided. */
   postChoice: "stay" | "leave" | null;
+  /**
+   * Whether this player is participating in the active match (or
+   * sitting in the lobby watching). Drives client-side routing
+   * during `loading` / `countdown` / `playing` / `results`:
+   *
+   *   - `inMatch === true`  → render the match UI (LoadingScreen,
+   *     MultiGame canvas, ResultsScreen).
+   *   - `inMatch === false` → render the Lobby with a "match in
+   *     progress" indicator + compact live scoreboard. This is the
+   *     state for late-joiners (joined via `room:join` after the
+   *     host already started) and for players who left mid-match
+   *     via `room:leaveMatch`.
+   *
+   * Always `false` while the room is in the lobby phase (everyone
+   * is in lobby; the flag is only meaningful during a match). Set
+   * to `true` for every connected player on `startLoading`. Reset
+   * to `false` for everyone on `transitionToLobby`. Survives
+   * disconnect/reconnect inside the slot TTL — that's how a
+   * mid-song refresh continues the run instead of dropping the
+   * player into the lobby.
+   */
+  inMatch: boolean;
 }
 
 export interface RoomSnapshot {
@@ -175,8 +197,26 @@ export interface RoomSnapshot {
   selectedMode: ChartMode | null;
   /** Wall-clock ms when audio is supposed to start (countdown phase only). */
   startsAt: number | null;
-  /** Wall-clock ms when audio actually started (playing/results phases). */
+  /**
+   * Wall-clock ms when audio actually started (playing/results phases).
+   *
+   * Pause-aware: when the host pauses an in-progress match, the server
+   * adds the pause duration to this value on resume. This way late
+   * joiners (or any client recomputing the seek offset on the
+   * countdown→playing schedule effect) compute `now - songStartedAt`
+   * and land on the same chart position as everyone else, even after
+   * arbitrary pause / resume cycles.
+   */
   songStartedAt: number | null;
+  /**
+   * Wall-clock ms when the host paused an in-progress match. `null`
+   * while the match is running. Set to `Date.now()` by `host:pauseMatch`
+   * during the `playing` phase; cleared by `host:resumeMatch`. Drives
+   * the per-client `audio.pause()` / `audio.resume()` toggle and the
+   * room-wide "PAUSED — waiting for host" overlay; also frozen on the
+   * scoreboard so peer scores don't churn while play is suspended.
+   */
+  pausedAt: number | null;
   players: PlayerSnapshot[];
   /** Rolling chat backlog (server-trimmed to MAX_CHAT_HISTORY). */
   chat: ChatMessage[];
@@ -243,6 +283,18 @@ export interface ClientToServerEvents {
    * clicks during the same results phase produce a single transition.
    */
   "room:returnToLobby": () => void;
+
+  /**
+   * Any (non-host) participant can sit out the rest of an active
+   * match. Server flips `players[me].inMatch = false`, keeps the
+   * player in the room, and broadcasts a fresh snapshot. The client
+   * re-routes from the match UI to the Lobby (with a "match in
+   * progress" indicator) on the next snapshot. Idempotent — calling
+   * during lobby/results phases or when already out of the match
+   * silently no-ops. Hosts can't leave the match this way; they
+   * have to use `host:cancelMatch` to end it for everyone.
+   */
+  "room:leaveMatch": () => void;
 
   /**
    * List currently-discoverable public rooms. Returns a snapshot via
@@ -317,6 +369,39 @@ export interface ClientToServerEvents {
 
   /** Host-only: cancel an in-progress loading phase, return to lobby. */
   "host:cancelLoading": () => void;
+
+  /**
+   * Host-only: pause an in-progress match. Server records `pausedAt`
+   * on the room and broadcasts a fresh snapshot; every client
+   * (including the host) sees `pausedAt !== null` and calls
+   * `audio.pause()` on their AudioEngine. The room-wide pause overlay
+   * appears on every screen. No-op outside the `playing` phase or
+   * when the match is already paused. Match safety timer is cleared
+   * for the duration of the pause; re-armed on resume.
+   */
+  "host:pauseMatch": () => void;
+
+  /**
+   * Host-only: resume a paused match. Server adds the pause duration
+   * to `songStartedAt` (so late joiners + the safety timer recompute
+   * against the right baseline), clears `pausedAt`, re-arms the
+   * safety timer, and broadcasts a fresh snapshot. Every client calls
+   * `audio.resume()` on their AudioEngine; existing AudioContexts
+   * pick up exactly where they left off (their per-client
+   * `startedAtCtxTime` is unchanged because `ctx.currentTime` froze
+   * during the suspend, so `songTime()` continues without a jump).
+   * No-op when not paused.
+   */
+  "host:resumeMatch": () => void;
+
+  /**
+   * Host-only: end an in-progress (playing / countdown / paused)
+   * match early and return everyone to the lobby. Unlike the
+   * lobby/results back-to-room flow, this is destructive — no
+   * standings are recorded. Used as the "I made a mistake / wrong
+   * chart / need to leave" escape hatch from the host's pause menu.
+   */
+  "host:cancelMatch": () => void;
 
   /**
    * Host-only: send everyone back to the lobby after results.

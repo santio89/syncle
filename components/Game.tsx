@@ -41,6 +41,14 @@ import {
   saveMetronome,
   type FpsLock,
 } from "@/lib/game/settings";
+import {
+  clearSoloResume,
+  loadSoloResume,
+  saveSoloResume,
+  type SoloResumeState,
+} from "@/lib/game/resume";
+import { useLeaveGuard } from "@/components/LeaveGuardProvider";
+import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -178,7 +186,7 @@ export default function Game() {
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
-  /** Per-input feedback SFX (hit pluck / miss thud / release tone /
+  /** Feedback SFX (hit pluck / miss thud / release tone /
    *  combo-milestone chime + the song-duck whiff cue). Persisted so a
    *  player who prefers pure music keeps their preference across
    *  sessions. Mirrored into the AudioEngine via `setSfx` whenever it
@@ -190,6 +198,77 @@ export default function Game() {
    *  Drives the on-screen <TouchLanes> overlay and swaps the "press D F J K"
    *  hints in the StartCard for tap-friendly copy. */
   const [touchOnly, setTouchOnly] = useState<boolean>(false);
+
+  /**
+   * Recovered solo run from a previous tab session — set on mount if
+   * `sessionStorage` has a fresh saved record (see `lib/game/resume.ts`).
+   * Surfaces as a "Resume previous run?" banner above the StartCard.
+   * Cleared when:
+   *   - the player accepts (`onResume`) → we kick off a forced-id load
+   *     and the banner is dismissed automatically.
+   *   - the player rejects (banner's "dismiss" button) → we just
+   *     `setPendingResume(null)` and clear the storage record.
+   *   - a new run finishes cleanly (`finishRun`) or the player
+   *     explicitly bails (`giveUp`) — both clear the record so the
+   *     next mount doesn't re-offer to resume a song they decided
+   *     against.
+   */
+  const [pendingResume, setPendingResume] = useState<SoloResumeState | null>(
+    () => loadSoloResume(),
+  );
+  /**
+   * Set when the player has accepted a resume — drives the load
+   * effect to call `loadSong({ forceBeatmapsetId: X })` instead of
+   * the random pool. Cleared as soon as the load resolves so the
+   * NEXT difficulty toggle (which re-runs the load effect) goes
+   * through the cached session and doesn't re-fetch. Held in a ref
+   * because the effect that consumes it also depends on `chartMode`
+   * — putting it in state would force a re-fetch on every mode flip
+   * during the resume turn.
+   */
+  const forceBeatmapsetIdRef = useRef<number | null>(null);
+
+  // Leave guard: prompt before the user accidentally drops out of an
+  // active solo run. The guard is on while a song is "alive" — that
+  // means countdown, playing, or paused. Idle / loading / results
+  // are pass-through (loading hasn't started a real run yet, results
+  // is post-game, idle is the homepage of the page). Covers tab
+  // close / refresh (browser-native dialog), browser back button
+  // (popstate sentinel), and in-page Back / Home / anchor clicks
+  // (intercepted via `attemptLeave` on the wrapping links).
+  const router = useRouter();
+  const guardActive =
+    phase === "countdown" || phase === "playing" || phase === "paused";
+  useLeaveGuard({
+    enabled: guardActive,
+    message: "Your run will end and the score won't be saved.",
+    defaultLeave: () => {
+      // Mirror the in-page give-up flow before navigating: stop the
+      // audio engine cleanly so the song doesn't keep playing in the
+      // background while the user lands on the homepage. Drop the
+      // resume hint so a refresh from / doesn't re-offer this song.
+      try {
+        audioRef.current?.stop();
+      } catch {
+        /* engine may have already been torn down */
+      }
+      clearSoloResume();
+      // router.replace so the LeaveGuardProvider can collapse the
+      // /play entry out of history alongside its sentinel — a
+      // browser back from / shouldn't re-roll a fresh random song
+      // we just confirmed leaving.
+      router.replace("/");
+    },
+  });
+  /**
+   * Bumped to force the load effect to re-run even when nothing in
+   * its dep array changed (e.g. resume request that happens to use
+   * the same chartMode that's already selected). React would
+   * otherwise skip the re-render and the random song would stay on
+   * screen. The actual value is irrelevant — only the increment
+   * matters.
+   */
+  const [loadNonce, setLoadNonce] = useState(0);
 
   // ---- Live theme → canvas wiring ---------------------------------------
   // The renderer reads `theme` off renderOptsRef every frame to look up its
@@ -239,13 +318,22 @@ export default function Game() {
     setProgressMsg(null);
     setMirror(null);
     setBeatmapsetId(null);
+    // If the player just accepted a "Resume previous run?" banner, the
+    // ref holds the beatmapsetId we want — bypass the random pool and
+    // load that exact set. We swallow the ref into a local so a fast
+    // mode-toggle that re-fires this effect mid-fetch still gets the
+    // forced song; we clear the ref once the session cache is populated
+    // so subsequent toggles use the cached random-pool slot like normal.
+    const forcedId = forceBeatmapsetIdRef.current;
     loadSong(chartMode, {
       onProgress: (msg) => {
         if (!cancelled) setProgressMsg(msg);
       },
+      forceBeatmapsetId: forcedId ?? undefined,
     })
       .then((loaded) => {
         if (cancelled) return;
+        if (forcedId !== null) forceBeatmapsetIdRef.current = null;
         loadedRef.current = {
           meta: loaded.meta,
           notes: loaded.notes,
@@ -282,13 +370,21 @@ export default function Game() {
       })
       .catch((err) => {
         if (cancelled) return;
+        // If a forced-id resume failed, drop the ref so a follow-up
+        // mode toggle (or manual nonce bump) hits the random pool
+        // again instead of re-attempting the broken set on every
+        // re-render. Without this the user is stuck on the error
+        // until they refresh the whole page.
+        if (forcedId !== null && forceBeatmapsetIdRef.current === forcedId) {
+          forceBeatmapsetIdRef.current = null;
+        }
         setPreviewError(err?.message ?? "Could not load a chart");
         setProgressMsg(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [chartMode]);
+  }, [chartMode, loadNonce]);
 
   // Once we have a real meta AND the user has interacted with the page at
   // least once (any click / keydown / pointermove), spin up the AudioContext
@@ -471,6 +567,20 @@ export default function Game() {
       setSongProgress(0);
       lastScheduledBeatRef.current = -1;
 
+      // Persist what we just kicked off so a refresh during play can
+      // offer to reload THIS song instead of rolling a brand-new
+      // random one. Only remote songs carry a `beatmapsetId` we can
+      // re-fetch from a mirror, so local-pool tracks (which would
+      // need a different recovery path) are silently skipped.
+      if (loaded.delivery === "remote" && loaded.beatmapsetId != null) {
+        saveSoloResume({
+          beatmapsetId: loaded.beatmapsetId,
+          mode: chartMode,
+          artist: loaded.meta.artist,
+          title: loaded.meta.title,
+        });
+      }
+
       setPhase("countdown");
       setCountdown(COUNTDOWN_SECONDS);
 
@@ -514,6 +624,37 @@ export default function Game() {
     setPhase("playing");
   }, [phase]);
 
+  /**
+   * Player accepted the "Resume previous run?" banner.
+   *
+   * We don't try to restore mid-song state (offset, score, combo) —
+   * see `lib/game/resume.ts` for the rationale. We just steer the
+   * load effect at the SAME beatmapset they were on, switch the
+   * difficulty toggle to match, and let them hit PLAY when ready.
+   * The banner clears immediately so it doesn't linger after the
+   * load effect re-runs.
+   */
+  const onResumePrevious = useCallback(() => {
+    if (!pendingResume) return;
+    forceBeatmapsetIdRef.current = pendingResume.beatmapsetId;
+    // Clear the storage record now so a refresh DURING the resume
+    // load doesn't re-offer a banner over the loading-state UI.
+    clearSoloResume();
+    setPendingResume(null);
+    setChartMode(pendingResume.mode);
+    // Bump the load nonce so the effect re-fires even if the
+    // saved mode happens to equal the currently-selected one
+    // (chartMode dep wouldn't change → effect wouldn't re-run →
+    // random song would stay on screen).
+    setLoadNonce((n) => n + 1);
+  }, [pendingResume]);
+
+  /** Player tapped "dismiss" on the resume banner — clear it. */
+  const onDismissResume = useCallback(() => {
+    clearSoloResume();
+    setPendingResume(null);
+  }, []);
+
   const giveUp = useCallback(() => {
     // Stop the song but keep the AudioEngine + decoded buffer alive so the
     // next start() doesn't re-fetch / re-decode the audio.
@@ -527,6 +668,12 @@ export default function Game() {
     setStats(null);
     setSongProgress(0);
     setNewBest(false);
+    // Player explicitly bailed — drop the resume hint so the next
+    // mount doesn't re-offer a song they decided against. The
+    // `pendingResume` banner state is already null at this point
+    // (banner only renders before any run starts), so we just clear
+    // the storage backing.
+    clearSoloResume();
     setPhase("idle");
   }, []);
 
@@ -649,7 +796,7 @@ export default function Game() {
         e.preventDefault();
         return;
       }
-      // N toggles per-input feedback SFX (hit pluck / miss thud /
+      // N toggles feedback SFX (hit pluck / miss thud /
       // release tone / combo-milestone chime). Sits next to M so the
       // two "audio feel" knobs share an adjacent home-row keybind
       // and a player can flip either without leaving the lane keys.
@@ -942,6 +1089,10 @@ export default function Game() {
       });
       setBest(result.best);
       setNewBest(result.improved);
+      // Run finished cleanly — drop the resume hint so a refresh
+      // from the results screen lands on a fresh random song
+      // instead of re-offering the one they just played.
+      clearSoloResume();
       setPhase("results");
       setStats({ ...state.stats });
     }
@@ -1047,31 +1198,40 @@ export default function Game() {
 
       {(phase === "idle" || phase === "loading") && (
         <Overlay>
-          <StartCard
-            meta={displayMeta}
-            onStart={start}
-            loading={phase === "loading"}
-            error={error ?? previewError}
-            metronome={metronome}
-            onToggleMetronome={() => setMetronome((m) => !m)}
-            sfx={sfx}
-            onToggleSfx={() => setSfx((s) => !s)}
-            fpsLock={fpsLock}
-            onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
-            songSource={songSource}
-            chartMode={chartMode}
-            onChangeMode={setChartMode}
-            modeAvailability={modeAvailability}
-            chartLength={chartLength}
-            rawNoteCount={rawNoteCount}
-            best={best}
-            volume={volume}
-            onVolume={setVolume}
-            progressMsg={progressMsg}
-            mirror={mirror}
-            beatmapsetId={beatmapsetId}
-            touchOnly={touchOnly}
-          />
+          <div className="flex w-full max-w-3xl flex-col items-center gap-3">
+            {pendingResume && phase === "idle" && (
+              <ResumeBanner
+                state={pendingResume}
+                onResume={onResumePrevious}
+                onDismiss={onDismissResume}
+              />
+            )}
+            <StartCard
+              meta={displayMeta}
+              onStart={start}
+              loading={phase === "loading"}
+              error={error ?? previewError}
+              metronome={metronome}
+              onToggleMetronome={() => setMetronome((m) => !m)}
+              sfx={sfx}
+              onToggleSfx={() => setSfx((s) => !s)}
+              fpsLock={fpsLock}
+              onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
+              songSource={songSource}
+              chartMode={chartMode}
+              onChangeMode={setChartMode}
+              modeAvailability={modeAvailability}
+              chartLength={chartLength}
+              rawNoteCount={rawNoteCount}
+              best={best}
+              volume={volume}
+              onVolume={setVolume}
+              progressMsg={progressMsg}
+              mirror={mirror}
+              beatmapsetId={beatmapsetId}
+              touchOnly={touchOnly}
+            />
+          </div>
         </Overlay>
       )}
 
@@ -1156,6 +1316,70 @@ function computeAccuracy(stats: PlayerStats): number {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * "Resume previous run?" banner that surfaces when the player
+ * refreshes (or comes back inside the TTL window) mid-song. Sits
+ * above the StartCard inside the same Overlay so it inherits the
+ * dim backdrop and never intercepts pointer events outside its own
+ * box. Two-button layout matches the in-match menu language so the
+ * solo + multi pause UIs feel like the same surface.
+ *
+ * Note: this is a "restart the same song from the beginning"
+ * affordance — we don't try to recover offset, score, or combo.
+ * See `lib/game/resume.ts` for why.
+ */
+function ResumeBanner({
+  state,
+  onResume,
+  onDismiss,
+}: {
+  state: SoloResumeState;
+  onResume: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      className="w-full rounded-2xl border border-accent/40 bg-bone-900/85 px-5 py-4 shadow-[0_0_30px_rgba(61,169,255,0.15)] backdrop-blur"
+      role="region"
+      aria-label="Resume previous run"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-[0.65rem] uppercase tracking-[0.4em] text-accent">
+            previous run detected
+          </p>
+          <p
+            className="mt-1 truncate font-display text-base font-semibold text-bone-50"
+            title={`${state.artist} — ${state.title}`}
+          >
+            {state.artist} — {state.title}
+          </p>
+          <p className="mt-0.5 font-mono text-[0.7rem] uppercase tracking-widest text-bone-50/60">
+            {displayMode(state.mode)} · restart from the beginning
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={onResume}
+            className="rounded-md border border-accent bg-accent/15 px-4 py-2 font-mono text-xs uppercase tracking-widest text-accent transition hover:bg-accent/25"
+          >
+            Resume
+          </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded-md border border-bone-50/30 px-4 py-2 font-mono text-xs uppercase tracking-widest text-bone-50/70 transition hover:border-bone-50/60 hover:text-bone-50"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 function StartCard({
   meta,
   onStart,
@@ -1187,7 +1411,7 @@ function StartCard({
   error: string | null;
   metronome: boolean;
   onToggleMetronome: () => void;
-  /** Master toggle for hit/miss/release SFX — same setting as the in-game HUD's input-feedback toggle (key: N). */
+  /** Master toggle for hit/miss/release SFX — same setting as the in-game HUD's feedback toggle (key: N). */
   sfx: boolean;
   onToggleSfx: () => void;
   /** Render frame-rate cap (off / 30 / 60). Same value as the in-game
@@ -1421,7 +1645,7 @@ function StartCard({
           in-game HUD's state — toggling here is the same as toggling
           in the HUD chip during play. */}
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {/* Same 2-line layout as the FPS / Metronome / Input feedback
+        {/* Same 2-line layout as the FPS / Metronome / Feedback
             tiles: caption row on top, single small-mono detail row on
             the bottom. The big numeric score that used to live in the
             middle was making this tile a third taller than its
@@ -1506,7 +1730,7 @@ function StartCard({
         <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
           <div className="flex items-center justify-between gap-3">
             <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Input feedback
+              Feedback
             </span>
             <input
               type="checkbox"
@@ -1813,7 +2037,7 @@ function HUD({
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
-  /** Per-input feedback SFX toggle (hit / miss / release / milestone). */
+  /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
   songTitle: string | null;
@@ -1957,14 +2181,14 @@ function HUD({
 
       {/* SETTINGS card — now-playing block on top, then four
           consistently-styled tiles for the player's audio + perf
-          knobs (Metronome, Input feedback, FPS lock, Volume). All
+          knobs (Metronome, Feedback, FPS lock, Volume). All
           tiles share the same brutalist border + dark inner fill +
           padding + typography so the strip reads as one cohesive
           settings block; the parent's `gap-1.5 sm:gap-2` is the
           single source of vertical spacing between every tile (and
           between the now-playing block and the first tile), so
           there are no one-off `mt-*` overrides to remember. The
-          checkbox-style toggles for Metronome and Input feedback
+          checkbox-style toggles for Metronome and Feedback
           mirror the StartCard tile aesthetic from the pre-game
           menu — same `<label>` wrap, same accent-colored native
           checkbox — so the player learns the affordance once and
@@ -2081,10 +2305,10 @@ function HUD({
         </label>
         <label
           className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Toggle input feedback (N)"
+          data-tooltip="Toggle feedback (N)"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            Input feedback
+            Feedback
           </span>
           <input
             type="checkbox"

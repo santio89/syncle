@@ -29,6 +29,10 @@ import { LoadingScreen } from "@/components/multi/LoadingScreen";
 import { MultiGame } from "@/components/multi/MultiGame";
 import { ResultsScreen } from "@/components/multi/ResultsScreen";
 import { useRoomSocket } from "@/hooks/useRoomSocket";
+import {
+  useAttemptLeave,
+  useLeaveGuard,
+} from "@/components/LeaveGuardProvider";
 import { isValidRoomCode } from "@/lib/multi/protocol";
 import type { LoadSongResult, ChartMode } from "@/lib/game/chart";
 import { loadSongById } from "@/lib/game/chart";
@@ -74,7 +78,11 @@ export default function MultiRoomPage() {
       /* ignore */
     }
     actions.leave();
-    router.push("/multi");
+    // router.replace so the kicked /multi/[code] URL is removed
+    // from history rather than leaving it as a back-press trap
+    // (re-mounting it would render the join-form fallback, which
+    // a kicked player should never see).
+    router.replace("/multi");
   }, [kicked, actions, router]);
 
   // For users who hit /multi/ABCDEF cold without sessionStorage we render
@@ -137,6 +145,33 @@ export default function MultiRoomPage() {
     if (!snapshot || !sessionId) return null;
     return snapshot.players.find((p) => p.id === sessionId) ?? null;
   }, [snapshot, sessionId]);
+
+  // Leave guard: prompt the user before they accidentally drop out
+  // of the room. Active any time we have a confirmed seat AND we
+  // haven't already been kicked (kick is involuntary — surfacing a
+  // "stay?" prompt to a kicked player would just be confusing).
+  // Covers tab close / refresh (browser-native dialog), browser
+  // back button (popstate sentinel), and in-page Back / Home /
+  // anchor clicks (intercepted via `attemptLeave`).
+  const attemptLeave = useAttemptLeave();
+  const guardActive = me !== null && !kicked;
+  useLeaveGuard({
+    enabled: guardActive,
+    message:
+      snapshot?.phase === "lobby" || snapshot?.phase === "results"
+        ? "You'll leave the room and lose your seat at the table."
+        : "There's a match in progress — leaving will drop you out of this round.",
+    defaultLeave: () => {
+      actions.leave();
+      // router.replace (not push) so the LeaveGuardProvider can
+      // collapse the guarded /multi/[code] entry out of history
+      // — see its sentinel-pop logic. Pressing browser back from
+      // /multi after this lands the user at whatever they were
+      // doing BEFORE joining the room, instead of bouncing back
+      // into a stale "join with name" form on /multi/[code].
+      router.replace("/multi");
+    },
+  });
 
   // ---- chart loading (triggered by phase:loading) -----------------------
   const [loadedChart, setLoadedChart] = useState<LoadSongResult | null>(null);
@@ -218,6 +253,12 @@ export default function MultiRoomPage() {
     if (!snapshot) return;
     const song = snapshot.selectedSong;
     if (!song) return;
+    // Late-joiners and leavers (`me.inMatch === false`) sit in the
+    // lobby with a "match in progress" indicator and never run the
+    // chart locally — skip the heavy download / decode pipeline for
+    // them. They'll get the chart on the next round when the host
+    // pulls everyone back into a fresh match.
+    if (!me?.inMatch) return;
     const phase = snapshot.phase;
     const isLoadingPhase = phase === "loading";
     // Reconnect-during-play recovery: same song selection, no local chart
@@ -350,6 +391,7 @@ export default function MultiRoomPage() {
     snapshot?.selectedSong?.beatmapsetId,
     selectedMode,
     loadedChart,
+    me?.inMatch,
   ]);
 
   // Reset the chart when we go back to lobby so a fresh round can re-trigger
@@ -368,6 +410,35 @@ export default function MultiRoomPage() {
       audioEngineRef.current?.stop();
     }
   }, [snapshot?.phase]);
+
+  // Per-player audio gate: if THIS client just left the match (the
+  // server flipped `me.inMatch` to false in response to `room:leaveMatch`,
+  // or this is a late joiner), MultiGame is about to unmount. Without
+  // this effect the page-level AudioEngine would keep its source node
+  // playing — the player would hear the song they "left" continue in
+  // the background while sitting in the lobby UI. Stopping the engine
+  // here cuts the audio cleanly. We also reset the chart cache so a
+  // future "rejoin match" path (or a new round starting) re-runs the
+  // download + decode from scratch instead of resuming a stale buffer
+  // at a bogus offset.
+  useEffect(() => {
+    const phase = snapshot?.phase;
+    if (
+      phase !== "loading" &&
+      phase !== "countdown" &&
+      phase !== "playing"
+    ) {
+      return;
+    }
+    if (me?.inMatch) return;
+    audioEngineRef.current?.stop();
+    lastLoadedKeyRef.current = null;
+    inflightLoadKeyRef.current = null;
+    setLoadedChart(null);
+    setLoadProgress(null);
+    setLoadError(null);
+    setAudioReady(false);
+  }, [me?.inMatch, snapshot?.phase]);
 
   // Stop the engine when the page itself unmounts (player navigated
   // away, leave-room, etc). Dropping the ref is enough for the
@@ -418,9 +489,18 @@ export default function MultiRoomPage() {
   // the canvas can fill the whole viewport (minus the header), matching the
   // single-player experience. Lobby / loading / results stay in the
   // constrained card layout because they're form-style screens.
+  //
+  // Per-player routing: `me.inMatch` gates whether THIS client is in the
+  // match UI or sitting in the lobby with a "match in progress" indicator.
+  // Late-joiners (`inMatch=false` set by the server in `joinRoom` when the
+  // room is past the lobby) and players who used the in-match menu's
+  // "Leave" button fall into the lobby branch even when the room phase is
+  // `playing`. RoomBody's switch mirrors this — it routes to the Lobby
+  // component for non-participants regardless of `snapshot.phase`.
   const inGame =
     me &&
     snapshot &&
+    me.inMatch &&
     (snapshot.phase === "countdown" || snapshot.phase === "playing");
 
   return (
@@ -431,16 +511,20 @@ export default function MultiRoomPage() {
       <header className="relative z-20 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-6">
         <button
           onClick={() => {
-            actions.leave();
-            // Prefer browser history so we land on whatever page sent us
-            // here (lobby, the /multi entry, the homepage, a friend's
-            // shared link page, etc). If there's no history (direct hit
-            // on the URL), fall back to the multiplayer entry.
-            if (typeof window !== "undefined" && window.history.length > 1) {
-              router.back();
-            } else {
-              router.push("/multi");
-            }
+            // Routed through the global leave-guard so an active
+            // seat surfaces the confirm prompt before the leave +
+            // navigate runs. Pass-through when no guard is active
+            // (joining / connecting screens).
+            attemptLeave(() => {
+              actions.leave();
+              // router.replace (not push) so the LeaveGuardProvider
+              // can collapse the guarded /multi/[code] entry out of
+              // history. With router.push the room URL would still
+              // be one back-press behind /multi — pressing browser
+              // back would re-mount /multi/[code] with no session
+              // and surface a stale JoinForm, creating a loop.
+              router.replace("/multi");
+            });
           }}
           className="group inline-flex items-center gap-2 font-mono text-[11.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
         >
@@ -511,60 +595,76 @@ export default function MultiRoomPage() {
           )}
         </div>
       ) : (
-        <div className="relative z-10 mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 overflow-y-auto px-4 pt-6 pb-12 sm:px-6">
-          {needsJoin && (
-            <JoinForm
-              code={code}
-              name={pendingName}
-              onName={setPendingName}
-              onSubmit={handleJoin}
-              busy={joining}
-              error={joinError}
-            />
-          )}
+        // Two-layer wrapper so the page scrollbar lives at the
+        // VIEWPORT edge instead of the inner content's right edge:
+        //   - Outer: full-width scroll container (z-10, flex-1,
+        //     overflow-y-auto). Its scrollbar attaches to the
+        //     right side of the viewport because the container
+        //     itself spans the full viewport width.
+        //   - Inner: centered, max-w-7xl, holds all the actual
+        //     content. Padding lives here so the centered column
+        //     keeps the same gutter as before.
+        // Putting overflow-y-auto on the centered max-w-7xl box
+        // (as we did before) made the scrollbar sit at the right
+        // edge of the centered box — visibly inset on wide
+        // monitors — instead of flush against the viewport like
+        // every normal website does it.
+        <div className="relative z-10 flex-1 overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pt-6 pb-12 sm:px-6">
+            {needsJoin && (
+              <JoinForm
+                code={code}
+                name={pendingName}
+                onName={setPendingName}
+                onSubmit={handleJoin}
+                busy={joining}
+                error={joinError}
+              />
+            )}
 
-          {/* Connecting card covers two cases:
-                1. socket isn't connected yet (initial handshake / reconnecting),
-                2. socket IS connected and we have a stored session for this
-                   room, so the hook is mid-rejoin — show "joining" UI rather
-                   than the JoinForm or a blank page. */}
-          {!needsJoin && !me && <ConnectingCard conn={conn} />}
+            {/* Connecting card covers two cases:
+                  1. socket isn't connected yet (initial handshake / reconnecting),
+                  2. socket IS connected and we have a stored session for this
+                     room, so the hook is mid-rejoin — show "joining" UI rather
+                     than the JoinForm or a blank page. */}
+            {!needsJoin && !me && <ConnectingCard conn={conn} />}
 
-          {me && snapshot && (
-            <RoomBody
-              code={code}
-              snapshot={snapshot}
-              scoreboard={scoreboard}
-              results={results}
-              chat={chat}
-              me={me.id}
-              isHost={me.isHost}
-              actions={actions}
-              loadedChart={loadedChart}
-              loadProgress={loadProgress}
-              loadError={loadError}
-              loadDeadline={loadDeadline}
-              selectedMode={selectedMode}
-              audioEngine={audioEngineRef.current}
-              audioReady={audioReady}
-            />
-          )}
+            {me && snapshot && (
+              <RoomBody
+                code={code}
+                snapshot={snapshot}
+                scoreboard={scoreboard}
+                results={results}
+                chat={chat}
+                me={me.id}
+                isHost={me.isHost}
+                actions={actions}
+                loadedChart={loadedChart}
+                loadProgress={loadProgress}
+                loadError={loadError}
+                loadDeadline={loadDeadline}
+                selectedMode={selectedMode}
+                audioEngine={audioEngineRef.current}
+                audioReady={audioReady}
+              />
+            )}
 
-          {lastError && (
-            // Width-locked to the JoinForm / ConnectingCard above so
-            // the error banner reads as a sibling of that card instead
-            // of a full-bleed strip across the page. Both surfaces use
-            // `mx-auto w-full max-w-md` — keep them in lockstep here.
-            <div className="brut-card-accent mx-auto flex w-full max-w-md items-start justify-between gap-3 p-3">
-              <p className="font-mono text-[0.79rem]">
-                <span className="text-rose-400">[{lastError.code}]</span>{" "}
-                {lastError.message}
-              </p>
-              <button onClick={clearError} className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent">
-                dismiss
-              </button>
-            </div>
-          )}
+            {lastError && (
+              // Width-locked to the JoinForm / ConnectingCard above so
+              // the error banner reads as a sibling of that card instead
+              // of a full-bleed strip across the page. Both surfaces use
+              // `mx-auto w-full max-w-md` — keep them in lockstep here.
+              <div className="brut-card-accent mx-auto flex w-full max-w-md items-start justify-between gap-3 p-3">
+                <p className="font-mono text-[0.79rem]">
+                  <span className="text-rose-400">[{lastError.code}]</span>{" "}
+                  {lastError.message}
+                </p>
+                <button onClick={clearError} className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent">
+                  dismiss
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </main>
@@ -620,13 +720,37 @@ function RoomBody({
   // to feel intentional without slowing anyone down. The `key`
   // attribute on the wrapper is the phase name so React fully unmounts
   // / re-mounts on phase change, re-firing the animation.
+  // Per-player routing: late-joiners + leavers (`inMatch=false`) are
+  // routed to the Lobby for the entire duration of the match —
+  // regardless of whether the room phase is `loading`, `countdown`,
+  // `playing`, or `results`. The Lobby component picks up the
+  // match-in-progress state from `snapshot.phase` + the live
+  // scoreboard and renders a compact match-watcher view. Only
+  // `inMatch=true` players see the LoadingScreen / MultiGame /
+  // ResultsScreen below.
+  const meSnapshot = snapshot.players.find((p) => p.id === me);
+  const inMatch = !!meSnapshot?.inMatch;
   const inner = (() => {
+    if (snapshot.phase !== "lobby" && !inMatch) {
+      return (
+        <Lobby
+          code={code}
+          snapshot={snapshot}
+          scoreboard={scoreboard}
+          meId={me}
+          isHost={isHost}
+          chat={chat}
+          actions={actions}
+        />
+      );
+    }
     switch (snapshot.phase) {
       case "lobby":
         return (
           <Lobby
             code={code}
             snapshot={snapshot}
+            scoreboard={scoreboard}
             meId={me}
             isHost={isHost}
             chat={chat}
@@ -688,8 +812,12 @@ function RoomBody({
   // chain intact; the lobby / loading / results phases stay in their
   // default auto-height card layout because they're form-style screens
   // that scroll with the page rather than fill it.
+  // Only true match participants get the full-bleed canvas shell —
+  // in-lobby watchers (inMatch=false) stay in the constrained card
+  // layout even when the room phase is `playing`.
   const isCanvasPhase =
-    snapshot.phase === "countdown" || snapshot.phase === "playing";
+    inMatch &&
+    (snapshot.phase === "countdown" || snapshot.phase === "playing");
   // Stable key across countdown → playing so React keeps the SAME
   // <MultiGame> instance through the transition. Using `snapshot.phase`
   // here (the previous behavior) caused the wrapper to unmount and

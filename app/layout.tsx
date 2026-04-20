@@ -3,6 +3,7 @@ import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { TooltipLayer } from "@/components/TooltipLayer";
+import { LeaveGuardProvider } from "@/components/LeaveGuardProvider";
 import { themeNoFlashScript } from "@/components/theme-no-flash-script";
 
 const display = Space_Grotesk({
@@ -49,7 +50,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          {/* LeaveGuardProvider sits inside ThemeProvider so its
+              modal inherits the same theme tokens. Inert when no
+              page registers a guard — the cost on idle pages is one
+              context value + a couple of refs. */}
+          <LeaveGuardProvider>{children}</LeaveGuardProvider>
+        </ThemeProvider>
         {/* Single-mount, document-level event delegation. Replaces the
             native `title` tooltip everywhere with the brutalist bubble
             in components/TooltipLayer.tsx. Placed AFTER children so it

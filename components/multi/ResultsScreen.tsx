@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
+import { useAttemptLeave } from "@/components/LeaveGuardProvider";
 import type { ResultsPayload, RoomActions } from "@/hooks/useRoomSocket";
 import type { ChatMessage, RoomSnapshot, Standing } from "@/lib/multi/protocol";
 
@@ -38,6 +39,7 @@ export function ResultsScreen({
   actions: RoomActions;
 }) {
   const router = useRouter();
+  const attemptLeave = useAttemptLeave();
   // While we're waiting for the server to flip the room phase back to
   // "lobby" after a "Back to room" click, swap the button to a
   // confirmation pill. We don't unmount this whole screen because the
@@ -80,10 +82,22 @@ export function ResultsScreen({
   }, [returning, actions]);
 
   const handleLeave = useCallback(() => {
-    actions.sendChoice("leave");
-    actions.leave();
-    router.push("/");
-  }, [actions, router]);
+    // Routed through the global leave-guard so a results-screen
+    // exit also gets the "Are you sure?" prompt — same surface as
+    // closing the tab or hitting browser back. Pass-through when
+    // the guard happens to be off (shouldn't on results, but the
+    // helper handles it gracefully either way).
+    attemptLeave(() => {
+      actions.sendChoice("leave");
+      actions.leave();
+      // router.replace so the LeaveGuardProvider can collapse the
+      // /multi/[code] entry (and its sentinel) out of history. With
+      // router.push the room URL would still sit one back-press
+      // behind /; pressing back would re-mount it in the join-form
+      // fallback for a player who already left, creating a loop.
+      router.replace("/");
+    });
+  }, [attemptLeave, actions, router]);
 
   // ESC = leave shortcut. Keep the same affordance as before — quick
   // way out for users who don't want to wait on whatever the room is

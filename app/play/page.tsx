@@ -2,9 +2,11 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
+import { useAttemptLeave } from "@/components/LeaveGuardProvider";
 
 // Game uses browser-only APIs (AudioContext, Canvas), so render client-side.
 // Keeping the page itself "use client" too — mixing a server page that both
@@ -22,6 +24,8 @@ const Game = dynamic(() => import("@/components/Game"), {
 });
 
 export default function PlayPage() {
+  const router = useRouter();
+  const attemptLeave = useAttemptLeave();
   return (
     <main className="relative flex h-screen w-screen flex-col overflow-hidden bg-ink-900">
       {/* Slim top bar */}
@@ -33,6 +37,19 @@ export default function PlayPage() {
       <header className="z-30 flex items-center justify-between gap-3 border-b-2 border-bone-50/20 px-4 py-3 sm:px-6">
         <Link
           href="/"
+          // Routed through the global LeaveGuardProvider so an
+          // active solo run surfaces the "Are you sure?" prompt
+          // before the navigation runs. Pass-through when no run
+          // is in progress (idle / loading / results phases).
+          onClick={(e) => {
+            e.preventDefault();
+            // router.replace so the LeaveGuardProvider can collapse
+            // the /play entry out of history alongside its sentinel.
+            // Pressing browser back from / would otherwise re-mount
+            // /play and re-roll a fresh random song mid-action,
+            // which feels like a back-button loop.
+            attemptLeave(() => router.replace("/"));
+          }}
           className="group inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 transition-colors hover:text-accent"
         >
           <ArrowIcon
