@@ -1,4 +1,4 @@
-import { Judgment, LANE_PITCH } from "./types";
+import { Judgment } from "./types";
 
 /**
  * Multiplier on the SFX bus relative to the song bus AT MASTER 100 %.
@@ -29,24 +29,25 @@ import { Judgment, LANE_PITCH } from "./types";
  *                        practical noise floor of any loud song.
  *                        Players still couldn't hear hits when music
  *                        was playing.
- *   - 1.0   (this value): no bus-level attenuation. The per-hit
- *                        oscillator amplitudes (perfect=0.41,
- *                        downbeat=0.41, miss=0.55, etc.) now do all
- *                        the SFX-vs-song balancing on their own,
- *                        landing peak SFX around 41-55 % of song peak
- *                        at slider 1.0 — the same "punchy but never
+ *   - 1.0   (this value): no bus-level attenuation. Per-source
+ *                        peaks (perfect-hit drum ≈ 0.44 combined
+ *                        noise+body, miss drum ≈ 0.56 combined,
+ *                        metronome downbeat 0.41) now do all the
+ *                        SFX-vs-song balancing on their own, landing
+ *                        peak SFX around 41-56 % of song peak at
+ *                        slider 1.0 — the same "punchy but never
  *                        on top of the song" feel osu! and friends
- *                        ship with. Miss runs hotter than hit because
- *                        its low-pass-filtered sawtooth content gets
- *                        masked by the song's bass; see playMiss for
- *                        the full rationale.
+ *                        ship with. Miss runs slightly hotter than
+ *                        hit because its low-frequency body content
+ *                        gets masked by the song's bass; see
+ *                        playMiss for the full rationale.
  *
  * Even at BASE_SFX_LEVEL = 1.0 the SFX bus stays NATURALLY below the
- * song peak because per-hit oscillator volumes max out at 0.55; the
- * song buffer can hit 1.0 amp on a loud master. That ~5-7 dB inherent
- * headroom plus the master limiter keeps combined peaks under
- * 0 dBFS even when a perfect-tap, a metronome downbeat and a song
- * transient land on the same sample.
+ * song peak because per-source peaks max out around 0.56 (constructive
+ * sum of noise + body envelopes); the song buffer can hit 1.0 amp on a
+ * loud master. That ~5-7 dB inherent headroom plus the master limiter
+ * keeps combined peaks under 0 dBFS even when a perfect-tap drum, a
+ * metronome downbeat and a song transient land on the same sample.
  *
  * The earliest design used a square-root taper on SFX while the song
  * used quadratic, intending to keep feedback "audible at low master".
@@ -108,15 +109,15 @@ function perceivedToGain(perceived: number): number {
  * SFX_LOW_VOLUME_BOOST` — i.e. the SFX bus fades MORE SLOWLY than
  * the song bus, so the music vs SFX dB ratio shifts in feedback's
  * favour at quieter masters. Concrete dB ratio table (per-hit
- * peak vs song peak with per-hit osc amplitude 0.41):
- *   slider 1.00  →  41 % of song peak (-7.8 dB)
- *   slider 0.80  →  46 % of song peak (-6.7 dB)
- *   slider 0.50  →  55 % of song peak (-5.2 dB)
- *   slider 0.30  →  60 % of song peak (-4.4 dB)
- *   slider 0.10  →  66 % of song peak (-3.6 dB)
- *   slider 0.05  →  67 % of song peak (-3.5 dB)
- * For miss thuds (osc amplitude 0.55) the same table tops out at
- * 91 % at the lowest slider position — STILL below the song peak
+ * drum peak vs song peak, perfect-hit drum ≈ 0.44 combined):
+ *   slider 1.00  →  44 % of song peak (-7.1 dB)
+ *   slider 0.80  →  49 % of song peak (-6.2 dB)
+ *   slider 0.50  →  59 % of song peak (-4.6 dB)
+ *   slider 0.30  →  64 % of song peak (-3.9 dB)
+ *   slider 0.10  →  71 % of song peak (-3.0 dB)
+ *   slider 0.05  →  72 % of song peak (-2.8 dB)
+ * For miss drums (combined ≈ 0.56) the same table tops out around
+ * 92 % at the lowest slider position — STILL below the song peak
  * but very close, which is fine: at 5 % master both are near the
  * noise floor anyway, and "more even" is exactly what the player
  * asked for at quiet volumes.
@@ -157,16 +158,17 @@ const SFX_LOW_VOLUME_BOOST = 0.7;
  * favour exactly when the perceptual problems get worst. The function
  * is bounded so SFX bus peak NEVER exceeds song bus peak at any
  * slider position (compensation max is `1 + SFX_LOW_VOLUME_BOOST` and
- * even the loudest per-hit oscillator amplitude (miss = 0.55) stays
- * under unity).
+ * even the loudest per-source drum peak (miss ≈ 0.56) stays under
+ * unity).
  *
  * The earliest design used `√perceived` on SFX vs `perceived²` on
  * song, which reached the inversion case at ~20 % slider (SFX +14 dB
  * over song). The bounded linear-comp here cannot reach that — by
  * construction SFX bus < song bus * (1 + boost) at every slider
  * position, and the boost is small enough (0.7) that even with the
- * hottest per-hit (miss at 0.55), the absolute SFX peak still rounds
- * to "even with song" at the lowest realistic master, never above.
+ * hottest per-source drum (miss ≈ 0.56), the absolute SFX peak still
+ * rounds to "even with song" at the lowest realistic master, never
+ * above.
  */
 function perceivedToSfxGain(perceived: number): number {
   if (perceived <= 0) return 0;
@@ -204,11 +206,22 @@ function perceivedToSfxGain(perceived: number): number {
  *     buffer size, which is the dominant cause of "feels off sometimes".
  *
  * In addition to song playback this engine produces gameplay feedback:
- *   - playHit(lane, judgment) — a short pluck tone in the song's key,
- *     pitched per lane. Perfect hits get a 5th-up shimmer.
- *   - playMiss() / playEmpty() — a dull thud + a brief volume duck and
- *     low-pass filter sweep on the song. The song literally sounds "off"
- *     for ~250ms when you whiff, like an unplugged guitar moment.
+ *   - playHit(lane, judgment) — an atonal filtered-noise drum tap.
+ *     Brightness scales with judgment (perfect = crisp, good = muted)
+ *     plus a subtle low body for snap. ATONAL by design — uses noise
+ *     not oscillators so it never clashes with the song's key.
+ *   - playRelease(lane, judgment) — a softer / duller variant of the
+ *     hit drum for hold-tail releases. Same atonal noise basis.
+ *   - playMiss(empty) — split by intent. Real miss (empty=false) is
+ *     a lowpass-filtered descending sawtooth (140→55 Hz) plus the
+ *     song-duck cue (briefly drops song volume, low-passes it, and
+ *     pitch-bends it down so the song sounds "off" for ~250ms —
+ *     like an unplugged guitar moment). Empty press (empty=true) is
+ *     a muted drum (lowpass noise + low body sine) with no song
+ *     duck — just an acknowledgement that the input registered.
+ *   - playComboMilestone(milestone) — a brief tonal arpeggio (the one
+ *     intentional musical cue, since milestones are rewards not
+ *     input feedback).
  *   - scheduleClick(beatTime, downbeat) — a metronome tick scheduled at a
  *     specific AudioContext time. Used to verify rhythm sync.
  *
@@ -230,7 +243,7 @@ function perceivedToSfxGain(perceived: number): number {
  * The function is bounded so SFX bus peak never exceeds song bus
  * peak at any slider position. The actual mix balance — why SFX
  * never overpowers the song even with the boost — lives in the
- * per-hit oscillator volumes (which max around 0.41-0.55) being
+ * per-source drum peaks (which max around 0.44-0.56) being
  * smaller than the song buffer's typical 1.0 peak. See
  * `perceivedToSfxGain` for the full rationale (including the older
  * constant-ratio design that left low-volume SFX inaudible, and the
@@ -251,6 +264,16 @@ export class AudioEngine {
   private songGain: GainNode | null = null;
   private songFilter: BiquadFilterNode | null = null;
   private sfxGain: GainNode | null = null;
+  /**
+   * Cached white-noise AudioBuffer reused by every drum-style SFX
+   * (`playHit`, `playRelease`, `playMiss`, empty press). Generated
+   * lazily on first need and held for the lifetime of the context —
+   * one ~400ms mono buffer is ~70 KB at 44.1kHz, negligible. Reusing
+   * the same buffer means filter+envelope variations are what
+   * differentiate hit from miss from empty-press, not different noise
+   * source allocations per call.
+   */
+  private noiseBuf: AudioBuffer | null = null;
 
   /** AudioContext.currentTime at which the song's t=0 lines up. */
   private startedAtCtxTime = 0;
@@ -658,79 +681,180 @@ export class AudioEngine {
   // ---------------------------------------------------------------------
 
   /**
-   * A soft pluck tone for a successful hit.
+   * Successful-hit feedback — a bright atonal drum tap.
    *
-   * Sine base voice (was triangle) — sine has no harmonics above the
-   * fundamental, so a stream of taps reads as a melodic chime instead
-   * of the slightly buzzy "pencil tap" the triangle wave produced.
-   * The overall envelope is the same plucked shape (fast-ish attack,
-   * exponential decay over ~350ms); only the timbre is gentler.
+   * Why drums (filtered noise) instead of pluck oscillators:
+   *   1. Atonal — has no defined fundamental, so it CAN'T clash with
+   *      the song's key (the previous lane-pitched sine plucks would
+   *      land out-of-key on songs in F# or Bb minor and read as
+   *      "wrong notes").
+   *   2. Percussive timbre matches the action — pressing a key is a
+   *      physical tap; a filtered noise transient reads as that tap.
    *
-   * Per-judgment volumes (perfect=0.40, great=0.32, good=0.25) target
-   * the same "punchy hit-sound that sits clearly above the song
-   * without overpowering it" feel osu! ships with. Peak SFX amplitude
-   * lands at ~40 % of song peak amplitude at slider 1.0, putting the
-   * pluck transient well above the music's RMS while still leaving the
-   * song's peaks on top. The accuracy ladder still scales by loudness
-   * so perfect feels snappiest, great feels firm, good feels soft —
-   * non-verbal feedback the player learns without thinking. Iterations:
-   *   - 0.22/0.17/0.12  : original. Inaudible against any loud song.
-   *   - 0.32/0.25/0.18  : +45 %. Better but still buried.
-   *   - 0.40/0.32/0.25  : +25 % more, plus BASE_SFX_LEVEL → 1.0
-   *                       (see the constant's doc). Clearly audible.
+   * Filter choice — LOWPASS (not highpass): a HIGHPASS at 4-5 kHz
+   * removes everything BELOW the cutoff, leaving only the
+   * high-frequency sizzle band where hi-hats and cymbals live —
+   * which made the previous revision sound like a hi-hat, not a
+   * drum. A real drum has BODY (60-300 Hz) plus a stick attack
+   * (mids + some highs). LOWPASS at a high cutoff (3-5 kHz) keeps
+   * the body and most of the stick attack while rolling off the
+   * cymbal-sizzle band — textbook snare drum spectrum. Pair it
+   * with a low body sine that bends down (the "drum body" thump)
+   * and you get a coherent drum-kit hit.
+   *
+   * Per-judgment differentiation (still NO pitch — purely timbral):
+   *   perfect : bright snare-drum hit (lowpass 5.5 kHz keeps a lot
+   *             of stick attack) + firm body thump. Snappy.
+   *   great   : warmer drum (lowpass 4.5 kHz, less sizzle through)
+   *             + medium body. Firm.
+   *   good    : softer drum (lowpass 3.5 kHz, body-dominant)
+   *             + light body. Pad-like.
+   *
+   * Hits vs empty press differentiation:
+   *   - Empty press lowpass cutoff is ~800 Hz (truly muffled, only
+   *     sub + low-mids through — felt mallet on a damped pad).
+   *   - Hit cutoffs are 3.5-5.5 kHz (full drum spectrum through).
+   *   That ~5x cutoff ratio is what reads as "brighter" vs "muffled"
+   *   while keeping both squarely in drum-kit territory.
+   *
+   * Subtle lane offset (~±300 Hz spread) on the lowpass cutoff so
+   * a stream of D-D-J-J taps feels textured rather than monotonous,
+   * without ever introducing a defined pitch.
+   *
+   * Volume targets: combined output peak ~0.50 / 0.40 / 0.30 for
+   * perfect / great / good. Lowpass at high cutoff passes ~25-30 %
+   * of the noise spectrum, so output noise peak ≈ noiseVol * 0.5;
+   * combined with the body sine (full amplitude), total constructive
+   * peak lands at the targets above. Loudness-compensation curve
+   * and dB-vs-song-peak tables remain valid.
    */
   playHit(lane: number, judgment: Judgment): void {
     if (!this.ctx || !this.sfxGain) return;
     if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
 
-    const freq = LANE_PITCH[lane] ?? 220;
-    // Per-judgment volumes — 0.41 / 0.328 / 0.258 — are the latest
-    // step in an iterative tuning loop driven by player feedback.
-    // The previous 0.405 / 0.325 / 0.255 felt slightly under-leveled
-    // mid-song; every SFX source (hit / miss / release / metronome /
-    // combo) was bumped by the SAME ~1 % in the same pass so every
-    // relative balance stays proportional — just everything a hair
-    // louder together.
-    const vol =
-      judgment === "perfect" ? 0.41  :
-      judgment === "great"   ? 0.328 :
-      judgment === "good"    ? 0.258 : 0.258;
+    // Lane brightness offset. Lane 0 (leftmost) gets the warmest
+    // tap, lane 3 (rightmost) the crispest. Spread is small enough
+    // that the ear reads it as "slight texture variation" rather
+    // than 4 distinct pitches.
+    const laneOffset = (lane - 1.5) * 300;
 
-    this.pluck(t, freq, 0.36, vol, "sine");
     if (judgment === "perfect") {
-      // 5th-up sine shimmer (was octave-up). The 5th sits inside the
-      // chord most charts use, so the perfect cue feels "in tune" with
-      // the song rather than dropping a bright bell on top.
-      this.pluck(t + 0.002, freq * 1.5, 0.26, 0.15, "sine");
+      this.playDrum({
+        when: t,
+        filterType: "lowpass",
+        filterHz: 5500 + laneOffset,
+        noiseVol: 0.714,
+        dur: 0.085,
+        bodyHz: 220,
+        bodyVol: 0.306,
+        bodyDur: 0.10,
+      });
+    } else if (judgment === "great") {
+      this.playDrum({
+        when: t,
+        filterType: "lowpass",
+        filterHz: 4500 + laneOffset,
+        noiseVol: 0.561,
+        dur: 0.08,
+        bodyHz: 200,
+        bodyVol: 0.224,
+        bodyDur: 0.09,
+      });
+    } else {
+      // "good" (or anything else that reaches here): softer drum,
+      // body-dominant. Lower cutoff = less stick brightness through,
+      // so it reads as a pad-like tap but still drum-shaped.
+      this.playDrum({
+        when: t,
+        filterType: "lowpass",
+        filterHz: 3500 + laneOffset,
+        noiseVol: 0.428,
+        dur: 0.075,
+        bodyHz: 180,
+        bodyVol: 0.163,
+        bodyDur: 0.08,
+      });
     }
-    // No "good" detune voice — a deliberately dissonant cue read as a
-    // wobble that confused players into thinking the engine itself was
-    // off-pitch. The lower base volume + lack of shimmer is enough to
-    // signal "good, but not great" without an audible warble.
   }
 
-  /** A short, soft tone for the release of a hold note's tail. */
+  /**
+   * Hold-tail release feedback — a softer/duller variant of `playHit`.
+   * Releases are SECONDARY feedback (the player already got the head
+   * cue when they pressed; this just confirms the tail landed) so
+   * the drum is ~25-30 % quieter and a touch warmer than the
+   * corresponding hit. Same atonal lowpass-noise basis to keep the
+   * whole input-feedback family coherent.
+   */
   playRelease(lane: number, judgment: Judgment): void {
     if (!this.ctx || !this.sfxGain) return;
     if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
-    const freq = (LANE_PITCH[lane] ?? 220) * 1.5; // 5th above the head
-    // Volumes scaled in lockstep with `playHit` (see that doc) so a
-    // sustained note's release reads at the same perceptual level as
-    // its head — pulled apart by their pitch, not their loudness.
-    // +1 % across the board in the latest pass to match the same
-    // bump applied to playHit / playMiss / scheduleClick (see
-    // playHit doc for the smoothing rationale).
-    const vol =
-      judgment === "perfect" ? 0.328 :
-      judgment === "great"   ? 0.258 :
-      judgment === "good"    ? 0.187 : 0.0;
-    if (vol > 0) this.pluck(t, freq, 0.28, vol, "sine");
-    if (judgment === "miss") this.playMiss(false);
+
+    if (judgment === "miss") {
+      // A missed tail = the player let go too early/late. Same
+      // impact as a head miss (descending sawtooth thud + song duck).
+      this.playMiss(false);
+      return;
+    }
+
+    const laneOffset = (lane - 1.5) * 300;
+
+    if (judgment === "perfect") {
+      this.playDrum({
+        when: t,
+        filterType: "lowpass",
+        filterHz: 5000 + laneOffset,
+        noiseVol: 0.561,
+        dur: 0.075,
+        bodyHz: 200,
+        bodyVol: 0.224,
+        bodyDur: 0.09,
+      });
+    } else if (judgment === "great") {
+      this.playDrum({
+        when: t,
+        filterType: "lowpass",
+        filterHz: 4000 + laneOffset,
+        noiseVol: 0.428,
+        dur: 0.07,
+        bodyHz: 180,
+        bodyVol: 0.163,
+        bodyDur: 0.08,
+      });
+    } else {
+      this.playDrum({
+        when: t,
+        filterType: "lowpass",
+        filterHz: 3000 + laneOffset,
+        noiseVol: 0.326,
+        dur: 0.065,
+        bodyHz: 160,
+        bodyVol: 0.122,
+        bodyDur: 0.07,
+      });
+    }
   }
 
-  /** A miss: dull thud + briefly muffle the song so it sounds wrong. */
+  /**
+   * Miss feedback — split by intent:
+   *
+   *   empty=false  (real miss / wrong key on a note):
+   *     The original "off" cue: a lowpass-filtered sawtooth
+   *     descending 140 → 55 Hz, plus the song-duck cue (briefly
+   *     drops song volume, low-passes it, and pitch-bends it down
+   *     so the song itself sounds "off" for ~250ms). Distinctive,
+   *     unmistakable, and after experimenting with a kick+snare
+   *     drum variant we kept this one because it reads more clearly
+   *     as "you whiffed" than a generic drum hit — the descending
+   *     pitch is doing semantic work.
+   *   empty=true   (player tapped a lane with no note):
+   *     A MUTED drum: a soft mid-low body (140→70 Hz) + a
+   *     lowpass noise tail (~800 Hz) for "padded surface" texture.
+   *     No song duck. Soft enough that warm-up taps don't feel
+   *     punishing; loud enough that the press is physically
+   *     acknowledged. Combined peak ~0.32, well under a real miss.
+   */
   playMiss(empty: boolean = false): void {
     if (!this.ctx || !this.sfxGain) return;
     // Gating playMiss here also suppresses the song-duck cue below
@@ -740,7 +864,32 @@ export class AudioEngine {
     if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
 
-    // Dull descending thud.
+    if (empty) {
+      // Muted drum: soft body sine + low-passed noise tail.
+      // The body carries most of the audible level (sines come out
+      // at full amplitude, noise through a narrow lowpass doesn't),
+      // the noise just adds "texture" so it doesn't sound like a
+      // pure tone. No song duck — empty press is acknowledgement,
+      // not punishment.
+      this.playDrum({
+        when: t,
+        filterType: "lowpass",
+        filterHz: 800,
+        filterQ: 0.7,
+        noiseVol: 0.561,
+        dur: 0.09,
+        bodyHz: 140,
+        bodyVol: 0.204,
+        bodyDur: 0.08,
+      });
+      return;
+    }
+
+    // Real miss: lowpass-filtered descending sawtooth. The original
+    // design — kept on purpose. The 140→55 Hz glide reads
+    // semantically as "wrong / falling apart" in a way no generic
+    // drum hit does, and the lowpass at 700 Hz gives it the dull
+    // body that pairs with the song-duck cue underneath.
     const osc = this.ctx.createOscillator();
     osc.type = "sawtooth";
     osc.frequency.setValueAtTime(140, t);
@@ -751,34 +900,20 @@ export class AudioEngine {
     filt.frequency.value = 700;
 
     const env = this.ctx.createGain();
-    // The miss thud is a low-pass-filtered sawtooth descending
-    // 140 → 55 Hz. That puts almost all its energy in the same
-    // frequency band as a typical song's kick + bass, which masks
-    // it heavily, so these peaks are sized for PARITY OF AUDIBILITY,
-    // not parity of raw amplitude:
-    //   - full miss   : 0.55. Roughly 34 % hotter than a perfect
-    //                   hit's 0.41 because the filtered sawtooth
-    //                   needs that extra headroom to clear the
-    //                   song's low-frequency bed. Combined with the
-    //                   song duck (`duckSong`, fires only on
-    //                   non-empty miss) the cue now reads as a
-    //                   distinct "bonk" even mid-chorus.
-    //   - empty press : 0.318. Still meaningfully softer than a
-    //                   real miss so warm-up taps don't feel
-    //                   punished, but loud enough to register as a
-    //                   physical "you touched something" tap during
-    //                   gameplay (~58 % of a real miss).
-    // Both received the +1 % across-the-board bump (see playHit doc).
-    const peak = empty ? 0.318 : 0.55;
+    // 0.55 peak: the same level the drum-redesign experiment
+    // landed on, sized for parity-of-audibility against the song's
+    // bass band (the lowpass-filtered sawtooth puts most of its
+    // energy in the same range as a typical kick + bass, so it
+    // needs more raw amplitude than a hit drum to clear the song).
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(peak, t + 0.005);
+    env.gain.linearRampToValueAtTime(0.55, t + 0.005);
     env.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
 
     osc.connect(filt).connect(env).connect(this.sfxGain);
     osc.start(t);
     osc.stop(t + 0.25);
 
-    if (!empty) this.duckSong();
+    this.duckSong();
   }
 
   /**
@@ -845,12 +980,15 @@ export class AudioEngine {
     // poking ears. C5 ≈ 523Hz.
     const root = 523.25;
     const intensity = Math.min(1, milestone / 500); // 25 → 0.05, 500+ → 1
-    // baseVol scaled in lockstep with `playHit` (see that doc) so the
-    // milestone arpeggio reads as "celebration on top of hit feedback"
-    // instead of getting buried under the song. Spread between low
-    // (0.328) and high (0.558) keeps the 25-combo cue tasteful while
-    // letting the 500+ chime feel earned. +1 % across-the-board bump
-    // applied here too (see playHit doc for the smoothing rationale).
+    // baseVol sized to sit at the same perceptual loudness as the
+    // hit drums (0.44 combined peak) so the milestone arpeggio reads
+    // as "celebration on top of hit feedback" instead of getting
+    // buried under the song. Spread between low (0.328) and high
+    // (0.558) keeps the 25-combo cue tasteful while letting the
+    // 500+ chime feel earned. Intentionally tonal (unlike the atonal
+    // input-feedback drums) because milestones are REWARDS, not
+    // input acknowledgements — a melodic flourish reads as
+    // "achievement" the way a percussive tap reads as "input".
     const baseVol = 0.328 + intensity * 0.23;
     this.pluck(t,         root,        0.32, baseVol,        "triangle");
     this.pluck(t + 0.06,  root * 1.5,  0.30, baseVol * 0.85, "triangle");
@@ -864,21 +1002,32 @@ export class AudioEngine {
   /**
    * Schedule a metronome click at a given AudioContext time.
    *
-   * Click peaks (downbeat 0.40 / upbeat 0.22) sit at the same absolute
-   * amplitude as a perfect hit so a player who relies on the
-   * metronome to follow rhythm hears it at the same loudness as their
-   * own hit feedback — a coherent "tick / pluck / tick / pluck" mix.
-   * The metronome is high-frequency (1000–1500 Hz) and very short
-   * (~60 ms), so even at this peak it doesn't dominate the song —
-   * the human ear hears the tick as a clean, isolated rhythmic cue
-   * thanks to its narrow time + frequency footprint.
+   * Click peaks (downbeat 0.41 / upbeat 0.227) sit at roughly the same
+   * perceptual loudness as the bright top end of a hit drum so a
+   * player who relies on the metronome to follow rhythm hears it at
+   * a similar level to their own hit feedback — a coherent
+   * "tick / tap / tick / tap" mix. The metronome is high-frequency
+   * (1000–1500 Hz) and very short (~60 ms), so even at this peak it
+   * doesn't dominate the song — the human ear hears the tick as a
+   * clean, isolated rhythmic cue thanks to its narrow time +
+   * frequency footprint.
    *
-   * History (was 0.18/0.09, then 0.30/0.16, now 0.40/0.22): each bump
-   * was driven by reports of the metronome being inaudible during
-   * normally-mastered songs even at slider 1.0. With BASE_SFX_LEVEL
-   * now at 1.0 (no bus-level attenuation), this is the level that
-   * actually clears the music's RMS noise floor at every master
-   * volume the player is realistically going to use.
+   * Why a tonal sine here (vs the atonal noise drums for input
+   * feedback): a metronome's whole job is to be a clean, easily
+   * trackable PULSE. A pitched click at a fixed octave is the
+   * canonical way to do that across every metronome ever shipped.
+   * Switching to noise here would make the rhythmic anchor harder
+   * to lock onto, which is the opposite of what the metronome is
+   * for. The pitch (1000/1500 Hz) is high enough that it can't
+   * clash with any song's harmonic content the way the old
+   * lane-pitched plucks could.
+   *
+   * History (was 0.18/0.09, then 0.30/0.16, now 0.41/0.227): each
+   * bump was driven by reports of the metronome being inaudible
+   * during normally-mastered songs even at slider 1.0. With
+   * BASE_SFX_LEVEL now at 1.0 (no bus-level attenuation), this is
+   * the level that actually clears the music's RMS noise floor at
+   * every master volume the player is realistically going to use.
    */
   scheduleClick(when: number, downbeat: boolean): void {
     if (!this.ctx || !this.sfxGain || !this.metronomeOn) return;
@@ -887,11 +1036,6 @@ export class AudioEngine {
     osc.frequency.value = downbeat ? 1500 : 1000;
 
     const env = this.ctx.createGain();
-    // Peak sits at the same absolute level as a perfect hit so the
-    // "tick / pluck / tick / pluck" rhythm reads as one coherent cue
-    // stream. +1 % across-the-board bump applied here (matches
-    // playHit / playMiss / playRelease / playComboMilestone — see
-    // playHit doc for the smoothing rationale).
     const peak = downbeat ? 0.41 : 0.227;
     env.gain.setValueAtTime(0, when);
     env.gain.linearRampToValueAtTime(peak, when + 0.002);
@@ -903,6 +1047,115 @@ export class AudioEngine {
   }
 
   // ---------------------------------------------------------------------
+
+  /**
+   * Lazily generate (and cache) a short white-noise AudioBuffer used
+   * by every drum-style SFX. 400 ms is plenty: the longest drum
+   * envelope in this engine (a real miss) is ~180 ms. Reused across
+   * every `playDrum` call — the buffer source itself is cheap, the
+   * buffer allocation is the part we want to do exactly once.
+   */
+  private getNoiseBuffer(): AudioBuffer | null {
+    if (!this.ctx) return null;
+    if (this.noiseBuf) return this.noiseBuf;
+    const dur = 0.4;
+    const buf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    this.noiseBuf = buf;
+    return buf;
+  }
+
+  /**
+   * Generic drum-style SFX: a filtered noise burst, with an optional
+   * low-sine "body" layered underneath for kick/snap energy.
+   *
+   * Atonal by construction — noise has no defined fundamental, and
+   * the optional body sine bends DOWN so it reads as percussive
+   * impact rather than a held tone. Used by `playHit`, `playRelease`,
+   * and `playMiss` (both branches) to give the whole input-feedback
+   * family a coherent drum-kit timbre.
+   *
+   * Filter choice matters a LOT for audibility:
+   *   - "highpass" — passes ~70-80 % of the noise spectrum (everything
+   *     above the cutoff). Output peak ≈ noiseVol * 0.85, very close
+   *     to the requested level. Best for HITS and SNARE-LIKE CRACKS
+   *     where you want a bright, broadband transient.
+   *   - "lowpass" — passes only the band below the cutoff. At 800 Hz
+   *     cutoff that's 4 % of the audible bandwidth, so output peak
+   *     is just ~20 % of noiseVol. Best for MUTED THUMPS where the
+   *     point is filtered/dampened character; needs noiseVol ~0.5+
+   *     to be audible, and pairs naturally with a body sine that
+   *     carries the actual loudness.
+   *   - "bandpass" — narrowest, attenuates most. Output peak ≈
+   *     noiseVol * 0.10-0.15 at Q ≈ 1.4. Avoid for primary cues; it
+   *     was the cause of the first drum revision being inaudible.
+   *
+   * Tuning notes:
+   *   - `filterHz` is the dominant character knob. For highpass:
+   *     higher cutoff = thinner / brighter; lower = thicker / warmer.
+   *     For lowpass: higher cutoff = brighter; lower = duller.
+   *   - `filterQ` defaults to 0.707 (Butterworth, no resonant peak).
+   *     Past ~3 a bandpass / lowpass starts ringing audibly which
+   *     reads as a pitch — defeats the "atonal" goal.
+   *   - `bodyHz` + `bodyVol` + `bodyDur` add a low sine that
+   *     pitch-bends DOWN to half its starting freq, reading as a
+   *     kick impact. Skip all three to get a pure noise tap.
+   *   - All envelopes use a 2 ms linear attack + exponential decay,
+   *     same shape across every variant so the "tap rhythm" reads
+   *     consistently — only the spectrum changes between hit /
+   *     empty / miss.
+   */
+  private playDrum(opts: {
+    when: number;
+    filterType?: BiquadFilterType;
+    filterHz: number;
+    filterQ?: number;
+    noiseVol: number;
+    dur: number;
+    bodyHz?: number;
+    bodyVol?: number;
+    bodyDur?: number;
+  }): void {
+    if (!this.ctx || !this.sfxGain) return;
+    const buf = this.getNoiseBuffer();
+    if (!buf) return;
+    const ctx = this.ctx;
+    const t = opts.when;
+    const ftype = opts.filterType ?? "highpass";
+    const fq = opts.filterQ ?? 0.707;
+
+    // Filtered noise tap.
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filt = ctx.createBiquadFilter();
+    filt.type = ftype;
+    filt.frequency.value = opts.filterHz;
+    filt.Q.value = fq;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(opts.noiseVol, t + 0.002);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + opts.dur);
+    src.connect(filt).connect(env).connect(this.sfxGain);
+    src.start(t);
+    src.stop(t + opts.dur + 0.05);
+
+    // Optional low body for kick/snap energy.
+    if (opts.bodyHz && opts.bodyVol && opts.bodyDur) {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(opts.bodyHz, t);
+      osc.frequency.exponentialRampToValueAtTime(opts.bodyHz * 0.5, t + opts.bodyDur);
+      const benv = ctx.createGain();
+      benv.gain.setValueAtTime(0, t);
+      benv.gain.linearRampToValueAtTime(opts.bodyVol, t + 0.002);
+      benv.gain.exponentialRampToValueAtTime(0.0001, t + opts.bodyDur);
+      osc.connect(benv).connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + opts.bodyDur + 0.05);
+    }
+  }
+
   private pluck(
     when: number,
     freq: number,

@@ -39,14 +39,6 @@ export const LANE_COLORS: readonly string[] = [
   "#3da9ff", // 3: K / → — blue (brand accent)
 ];
 
-/** Pitches used by the audio feedback when a lane is hit. A minor pentatonic. */
-export const LANE_PITCH: Record<number, number> = {
-  0: 220.0,   // A3
-  1: 261.63,  // C4
-  2: 329.63,  // E4
-  3: 440.0,   // A4
-};
-
 export interface Note {
   id: number;
   /** Time in seconds (song time) when the note must be hit. */
