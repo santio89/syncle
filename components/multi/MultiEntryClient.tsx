@@ -616,20 +616,23 @@ function BrowsePane({
         <button
           onClick={refresh}
           disabled={loading || conn !== "connected"}
-          className="inline-flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest leading-none text-bone-50/70 hover:text-accent transition-colors disabled:opacity-40"
+          className="group inline-flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-widest leading-none text-bone-50/70 hover:text-accent transition-colors disabled:opacity-40"
           data-tooltip="Refresh list"
         >
           {/* Glyph rendered at ~1.4× the label size so the ↻ icon
               actually reads as an icon rather than another tiny
               caps letter. `leading-none` keeps the row vertically
               centred with the label glyphs (which are trimmed
-              tighter by the global text-box rules). Spins while
-              the request is in flight to mirror the home page's
-              "new" button affordance. */}
+              tighter by the global text-box rules). Animation
+              parity with the home page's "new" button: spins
+              while the request is in flight, counter-rotates
+              180° on hover at rest. */}
           <span
             aria-hidden
             className={`inline-block text-[0.95rem] leading-none ${
-              loading ? "animate-spin" : ""
+              loading
+                ? "animate-spin"
+                : "transition-transform duration-300 group-hover:-rotate-180"
             }`}
           >
             ↻
