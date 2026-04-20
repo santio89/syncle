@@ -772,10 +772,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 2200 + laneOffset,
-        noiseVol: 0.592,
+        noiseVol: 0.586,
         dur: 0.085,
         bodyHz: 180,
-        bodyVol: 0.271,
+        bodyVol: 0.268,
         bodyDur: 0.10,
       });
     } else if (judgment === "great") {
@@ -783,10 +783,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 1900 + laneOffset,
-        noiseVol: 0.530,
+        noiseVol: 0.525,
         dur: 0.08,
         bodyHz: 170,
-        bodyVol: 0.234,
+        bodyVol: 0.232,
         bodyDur: 0.09,
       });
     } else {
@@ -800,10 +800,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 1600 + laneOffset,
-        noiseVol: 0.460,
+        noiseVol: 0.455,
         dur: 0.075,
         bodyHz: 160,
-        bodyVol: 0.234,
+        bodyVol: 0.232,
         bodyDur: 0.08,
       });
     }
@@ -831,15 +831,21 @@ export class AudioEngine {
 
     const laneOffset = (lane - 1.5) * 300;
 
+    // Release ladder (perceived, post-lowpass): good ≈ 0.24 → great
+    // ≈ 0.32 → perfect ≈ 0.40. Even ~0.08 steps and every rung sits
+    // ~25-30 % below its hit counterpart, matching the "softer /
+    // duller variant of playHit" intent in the doc above. That gap
+    // is what lets the player hear "head hit" vs "tail release" as
+    // primary vs secondary feedback rather than two equal events.
     if (judgment === "perfect") {
       this.playDrum({
         when: t,
         filterType: "lowpass",
         filterHz: 5000 + laneOffset,
-        noiseVol: 0.561,
+        noiseVol: 0.50,
         dur: 0.075,
         bodyHz: 200,
-        bodyVol: 0.224,
+        bodyVol: 0.20,
         bodyDur: 0.09,
       });
     } else if (judgment === "great") {
@@ -847,10 +853,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 4000 + laneOffset,
-        noiseVol: 0.428,
+        noiseVol: 0.42,
         dur: 0.07,
         bodyHz: 180,
-        bodyVol: 0.163,
+        bodyVol: 0.17,
         bodyDur: 0.08,
       });
     } else {
@@ -858,10 +864,10 @@ export class AudioEngine {
         when: t,
         filterType: "lowpass",
         filterHz: 3000 + laneOffset,
-        noiseVol: 0.326,
+        noiseVol: 0.32,
         dur: 0.065,
         bodyHz: 160,
-        bodyVol: 0.122,
+        bodyVol: 0.138,
         bodyDur: 0.07,
       });
     }
@@ -907,10 +913,10 @@ export class AudioEngine {
         filterType: "lowpass",
         filterHz: 800,
         filterQ: 0.7,
-        noiseVol: 0.572,
+        noiseVol: 0.566,
         dur: 0.09,
         bodyHz: 140,
-        bodyVol: 0.214,
+        bodyVol: 0.212,
         bodyDur: 0.08,
       });
       return;
@@ -937,7 +943,7 @@ export class AudioEngine {
     // energy in the same range as a typical kick + bass, so it
     // needs more raw amplitude than a hit drum to clear the song).
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(0.545, t + 0.005);
+    env.gain.linearRampToValueAtTime(0.5445, t + 0.005);
     env.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
 
     osc.connect(filt).connect(env).connect(this.sfxGain);
