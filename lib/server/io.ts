@@ -100,9 +100,9 @@ const PRESTART_COUNTDOWN_MS = 3_000;
  * Grace between "everyone ready" and the wall-clock t0 for audio.
  * Sourced from the shared protocol constant so the server's
  * `phase:countdown` → `phase:playing` window matches exactly the
- * length of the client's "3 / 2 / 1" overlay (3 s) plus the silent
- * lead-in runway (2 s) — total 5 s. If you change the timing here,
- * change `MATCH_OVERLAY_MS` / `MATCH_LEAD_IN_MS` in
+ * client's overlay sequence: "Get ready..." prompt (3 s) → "3 / 2 / 1"
+ * numbers (3 s) → silent lead-in (2 s), total 8 s. If you change the
+ * timing here, change the individual MATCH_*_MS constants in
  * `lib/multi/protocol.ts` instead so client + server stay in lockstep.
  */
 const COUNTDOWN_LEAD_MS = MATCH_COUNTDOWN_LEAD_MS;

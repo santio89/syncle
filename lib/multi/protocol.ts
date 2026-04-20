@@ -592,6 +592,15 @@ export const SCORE_UPDATE_MIN_INTERVAL_MS = 100;
 /* Match start timing                                                         */
 /* -------------------------------------------------------------------------- */
 /**
+/**
+ * "Get ready..." prompt shown immediately when the countdown phase
+ * begins, before the 3 / 2 / 1 numbers. Three seconds gives the
+ * player time to register that the match is starting, shift focus
+ * from the lobby UI to the canvas, and settle into a "hands on the
+ * keys" stance — all before any cognitive load from the numbers.
+ */
+export const MATCH_INTRO_PROMPT_MS = 3_000;
+/**
  * Visible "3 / 2 / 1" overlay duration. The countdown overlay is what
  * the player actually reads — it should match what they see in solo
  * (3 s) so the muscle memory carries over.
@@ -607,11 +616,17 @@ export const MATCH_LEAD_IN_MS = 2_000;
 /**
  * Total wall-clock delay between the server entering the `countdown`
  * phase and the audio actually playing — i.e. how far in the future
- * `room.startsAt` is set. Sum of the visible overlay + the silent
- * runway. Server uses this to schedule its `phase:playing` transition;
- * clients use it to know when to start the audio buffer.
+ * `room.startsAt` is set. Sum of every visible / silent stage:
+ *
+ *   "Get ready..."  →  3 / 2 / 1  →  silent lead-in  →  audio
+ *        3 s              3 s             2 s
+ *
+ * Server uses this to schedule its `phase:playing` transition; clients
+ * use it to know when to start the audio buffer and which overlay to
+ * paint. Total today: 8 s.
  */
-export const MATCH_COUNTDOWN_LEAD_MS = MATCH_OVERLAY_MS + MATCH_LEAD_IN_MS;
+export const MATCH_COUNTDOWN_LEAD_MS =
+  MATCH_INTRO_PROMPT_MS + MATCH_OVERLAY_MS + MATCH_LEAD_IN_MS;
 
 /**
  * Server-side safety grace tacked onto the song's expected duration

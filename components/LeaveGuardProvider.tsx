@@ -170,45 +170,82 @@ export function LeaveGuardProvider({
   );
 
   /**
-   * Shared "user said yes, leave" finalizer. Runs the page-local
-   * cleanup (proceed callback) and pops the sentinel so the
-   * destination URL takes the sentinel's slot instead of stacking
-   * — see `sentinelActiveRef` for the loop this prevents.
+   * Shared "user said yes, leave" finalizer. Pops the sentinel and
+   * then runs the page-local cleanup callback (`proceed`).
    *
-   * Sequence is delicate but small:
-   *   1. Arm the popstate bypass (covers any popstate fired by step 2
-   *      OR by Next.js's router.replace doing internal navigation).
-   *   2. Synchronously pop the sentinel via `history.back()`. URL
-   *      flips back to the original guarded URL — but the page is
-   *      still mounted; we never paint that intermediate state
-   *      because step 3 fires before the next paint.
-   *   3. Run the user's proceed callback. By convention every
-   *      proceed in the codebase ends with `router.replace(dest)`,
-   *      which calls `history.replaceState` to overwrite the
-   *      ORIGINAL guarded URL entry with the destination. Net
-   *      result: history loses both the sentinel AND the guarded
-   *      URL, leaving a clean tree-style "back goes to where I
-   *      came from".
+   * Why proceed must wait for the sentinel pop:
+   *   `history.back()` is async — it queues the navigation as a
+   *   browser task and dispatches `popstate` later. If we ran
+   *   `proceed()` synchronously right after queuing the back, any
+   *   `router.replace(dest)` inside it would call
+   *   `history.replaceState` immediately and rewrite the SENTINEL
+   *   slot (not the original guarded slot). The queued back would
+   *   then fire AFTER the replace and pop us BACK to the guarded
+   *   URL — leaving the user one click short of the destination.
+   *   That's the "I have to click back twice to leave" bug.
+   *
+   * The fix: install a one-shot popstate listener that fires
+   * `proceed()` once the back has actually happened. By then the
+   * URL is the original guarded entry (sentinel popped) and any
+   * router.replace inside proceed overwrites THAT entry — clean
+   * one-click leave.
+   *
+   * Sequence:
+   *   1. If no sentinel is on top (e.g. attemptLeave from an
+   *      in-page button that was clicked before any browser back
+   *      ever pushed one), run proceed synchronously — there's
+   *      nothing to clean up first.
+   *   2. Otherwise: arm the popstate bypass (the provider's main
+   *      handler ignores the next popstate so it doesn't re-prompt),
+   *      register a one-shot listener that runs proceed, queue
+   *      `history.back()`, and let the browser drive.
+   *   3. Belt-and-braces fallback: a 200ms timeout also runs
+   *      proceed so the user is never stranded on the dimmed
+   *      backdrop if popstate gets swallowed (some embedded chromes
+   *      do this).
    */
   const performGuardedLeave = useCallback((proceed: () => void) => {
-    bypassNextPopstateRef.current = true;
-    // Reset on a short delay so any real back press the user makes
-    // a few seconds later still gets caught. 100ms is enough to
-    // cover the synchronous history.back + router.replace sequence
-    // plus any Next.js internal popstate that might trail.
-    setTimeout(() => {
-      bypassNextPopstateRef.current = false;
-    }, 100);
-
-    if (sentinelActiveRef.current && typeof window !== "undefined") {
-      try {
-        window.history.back();
-      } catch {
-        /* ignore — proceed will navigate either way */
-      }
-      sentinelActiveRef.current = false;
+    if (!sentinelActiveRef.current || typeof window === "undefined") {
+      proceed();
+      return;
     }
-    proceed();
+
+    bypassNextPopstateRef.current = true;
+    sentinelActiveRef.current = false;
+
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      window.removeEventListener("popstate", onPopstate);
+      clearTimeout(fallback);
+      // The provider's main popstate handler resets bypass to false
+      // when it consumes it; this assignment is just defensive in
+      // case the popstate didn't fire (fallback path) so the next
+      // genuine back press is caught normally.
+      bypassNextPopstateRef.current = false;
+      proceed();
+    };
+
+    const onPopstate = () => {
+      // The provider's main popstate handler fires first (registered
+      // earlier in the listener queue) and consumes the bypass flag.
+      // We just need to know the back has actually happened so the
+      // URL is back at the original guarded entry — at which point
+      // proceed's `router.replace(dest)` overwrites that entry
+      // cleanly instead of the (now-popped) sentinel slot.
+      finish();
+    };
+    window.addEventListener("popstate", onPopstate);
+
+    const fallback = setTimeout(finish, 200);
+
+    try {
+      window.history.back();
+    } catch {
+      // pushState/back unsupported — bail to the synchronous path.
+      finish();
+    }
   }, []);
 
   const attemptLeave = useCallback<LeaveGuardContextValue["attemptLeave"]>(

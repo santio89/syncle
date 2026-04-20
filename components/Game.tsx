@@ -48,7 +48,6 @@ import {
   type SoloResumeState,
 } from "@/lib/game/resume";
 import { useLeaveGuard } from "@/components/LeaveGuardProvider";
-import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -237,28 +236,22 @@ export default function Game() {
   // close / refresh (browser-native dialog), browser back button
   // (popstate sentinel), and in-page Back / Home / anchor clicks
   // (intercepted via `attemptLeave` on the wrapping links).
-  const router = useRouter();
+  //
+  // `defaultLeave` is what fires for the BROWSER back button (the
+  // in-page Back link in /play has its own `attemptLeave(go-home)`
+  // wrapper). We deliberately keep the user on /play here and just
+  // reset to the idle phase — same end-state as the pause menu's
+  // "Give up" action — so back-from-mid-game lands on the single
+  // player setup card, not all the way back at the homepage. If
+  // the user wants to actually leave the page they can press back
+  // a second time (or use the in-page Syncle / Home buttons).
   const guardActive =
     phase === "countdown" || phase === "playing" || phase === "paused";
   useLeaveGuard({
     enabled: guardActive,
     message: "Your run will end and the score won't be saved.",
     defaultLeave: () => {
-      // Mirror the in-page give-up flow before navigating: stop the
-      // audio engine cleanly so the song doesn't keep playing in the
-      // background while the user lands on the homepage. Drop the
-      // resume hint so a refresh from / doesn't re-offer this song.
-      try {
-        audioRef.current?.stop();
-      } catch {
-        /* engine may have already been torn down */
-      }
-      clearSoloResume();
-      // router.replace so the LeaveGuardProvider can collapse the
-      // /play entry out of history alongside its sentinel — a
-      // browser back from / shouldn't re-roll a fresh random song
-      // we just confirmed leaving.
-      router.replace("/");
+      giveUp();
     },
   });
   /**

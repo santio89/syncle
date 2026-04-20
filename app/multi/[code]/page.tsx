@@ -131,15 +131,34 @@ export default function MultiRoomPage() {
   // Covers tab close / refresh (browser-native dialog), browser
   // back button (popstate sentinel), and in-page Back / Home /
   // anchor clicks (intercepted via `attemptLeave`).
+  //
+  // `defaultLeave` is what fires for the BROWSER back button. We
+  // branch on whether the player is currently IN A MATCH (not just
+  // sitting in the lobby): leaving from inside a match should drop
+  // them back into the lobby of the same room — same end-state as
+  // the in-game match menu's "Leave" — instead of yanking them all
+  // the way back to the entry page. Leaving from the lobby itself
+  // still tears down the room session and routes to /multi (no
+  // partial state worth preserving there).
   const attemptLeave = useAttemptLeave();
   const guardActive = me !== null && !kicked;
+  const inActiveMatch = !!(
+    me?.inMatch &&
+    (snapshot?.phase === "countdown" || snapshot?.phase === "playing")
+  );
   useLeaveGuard({
     enabled: guardActive,
-    message:
-      snapshot?.phase === "lobby" || snapshot?.phase === "results"
-        ? "You'll leave the room and lose your seat at the table."
-        : "There's a match in progress — leaving will drop you out of this round.",
+    message: inActiveMatch
+      ? "There's a match in progress — leaving will drop you out of this round."
+      : "You'll leave the room and lose your seat at the table.",
     defaultLeave: () => {
+      if (inActiveMatch) {
+        // Server flips `me.inMatch` to false on receipt; the next
+        // snapshot tick routes this client to the lobby UI (see
+        // RoomBody's per-player phase routing). No URL change.
+        actions.leaveMatch();
+        return;
+      }
       actions.leave();
       // router.replace (not push) so the LeaveGuardProvider can
       // collapse the guarded /multi/[code] entry out of history

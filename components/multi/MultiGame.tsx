@@ -75,7 +75,9 @@ import {
   TOTAL_LANES,
 } from "@/lib/game/types";
 import {
+  MATCH_INTRO_PROMPT_MS,
   MATCH_LEAD_IN_MS,
+  MATCH_OVERLAY_MS,
   type LiveScore,
   type RoomSnapshot,
   type ScoreboardEntry,
@@ -243,7 +245,16 @@ function CanvasPane({
   // alongside `setStats` from inside the rAF loop so it ticks at the
   // same ~10Hz cadence (smooth without re-rendering every vblank).
   const [songProgress, setSongProgress] = useState<number>(0);
-  const [countdownLabel, setCountdownLabel] = useState<number | null>(null);
+  // Three-stage countdown overlay state.
+  //   - null           → no overlay (silent lead-in only)
+  //   - "prompt"       → "Get ready..." banner, no number
+  //   - { number: n }  → "Get ready" header + the big "3 / 2 / 1" digit
+  // Driven by a single rAF tick that compares Date.now() against the
+  // server's `startsAt` so every client paints the same overlay at the
+  // same wall-clock instant. See the effect below for the boundaries.
+  const [countdownOverlay, setCountdownOverlay] = useState<
+    null | { kind: "prompt" } | { kind: "number"; number: number }
+  >(null);
   // Audio + perf controls — same model as single-player. Metronome stays
   // user-toggleable here too (it only affects the LOCAL click track; the
   // server-driven `startsAt` timestamp is what actually keeps the room in
@@ -484,29 +495,67 @@ function CanvasPane({
 
   // Countdown overlay tick.
   //
-  // The server's `startsAt` is when audio actually fires; the visible
-  // "3 / 2 / 1" overlay should END `MATCH_LEAD_IN_MS` BEFORE that so
-  // the player sees:
-  //   - first 3 s → overlay counts down 3, 2, 1
-  //   - next  2 s → overlay gone, highway scrolls empty (lead-in)
-  //   - then       → audio starts + notes start arriving
-  // Subtracting the lead-in here is what gives us the silent runway
-  // without changing the audio schedule (the schedule effect below
-  // still aims for `startsAt` exactly, so server + client + everyone
-  // else's audio remain phase-locked).
+  // The server's `startsAt` is when audio actually fires. From that
+  // anchor we work backwards to derive the overlay timeline so every
+  // client paints the same thing at the same wall-clock instant —
+  // server, audio, and overlay all stay phase-locked even if a player
+  // joined slightly late. Stages (working forwards from the moment
+  // `phase:countdown` flips):
+  //
+  //   ["Get ready..."]   t < numbersStart                → kind:"prompt"
+  //   ["3 / 2 / 1"]      t in numbersWindow              → kind:"number"
+  //   [silent lead-in]   t ≥ numbersEnd                  → null
+  //   [audio starts]     t ≥ startsAt
+  //
+  //   numbersEnd    = startsAt - LEAD_IN_MS              (3,2,1 disappears)
+  //   numbersStart  = numbersEnd - OVERLAY_MS            (3,2,1 begins)
+  //
+  // The "Get ready..." prompt starts immediately when we enter the
+  // countdown phase (no empty pre-roll any more) — there's nothing
+  // for the player to do during a silent runway and the prompt itself
+  // already reads as "match is starting". The rAF loop only pushes
+  // state when the visible stage actually changes, so cost is one
+  // comparison per vblank.
   useEffect(() => {
     if (snapshot.phase !== "countdown" || !snapshot.startsAt) {
-      setCountdownLabel(null);
+      setCountdownOverlay(null);
       return;
     }
-    const overlayDeadline = snapshot.startsAt - MATCH_LEAD_IN_MS;
+    const startsAt = snapshot.startsAt;
+    const numbersEnd = startsAt - MATCH_LEAD_IN_MS;
+    const numbersStart = numbersEnd - MATCH_OVERLAY_MS;
+
+    let lastKey = "";
     const tick = () => {
-      const remaining = (overlayDeadline - Date.now()) / 1000;
-      if (remaining <= 0) {
-        setCountdownLabel(null);
-        return;
+      const now = Date.now();
+      let next:
+        | null
+        | { kind: "prompt" }
+        | { kind: "number"; number: number };
+      if (now < numbersStart) {
+        next = { kind: "prompt" };
+      } else if (now < numbersEnd) {
+        const remaining = (numbersEnd - now) / 1000;
+        next = { kind: "number", number: Math.max(1, Math.ceil(remaining)) };
+      } else {
+        next = null;
       }
-      setCountdownLabel(Math.ceil(remaining));
+      // Only push state when the visible overlay actually changes —
+      // avoids a setState per vblank and the React work that follows.
+      const key =
+        next === null
+          ? "null"
+          : next.kind === "prompt"
+            ? "prompt"
+            : `n${next.number}`;
+      if (key !== lastKey) {
+        lastKey = key;
+        setCountdownOverlay(next);
+      }
+      // Stop ticking once we're past the numbers (silent lead-in is
+      // a constant null state until phase flips to "playing"); saves
+      // ~120 useless ticks over the 2 s lead-in.
+      if (now >= numbersEnd) return;
       raf = requestAnimationFrame(tick);
     };
     let raf = requestAnimationFrame(tick);
@@ -1067,15 +1116,19 @@ function CanvasPane({
           />
         )}
 
-      {countdownLabel !== null && (
+      {countdownOverlay !== null && (
         <Overlay translucent>
           <div className="text-center">
             <p className="font-mono text-[0.79rem] uppercase tracking-[0.4em] text-accent">
-              Get ready
+              {countdownOverlay.kind === "prompt"
+                ? "Get ready..."
+                : "Get ready"}
             </p>
-            <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
-              {countdownLabel}
-            </p>
+            {countdownOverlay.kind === "number" && (
+              <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
+                {countdownOverlay.number}
+              </p>
+            )}
             <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
               {touchOnly ? "tap the lanes" : "D F J K · or ← ↓ ↑ →"} · {displayMode(mode)} mode · scoreboard updates live
             </p>

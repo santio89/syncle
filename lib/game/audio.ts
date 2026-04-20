@@ -5,7 +5,7 @@ import { Judgment, LANE_PITCH } from "./types";
  * bus. With both buses sharing the same `perceived²` taper (see
  * `perceivedToSfxGain`), this is the FIXED dB offset between the two
  * — at any master slider position, peak SFX gain is exactly
- * `BASE_SFX_LEVEL * peakSongGain`. 0.35 ≈ -9 dB, which keeps the
+ * `BASE_SFX_LEVEL * peakSongGain`. 0.385 ≈ -8.3 dB, which keeps the
  * pluck / miss / release tones clearly subordinate to the song at
  * every volume (a player set master to 30% still gets the same
  * "subtle but noticeable" feedback layer they get at 100%, just both
@@ -20,7 +20,7 @@ import { Judgment, LANE_PITCH } from "./types";
  * master slider (Celeste, etc. expose two; we don't, so we bake the
  * balance into the curves).
  */
-const BASE_SFX_LEVEL = 0.35;
+const BASE_SFX_LEVEL = 0.385;
 
 /**
  * Convert a slider/perceived value (0..1) to an actual GainNode value
@@ -93,7 +93,7 @@ function perceivedToGain(perceived: number): number {
  * by being there in the first place; if they want feedback prominent
  * they can come up to a normal volume.
  *
- * BASE_SFX_LEVEL=0.35 was tuned so the per-hit oscillators (~0.22) +
+ * BASE_SFX_LEVEL=0.385 was tuned so the per-hit oscillators (~0.22) +
  * this taper land at a transient amplitude that sits clearly below
  * the music peak without losing the punchy "click" character the
  * pluck synth provides.
@@ -519,7 +519,7 @@ export class AudioEngine {
     if (this.ctx) {
       const t = this.ctx.currentTime;
       // Both buses share the same quadratic taper, with SFX getting a
-      // fixed -9 dB offset (BASE_SFX_LEVEL = 0.35) so the music vs.
+      // fixed -8.3 dB offset (BASE_SFX_LEVEL = 0.385) so the music vs.
       // feedback balance stays CONSTANT across the whole slider — see
       // perceivedToSfxGain doc for the dB table and the rationale for
       // moving away from the previous square-root SFX curve (which
