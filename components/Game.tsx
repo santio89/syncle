@@ -455,6 +455,21 @@ export default function Game() {
     window.addEventListener("pointerdown", prep, { once: false });
     window.addEventListener("keydown", prep, { once: false });
     window.addEventListener("pointermove", prep, { once: false });
+    // Try to prep RIGHT NOW too. Modern browsers (Chrome, Firefox,
+    // Safari ≥ 14) allow creating an AudioContext outside a user
+    // gesture — it just starts in `suspended` state until `resume()`
+    // is called from inside one. Crucially, `decodeAudioData` runs
+    // fine on a suspended context, so we can finish the entire
+    // decode in the window between page mount and the user clicking
+    // PLAY (often several seconds). The interaction listeners above
+    // remain as a fallback for the rare browser that throws on
+    // gestureless context creation. Without this proactive prep, a
+    // fast user who clicked PLAY before pointermove fired would
+    // hit `await audio.load(...)` synchronously inside `start()`
+    // and pay the entire decode cost on the click critical path —
+    // a documented contributor to "Start lag → opening notes feel
+    // late / first frame stutters".
+    prep();
     return () => {
       cancelled = true;
       window.removeEventListener("pointerdown", prep);
@@ -689,6 +704,16 @@ export default function Game() {
     setPhase("playing");
   }, [phase]);
 
+  // Mirror pause/resume to the latest-callback refs declared above so
+  // the mount-time keyboard listener always invokes the freshest
+  // version (which has the right `phase` baked in via its closure).
+  useEffect(() => {
+    pauseRef.current = pause;
+  }, [pause]);
+  useEffect(() => {
+    resumeRef.current = resume;
+  }, [resume]);
+
   /**
    * Player accepted the "Resume previous run?" banner.
    *
@@ -781,6 +806,18 @@ export default function Game() {
     chartModeRef.current = chartMode;
   }, [chartMode]);
 
+  // "Latest callback" refs for `pause` / `resume`. Both are useCallback'd
+  // with `phase` in their deps, so their identity changes every phase
+  // transition. The keyboard listener install (below) is wired ONCE at
+  // mount and reads these via refs — without that the entire keydown
+  // listener would tear down + reattach at the EXACT countdown→playing
+  // boundary (i.e. ~2 s before the song becomes audible), which is a
+  // documented source of micro-stutter at song onset on slower main
+  // threads. This pattern decouples "I have to be the latest version
+  // of pause/resume" from "the listener identity must stay stable".
+  const pauseRef = useRef<() => Promise<void>>(async () => {});
+  const resumeRef = useRef<() => Promise<void>>(async () => {});
+
   // `eventTimestamp` is the `performance.now()` moment from the
   // KeyboardEvent / PointerEvent that caused the press. Passed through
   // to `audio.inputSongTime()` so we judge against the audio clock at
@@ -840,19 +877,34 @@ export default function Game() {
     }
   }, []);
 
+  // Global keyboard install — RUNS ONCE for the lifetime of the
+  // component. Previous version listed `[phase, pause, resume,
+  // pressLane, releaseLane]` in its dep array, which meant every
+  // phase transition (idle→countdown, countdown→playing, etc.)
+  // tore down the listeners and re-attached fresh ones. The
+  // countdown→playing transition fires roughly 2 s before the song
+  // becomes audible, and the listener-rebind there was a documented
+  // contributor to the "first-second-of-the-song" stutter players
+  // reported on slower machines. By reading phase + pause + resume
+  // out of refs we keep listener identity stable for the whole run
+  // (idle → countdown → playing → paused → resume → results → idle)
+  // — no churn, no surprise frame budget hit at the worst possible
+  // moment. `pressLane` and `releaseLane` are useCallback'd with
+  // empty deps and read entirely off refs themselves, so they're
+  // safe to capture in the closure once at mount.
   useEffect(() => {
-    if (phase !== "playing" && phase !== "countdown" && phase !== "paused")
-      return;
-
     const onKeyDown = (e: KeyboardEvent) => {
+      const phase = phaseRef.current;
+      if (phase !== "playing" && phase !== "countdown" && phase !== "paused")
+        return;
       // Don't hijack key events while a text input or textarea has focus —
       // future-proofs against in-game chat / pause-menu fields without
       // accidentally muting D/F/J/K when the player just clicked a slider.
       if (isEditableTarget(e.target)) return;
       if (e.code === "Escape") {
         e.preventDefault();
-        if (phase === "playing") void pause();
-        else if (phase === "paused") void resume();
+        if (phase === "playing") void pauseRef.current();
+        else if (phase === "paused") void resumeRef.current();
         return;
       }
       if (phase === "paused") return;
@@ -892,6 +944,9 @@ export default function Game() {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      const phase = phaseRef.current;
+      if (phase !== "playing" && phase !== "countdown" && phase !== "paused")
+        return;
       // Note: we deliberately do NOT short-circuit on
       // `isEditableTarget` here (unlike onKeyDown). If a player holds
       // a lane key, focuses an <input> (e.g. opens chat or moves to
@@ -915,7 +970,11 @@ export default function Game() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [phase, pause, resume, pressLane, releaseLane]);
+    // Empty deps ON PURPOSE — see leading comment. pressLane/releaseLane
+    // are mount-stable (useCallback with []), pause/resume reach us
+    // via latest-callback refs, and phase is read from `phaseRef`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- Render loop ------------------------------------------------------
   useEffect(() => {

@@ -1255,7 +1255,7 @@ export class AudioEngine {
   /**
    * One-time SFX warm-up. Builds the noise buffer eagerly (so the
    * first `playDrum` doesn't pay a 17K-sample `Math.random()` loop
-   * synchronously) and schedules an inaudible dry-run of every SFX
+   * synchronously) and schedules an inaudible dry-run of EVERY SFX
    * code path so V8 has JIT-compiled them and Web Audio has the
    * underlying worker graph alive before the first audible cue.
    *
@@ -1265,23 +1265,41 @@ export class AudioEngine {
    * cost, but the user never hears it. Critically: this runs DURING
    * `start()`, which is itself invoked at the front of the 8s pre-
    * countdown — by the time the song is actually audible the JIT is
-   * hot and the noise buffer is cached.
+   * hot, the noise buffer is cached, and Web Audio's worker pool
+   * has the relevant DSP units instantiated.
+   *
+   * Coverage matrix — every public play* method should map to at
+   * least one block here. If you add a new SFX path, add a dry-run.
+   *
+   *   playHit / playRelease / playEmptyPress  → block (a)
+   *   playComboBreak (sub layer)              → block (b)
+   *   playComboBreak (noise burst layer)      → block (c)
+   *   playComboBreak (sawtooth sweep layer)   → block (d)
+   *   playMissDistort + playComboBreak duck   → block (e) [JITs
+   *     `duckSong`'s gain/filter/detune automations on throwaway
+   *     nodes — without this the first miss pays the cost live]
+   *   scheduleClick (metronome)               → block (f)
+   *   playComboMilestone (pluck arpeggio)     → block (g)
    *
    * Idempotent: subsequent `start()` calls re-pay the dry-run cost
-   * (it's microseconds) but the noise buffer survives.
+   * (it's microseconds, all on the audio thread) but the noise
+   * buffer survives.
    */
   private prewarmSfx(): void {
     if (!this.ctx || !this.sfxGain) return;
     // Force the lazy noise buffer NOW so the first real `playDrum`
-    // call (almost certainly the player's first tap) doesn't have to
-    // build it on the spot.
+    // call (almost certainly the player's first tap) doesn't have
+    // to build it on the spot.
     this.getNoiseBuffer();
 
-    const t = this.ctx.currentTime + 0.001;
+    const ctx = this.ctx;
+    const t = ctx.currentTime + 0.001;
 
-    // Hit / release / empty path — exercises createBufferSource +
-    // createBiquadFilter("highpass" / "lowpass") + createGain envelope
-    // + body sine, all wired through `sfxGain`.
+    // ---- (a) Hit / release / empty press ----
+    // Exercises createBufferSource + createBiquadFilter("lowpass" /
+    // "highpass") + createGain envelope + optional body sine, all
+    // wired through `sfxGain`. Two passes (lowpass, highpass) so
+    // both filter modes JIT.
     this.playDrum({
       when: t,
       filterType: "lowpass",
@@ -1300,18 +1318,56 @@ export class AudioEngine {
       dur: 0.005,
     });
 
-    // Combo-break sawtooth path — same osc + lowpass-biquad shape
-    // the descending sweep layer of `playComboBreak` builds. Distinct
-    // from `playDrum`'s graph (no buffer source), so JIT it
-    // independently here. Without this the FIRST combo break of the
-    // session would JIT the sawtooth + filter + envelope graph live
-    // on the audio thread, which has been observed as a brief glitch
-    // on resource-constrained devices.
+    // ---- (b) Combo-break sub-thump (80 Hz sine, fast decay) ----
+    // Same graph as the sub layer in `playComboBreak`. Sine + gain
+    // envelope is structurally similar to the metronome click, but
+    // at a very different frequency (80 vs 1500 Hz) — JIT for
+    // BiquadFilter-less sine paths is shared, so this is mostly
+    // about exercising Web Audio's low-frequency oscillator pool.
     {
-      const ctx = this.ctx;
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(80, t);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.0001, t + 0.002);
+      env.gain.exponentialRampToValueAtTime(0.00001, t + 0.007);
+      osc.connect(env).connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.01);
+    }
+
+    // ---- (c) Combo-break noise burst (highpass, ~3 kHz) ----
+    // Already covered structurally by playDrum highpass in (a),
+    // but the production graph in `playComboBreak` builds the
+    // BufferSource + BiquadFilter inline rather than via playDrum.
+    // We mirror that exact graph shape so the inline path is hot.
+    {
+      const buf = this.getNoiseBuffer();
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filt = ctx.createBiquadFilter();
+      filt.type = "highpass";
+      filt.frequency.value = 3000;
+      filt.Q.value = 0.7;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.0001, t + 0.002);
+      env.gain.exponentialRampToValueAtTime(0.00001, t + 0.007);
+      src.connect(filt).connect(env).connect(this.sfxGain);
+      src.start(t);
+      src.stop(t + 0.01);
+    }
+
+    // ---- (d) Combo-break descending sawtooth ----
+    // Same shape as the sweep layer in `playComboBreak`. Sawtooth
+    // + lowpass + envelope is its own JIT path (distinct from
+    // playDrum's BufferSource graph).
+    {
       const osc = ctx.createOscillator();
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(300, t);
+      osc.frequency.exponentialRampToValueAtTime(70, t + 0.005);
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
       filt.frequency.value = 800;
@@ -1324,12 +1380,49 @@ export class AudioEngine {
       osc.stop(t + 0.01);
     }
 
-    // Metronome click path — sine osc, no filter. The first audible
-    // click hits at the first beat past songTime=0 (the rAF loop
-    // skips negative-time beats), so without this warmup the very
-    // first click would JIT this code path live.
+    // ---- (e) Song-duck automation (playMissDistort + comboBreak duck) ----
+    // `duckSong` calls `cancelScheduledValues` + `setValueAtTime` +
+    // `linearRampToValueAtTime` on songGain.gain, songFilter.frequency
+    // and source.detune. Those parameter automations have their own
+    // V8 JIT paths and Web Audio scheduling code. We can't run them
+    // on the LIVE song bus during prewarm (it would clobber the
+    // pending fade-in); instead we build throwaway Gain + Biquad +
+    // BufferSource nodes (NEVER connected, NEVER started, just held
+    // long enough for the automations to compile) and run the same
+    // API calls on them. JIT is per-method, not per-instance, so
+    // this hot-paths the production duckSong call.
     {
-      const ctx = this.ctx;
+      const fakeGain = ctx.createGain();
+      const g = fakeGain.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(0.0001, t + 0.002);
+      g.linearRampToValueAtTime(g.value, t + 0.005);
+
+      const fakeFilt = ctx.createBiquadFilter();
+      fakeFilt.type = "lowpass";
+      const f = fakeFilt.frequency;
+      f.cancelScheduledValues(t);
+      f.setValueAtTime(f.value, t);
+      f.linearRampToValueAtTime(650, t + 0.002);
+      f.linearRampToValueAtTime(22000, t + 0.005);
+
+      const fakeSrc = ctx.createBufferSource();
+      fakeSrc.buffer = this.getNoiseBuffer();
+      const d = fakeSrc.detune;
+      d.cancelScheduledValues(t);
+      d.setValueAtTime(d.value, t);
+      d.linearRampToValueAtTime(-30, t + 0.002);
+      d.linearRampToValueAtTime(0, t + 0.005);
+      // fakeSrc is never started; it just exists so V8 binds the
+      // detune AudioParam methods to a real BufferSource instance.
+    }
+
+    // ---- (f) Metronome click ----
+    // Sine osc + envelope, no filter. The first audible click
+    // hits the first beat past songTime = 0; without this warmup
+    // that very first click would JIT live on the audio thread.
+    {
       const osc = ctx.createOscillator();
       osc.type = "sine";
       osc.frequency.value = 1500;
@@ -1341,6 +1434,15 @@ export class AudioEngine {
       osc.start(t);
       osc.stop(t + 0.01);
     }
+
+    // ---- (g) Combo-milestone arpeggio (pluck graph) ----
+    // `playComboMilestone` calls `pluck()` 3-4 times per milestone
+    // with different freqs / types. The pluck graph is sine osc +
+    // exponential frequency droop + gain envelope — distinct from
+    // (b) and (f) because the OSC frequency itself is automated.
+    // Warm one pass at near-zero volume; subsequent milestones
+    // (25 / 50 / 100 / ...) reuse the same JIT'd machinery.
+    this.pluck(t, 440, 0.005, 0.0001, "sine");
   }
 
   private pluck(

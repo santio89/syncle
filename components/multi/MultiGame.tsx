@@ -240,6 +240,29 @@ function CanvasPane({
    */
   const audioStartedRef = useRef<boolean>(false);
 
+  /**
+   * `document.fonts.ready` gate for the canvas renderer.
+   *
+   * Single-player blocks `setPhase("countdown")` on `await
+   * document.fonts.ready` so the very first `drawFrame` call is
+   * guaranteed to find Space_Grotesk-800 (used for the on-canvas
+   * lane letters and the giant combo number) already loaded.
+   * Without this gate, multiplayer was relying on the fonts having
+   * been requested by ANY parent layout earlier in the navigation
+   * — usually true, but on a cold load straight into a `/multi/:code`
+   * URL the canvas would render its first frame with the fallback
+   * sans-serif and pay a font-swap reflow ~50-200 ms later, smack
+   * in the middle of the silent lead-in or even into early gameplay.
+   *
+   * Default `true` covers SSR + the common warm-cache case (fonts
+   * already in memory from a previous page). The mount effect kicks
+   * off `document.fonts.ready` and flips the ref back to `true`
+   * after the promise resolves; the rAF loop skips `drawFrame`
+   * while it's `false` so the canvas just stays the dim base color
+   * until the typeface settles.
+   */
+  const fontsReadyRef = useRef<boolean>(true);
+
   const [stats, setStats] = useState<PlayerStats | null>(null);
   // Throttled song-progress fraction (0..1) for the rock-meter card's
   // progress bar. Mirrors the single-player Game.tsx pattern — written
@@ -309,6 +332,38 @@ function CanvasPane({
     renderOptsRef.current.theme = theme;
     renderStateRef.current.cache = undefined;
   }, [theme]);
+
+  // Mount-time font gate. Mirrors the SP `await document.fonts.ready`
+  // that runs before countdown — see `fontsReadyRef` doc above. We
+  // only flip the ref to `false` if we have a fonts API AND the
+  // canvas-critical typeface isn't already loaded; otherwise we
+  // never block the renderer.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const fonts = document.fonts;
+    if (!fonts || typeof fonts.ready?.then !== "function") return;
+    // `fonts.status === "loaded"` means everything currently
+    // requested has settled. Combined with the synchronous default
+    // of `fontsReadyRef = true` this avoids a needless one-frame
+    // skip on warm cache.
+    if (fonts.status === "loaded") return;
+    fontsReadyRef.current = false;
+    let alive = true;
+    fonts.ready
+      .then(() => {
+        if (alive) fontsReadyRef.current = true;
+      })
+      .catch(() => {
+        // If the fonts promise rejects (Firefox edge case during
+        // navigation), unblock the renderer anyway — falling back
+        // to the system stack for one match is much better than
+        // staring at a blank canvas indefinitely.
+        if (alive) fontsReadyRef.current = true;
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Crisp canvas + DPR resize. Mirrors the cap logic in Game.tsx —
   // coarse-pointer (mobile) clamps DPR to 1.5 instead of 2 so phones
@@ -385,6 +440,16 @@ function CanvasPane({
     rs.laneAnticipation.fill(0);
     rs.combo = 0;
     rs.milestone = null;
+    // Two cursor/event fields the renderer relies on to keep per-frame
+    // work proportional to the visible note window. Single-player
+    // resets these in `resetRenderState`; here in MP we'd never been
+    // resetting them across consecutive matches in the same mount,
+    // which left a stale `firstVisibleIdx` pointing into the previous
+    // chart's note array. The renderer's bail-on-mismatch was lenient
+    // enough not to crash, but the first heavy frame of round 2+ paid
+    // a one-time correction cost that registered as micro-stutter.
+    rs.firstVisibleIdx = 0;
+    rs.recentEvents = [];
   }, [loaded]);
 
   // Schedule the audio start exactly at snapshot.startsAt (countdown→playing).
@@ -635,9 +700,21 @@ function CanvasPane({
     }
   }, []);
 
+  // Global keyboard install — RUNS ONCE for the lifetime of the
+  // component. Same fix as single-player Game.tsx: the previous
+  // dep array `[snapshot.phase, snapshot.pausedAt, pressLane,
+  // releaseLane]` caused the listeners to tear down + reattach at
+  // the server-driven `countdown → playing` boundary, ~2 s before
+  // the song became audible — a documented contributor to the
+  // first-second-of-the-match stutter. Reading phase + pausedAt
+  // from `phaseRef` / `pausedRef` keeps listener identity stable
+  // for the entire `lobby → countdown → playing → results` arc.
+  // pressLane / releaseLane are useCallback'd with empty deps and
+  // read entirely off refs themselves, safe to capture once.
   useEffect(() => {
-    if (snapshot.phase !== "playing" && snapshot.phase !== "countdown") return;
     const onKeyDown = (e: KeyboardEvent) => {
+      const phase = phaseRef.current;
+      if (phase !== "playing" && phase !== "countdown") return;
       // Skip when the user is typing in a form field (future chat, name
       // change, etc). Same guard as single-player Game.tsx.
       if (isEditableTarget(e.target)) return;
@@ -653,7 +730,7 @@ function CanvasPane({
       // pressed while paused is a no-op rather than a confusing
       // close that would strand the player without a Resume button.
       if (e.code === "Escape") {
-        if (snapshot.pausedAt !== null) return;
+        if (pausedRef.current) return;
         e.preventDefault();
         setMatchMenuOpen((open) => !open);
         return;
@@ -693,6 +770,8 @@ function CanvasPane({
       pressLane(lane, e.timeStamp);
     };
     const onKeyUp = (e: KeyboardEvent) => {
+      const phase = phaseRef.current;
+      if (phase !== "playing" && phase !== "countdown") return;
       // No `isEditableTarget` short-circuit: chat / name input is a
       // realistic mid-song interaction, and if the player held a lane
       // key, focused chat (keydown still in flight or already past),
@@ -711,7 +790,10 @@ function CanvasPane({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [snapshot.phase, snapshot.pausedAt, pressLane, releaseLane]);
+    // Empty deps ON PURPOSE — see leading comment. Phase / pausedAt
+    // are read from refs; pressLane/releaseLane are mount-stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-close the in-match menu when we leave the playing phase
   // (host clicked "Cancel match" → room flips to lobby; the safety
@@ -964,14 +1046,24 @@ function CanvasPane({
             ? (state ?? emptyStateRef.current)
             : emptyStateRef.current
           : (state ?? emptyStateRef.current);
-      drawFrame(
-        ctx,
-        drawState,
-        songTime,
-        dt,
-        renderOptsRef.current,
-        rs,
-      );
+      // Skip painting until canvas-critical fonts have settled.
+      // See `fontsReadyRef` for the full rationale — this is the
+      // multiplayer parity for SP's pre-countdown `await
+      // document.fonts.ready`. Per-frame state still steps (the
+      // `rs.laneFlash` decay above continues), only the visible
+      // pixel commit is deferred. In practice the gate is open
+      // within tens of milliseconds of mount so the player never
+      // notices a blank frame.
+      if (fontsReadyRef.current) {
+        drawFrame(
+          ctx,
+          drawState,
+          songTime,
+          dt,
+          renderOptsRef.current,
+          rs,
+        );
+      }
 
       if (state && now - lastHud > 100) {
         setStats({ ...state.stats });
