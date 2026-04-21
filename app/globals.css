@@ -531,7 +531,10 @@ html::-webkit-scrollbar-thumb:hover {
   border: 2px solid rgb(var(--fg));
   box-shadow: 5px 5px 0 0 rgb(var(--shadow));
   transition: transform 80ms ease, box-shadow 80ms ease;
-  font-weight: 800;
+  /* Display family (Space_Grotesk) tops out at 700; asking for 800 here
+   * triggered synth-bold (fuzzier strokes). 700 is the heaviest real
+   * weight we load, so use it directly. */
+  font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }

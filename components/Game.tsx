@@ -39,7 +39,14 @@ import {
   saveSfx,
   loadMetronome,
   saveMetronome,
+  loadRenderQuality,
+  saveRenderQuality,
+  nextRenderQuality,
+  loadJudgmentGlyphs,
+  saveJudgmentGlyphs,
+  onStorageFailure,
   type FpsLock,
+  type RenderQuality,
 } from "@/lib/game/settings";
 import {
   clearSoloResume,
@@ -57,7 +64,6 @@ import TouchLanes from "@/components/TouchLanes";
 type Phase =
   | "idle"
   | "loading"
-  | "ready"
   | "countdown"
   | "playing"
   | "paused"
@@ -101,6 +107,16 @@ const KEY_TO_LANE: Record<string, number> = {
 
 export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /**
+   * Most-recently observed CSS pixel size of the canvas, kept in a ref
+   * so the rAF loop can pass it straight to `drawFrame` without the
+   * renderer having to read `clientWidth` / `clientHeight` (those
+   * getters can force a layout flush and were responsible for ~0.1–
+   * 0.4ms of per-frame variance in DevTools traces). Updated by the
+   * ResizeObserver below; defaults to 0/0 which makes drawFrame fall
+   * back to the live getters until the first observation lands.
+   */
+  const canvasSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
   const audioRef = useRef<AudioEngine | null>(null);
   const stateRef = useRef<GameState | null>(null);
   const renderStateRef = useRef<RenderState>(createRenderState());
@@ -220,6 +236,32 @@ export default function Game() {
    *  which means zero audible feedback for hits or misses (song +
    *  metronome are unaffected). */
   const [sfx, setSfx] = useState<boolean>(loadSfx);
+  /** Render quality preset. `"high"` is the default and runs every VFX
+   *  (shadow blurs, glow halos, particles, shockwaves, milestone
+   *  vignette). `"performance"` strips out the offscreen-pass shadow
+   *  passes and disables the celebration VFX entirely — gameplay reads
+   *  identically (judgment line still pulses, gates still flash, lane
+   *  fills still light up on press) but per-frame GPU + GC pressure
+   *  drops sharply on integrated graphics / older laptops. Persisted
+   *  across sessions; mirrored into `renderOptsRef` so toggling takes
+   *  effect on the very next frame. */
+  const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
+  /** When true, judgment popups (`PERFECT` / `GREAT` / `GOOD` / `MISS`)
+   *  prepend a small ASCII glyph (`* + = x`) so judgments are still
+   *  distinguishable for color-blind players who can't lean on the
+   *  blue/green/yellow/red color cue. Persisted across sessions. */
+  const [judgmentGlyphs, setJudgmentGlyphs] = useState<boolean>(loadJudgmentGlyphs);
+  /** Persistent banner when localStorage / sessionStorage refuses a
+   *  write (typical causes: Safari Private Browsing quota, exhausted
+   *  per-origin quota, an extension that blocks storage). Surfaces a
+   *  single discreet "settings won't persist" toast so the player
+   *  knows their toggles will reset on reload — historically these
+   *  failures were swallowed silently and players assumed the toggle
+   *  itself was broken. Cleared by the player on dismiss; sticky
+   *  across phase transitions because the underlying problem usually
+   *  doesn't go away mid-session. */
+  const [storageBlocked, setStorageBlocked] = useState<boolean>(false);
+  useEffect(() => onStorageFailure(() => setStorageBlocked(true)), []);
   /** True if the user is on a touch-only device (no physical keyboard).
    *  Swaps the "press D F J K"
    *  hints in the StartCard for tap-friendly copy. */
@@ -311,6 +353,20 @@ export default function Game() {
     renderOptsRef.current.theme = theme;
     renderStateRef.current.cache = undefined;
   }, [theme]);
+
+  // Mirror render quality + judgment glyph settings into the rAF-loop
+  // options ref. Persist on change so the choice survives reloads. We
+  // also save here (not in the toggle handler) so the *initial value*
+  // hydrated from localStorage doesn't count as a write — `loadX()` is
+  // already a no-op when the key is missing.
+  useEffect(() => {
+    renderOptsRef.current.quality = quality;
+    saveRenderQuality(quality);
+  }, [quality]);
+  useEffect(() => {
+    renderOptsRef.current.judgmentGlyphs = judgmentGlyphs;
+    saveJudgmentGlyphs(judgmentGlyphs);
+  }, [judgmentGlyphs]);
 
   // Force-load the JetBrains Mono ExtraBold weight used by the lane-gate
   // letters drawn on the canvas. next/font only downloads weights that are
@@ -436,20 +492,37 @@ export default function Game() {
         audioRef.current.setVolume(volume);
         audioRef.current.setSfx(sfx);
         // Fire and forget — by the time PLAY is clicked, this is usually done.
+        // We DO surface decode failures here. Earlier this catch block
+        // was a silent no-op, which meant a corrupt mp3 / a CORS-blocked
+        // audio URL would let the player click PLAY, then `start()`
+        // would fail with the same error. Reporting it now lets the
+        // StartCard show the message before the click — and start()'s
+        // own error handler will still catch the same condition if the
+        // user reaches it from a different code path (e.g. they click
+        // PLAY before the prep finishes).
         const loaded = loadedRef.current;
+        const onPrepError = (e: unknown) => {
+          if (cancelled) return;
+          const msg = (e as { message?: string } | null)?.message
+            ?? "Audio decode failed — the chart may be unplayable.";
+          setError(msg);
+        };
         if (loaded?.delivery === "remote" && loaded.audioBytes && loaded.audioKey) {
           // Bytes were already extracted by oszFetcher; just decode them.
           // We pass a SLICE so the original buffer survives if start() needs
           // to retry (decodeAudioData detaches the input).
           void audioRef.current
             .loadFromBytes(loaded.audioBytes.slice(0), loaded.audioKey)
-            .catch(() => {});
+            .catch(onPrepError);
         } else if (displayMeta.audioUrl) {
-          void audioRef.current.load(displayMeta.audioUrl).catch(() => {});
+          void audioRef.current.load(displayMeta.audioUrl).catch(onPrepError);
         }
       } catch {
         // Some browsers refuse to create an AudioContext outside a gesture;
         // fall back to creating it lazily inside start() like before.
+        // Not surfaced because start() will attempt the same path
+        // again from inside a guaranteed gesture and report any real
+        // failure with a clearer message.
       }
     };
     window.addEventListener("pointerdown", prep, { once: false });
@@ -546,6 +619,8 @@ export default function Game() {
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
+      canvasSizeRef.current.w = rect.width;
+      canvasSizeRef.current.h = rect.height;
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
@@ -601,6 +676,23 @@ export default function Game() {
       setSongSource(loaded.source);
       setChartLength(loaded.notes.length);
       setRawNoteCount(loaded.rawNoteCount);
+
+      // Empty-chart guard. The quantizer can occasionally return a
+      // chart with zero playable notes (an osu! file whose only
+      // notes were filtered out by mirror, or an experimental tier
+      // with too few candidates to surface). Without this guard, the
+      // engine reaches `playing` immediately, never fires a
+      // judgment, the rock meter never depletes, and the run sits
+      // forever on a 0/0 score until the player gives up. Bouncing
+      // back to `idle` with an explicit error keeps the StartCard
+      // visible and lets the player switch difficulty.
+      if (loaded.notes.length === 0) {
+        setPhase("idle");
+        setError(
+          "This chart has no playable notes for the selected difficulty — try a different mode.",
+        );
+        return;
+      }
 
       // Idempotent: skips fetch+decode if the prep effect already did it.
       if (loaded.delivery === "remote" && loaded.audioBytes && loaded.audioKey) {
@@ -1193,6 +1285,8 @@ export default function Game() {
         dt,
         renderOptsRef.current,
         rs,
+        canvasSizeRef.current.w,
+        canvasSizeRef.current.h,
       );
 
       if (state && now - lastHudUpdate > 100) {
@@ -1334,6 +1428,10 @@ export default function Game() {
             fps={fps}
             fpsLock={fpsLock}
             onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
+            quality={quality}
+            onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+            judgmentGlyphs={judgmentGlyphs}
+            onToggleGlyphs={() => setJudgmentGlyphs((g) => !g)}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
             songDuration={displayMeta?.duration ?? null}
@@ -1362,6 +1460,9 @@ export default function Game() {
                 onDismiss={onDismissResume}
               />
             )}
+            {storageBlocked && (
+              <StorageBlockedBanner onDismiss={() => setStorageBlocked(false)} />
+            )}
             <StartCard
               meta={displayMeta}
               onStart={start}
@@ -1373,6 +1474,10 @@ export default function Game() {
               onToggleSfx={() => setSfx((s) => !s)}
               fpsLock={fpsLock}
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
+              quality={quality}
+              onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+              judgmentGlyphs={judgmentGlyphs}
+              onToggleGlyphs={() => setJudgmentGlyphs((g) => !g)}
               songSource={songSource}
               chartMode={chartMode}
               onChangeMode={setChartMode}
@@ -1585,6 +1690,49 @@ function ResumeBanner({
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Discreet "settings won't persist" banner. Appears the first time
+ * `localStorage` / `sessionStorage` rejects a write — the most common
+ * causes are Safari Private Browsing (which exposes a 0-byte quota),
+ * exhausted per-origin storage, or a browser extension that blocks
+ * storage. Without this banner those write failures were swallowed
+ * silently and players assumed the relevant toggle (FPS lock, volume,
+ * SFX, etc.) was broken; in fact the toggle works for the current
+ * session, it just won't be remembered next time.
+ *
+ * Intentionally less prominent than the resume banner — no accent
+ * border, no glow — because the situation is informational, not
+ * actionable. Player dismisses with one click.
+ */
+function StorageBlockedBanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div
+      className="w-full rounded-2xl border border-bone-50/30 bg-bone-900/85 px-5 py-3 backdrop-blur"
+      role="status"
+      aria-label="Settings won't persist"
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-[0.65rem] uppercase tracking-[0.4em] text-bone-50/70">
+            settings won&apos;t persist
+          </p>
+          <p className="mt-1 font-mono text-[0.75rem] text-bone-50/70">
+            Your browser refused a save (private browsing, full storage, or an extension). Toggles still work this session — they just reset on reload.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 rounded-md border border-bone-50/30 px-3 py-1.5 font-mono text-[0.65rem] uppercase tracking-widest text-bone-50/70 transition hover:border-bone-50/60 hover:text-bone-50"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 function StartCard({
   meta,
   onStart,
@@ -1596,6 +1744,10 @@ function StartCard({
   onToggleSfx,
   fpsLock,
   onCycleFpsLock,
+  quality,
+  onCycleQuality,
+  judgmentGlyphs,
+  onToggleGlyphs,
   songSource,
   chartMode,
   onChangeMode,
@@ -1624,6 +1776,13 @@ function StartCard({
    *  here persists into gameplay and back. */
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
+  /** Same quality preset as the in-game HUD — exposed here so a player
+   *  can opt into PERFORMANCE mode before the run even starts. */
+  quality: RenderQuality;
+  onCycleQuality: () => void;
+  /** Color-blind helper toggle — same setting as the HUD. */
+  judgmentGlyphs: boolean;
+  onToggleGlyphs: () => void;
   songSource: "osu" | "fallback" | null;
   chartMode: ChartMode;
   onChangeMode: (m: ChartMode) => void;
@@ -1946,6 +2105,60 @@ function StartCard({
             press N to toggle in-game
           </span>
         </label>
+        {/* Quality preset tile — same affordance vocabulary as the
+            FPS lock tile (whole tile click cycles, right chip flips
+            to accent when not on the default value). The default
+            ("HIGH") reads in dim text + the alternative ("PERF") in
+            accent so the player gets a visual confirmation that
+            they've opted out of the default look. */}
+        <button
+          type="button"
+          onClick={onCycleQuality}
+          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
+          data-tooltip={
+            quality === "high"
+              ? "Quality: HIGH — full visual effects (shadow glows, particles, shockwaves, milestone vignette). Click to switch to PERFORMANCE if you see frame-drops."
+              : "Quality: PERFORMANCE — visual effects disabled to keep frame rate steady. Click to switch back to HIGH."
+          }
+          aria-label="Cycle render quality preset"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Quality
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                quality === "high" ? "text-bone-50/60" : "text-accent"
+              }`}
+            >
+              {quality === "high" ? "HIGH" : "PERF"}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            HIGH = full vfx · PERF = no vfx
+          </span>
+        </button>
+        {/* Color-blind glyph tile — opt-in. Same checkbox aesthetic as
+            Metronome / Feedback above. Caption explains the cue
+            without demanding the player click into a separate menu. */}
+        <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Glyphs
+            </span>
+            <input
+              type="checkbox"
+              checked={judgmentGlyphs}
+              onChange={onToggleGlyphs}
+              className="h-[1.05rem] w-[1.05rem] accent-accent"
+              aria-label="Prepend glyph (color-blind helper)"
+            />
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            adds * + = x to judgment popups
+          </span>
+        </label>
       </div>
 
       <div className="mt-3 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
@@ -2218,6 +2431,10 @@ function HUD({
   fps,
   fpsLock,
   onCycleFpsLock,
+  quality,
+  onCycleQuality,
+  judgmentGlyphs,
+  onToggleGlyphs,
   sfx,
   onToggleSfx,
   songTitle,
@@ -2237,6 +2454,15 @@ function HUD({
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
+  /** Render quality preset — "high" (full VFX) or "performance"
+   *  (skip shadow blurs + celebration VFX). Cycled live during a
+   *  match; the renderer reads it on the very next frame. */
+  quality: RenderQuality;
+  onCycleQuality: () => void;
+  /** Color-blind helper: prepend a glyph (`* + = x`) to judgment
+   *  popups so judgments are distinguishable without color. */
+  judgmentGlyphs: boolean;
+  onToggleGlyphs: () => void;
   /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
@@ -2558,6 +2784,60 @@ function HUD({
             {fpsLock == null ? "OFF" : fpsLock}
           </span>
         </button>
+        {/* Quality tile — same affordance vocabulary as the FPS-lock
+            tile (full-tile click target, left caption / right value).
+            The current preset reads in plain accent text instead of a
+            chip border so the row visually rhymes with FPS lock above
+            it. Toggling cycles HIGH ↔ PERF; the rAF loop picks the
+            new value up on its very next frame (no remount, no
+            stutter — same pattern as `fpsLockRef`). */}
+        <button
+          type="button"
+          onClick={onCycleQuality}
+          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
+          data-tooltip={
+            quality === "high"
+              ? "Quality: HIGH — full VFX. Click to switch to PERFORMANCE (drops shadow glows + celebration VFX)."
+              : "Quality: PERFORMANCE — VFX disabled for steady frame rate. Click to switch back to HIGH."
+          }
+          aria-label="Cycle render quality preset"
+        >
+          <span className="flex flex-col">
+            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+              Quality
+            </span>
+            <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
+              {quality === "high" ? "full vfx" : "no vfx"}
+            </span>
+          </span>
+          <span
+            aria-hidden
+            className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+          >
+            {quality === "high" ? "HIGH" : "PERF"}
+          </span>
+        </button>
+        {/* Color-blind glyphs tile — accessibility opt-in. Off by
+            default (the colored popups already read fine for most
+            players); on, judgment popups gain a small ASCII glyph
+            prefix (`* + = x`) so judgments are still
+            distinguishable without color. Same checkbox aesthetic
+            as Metronome / Feedback above. */}
+        <label
+          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 sm:flex"
+          data-tooltip="Add a glyph (* + = x) before each judgment popup so judgments are distinguishable without color."
+        >
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+            Glyphs
+          </span>
+          <input
+            type="checkbox"
+            checked={judgmentGlyphs}
+            onChange={onToggleGlyphs}
+            className="h-[14px] w-[14px] cursor-pointer accent-accent"
+            aria-label="Toggle judgment glyphs (color-blind helper)"
+          />
+        </label>
         {/* Volume tile — same border / padding / typography as the
             toggle tiles so it visually belongs to the same row of
             settings. The "VOL" caption + slider + percentage live

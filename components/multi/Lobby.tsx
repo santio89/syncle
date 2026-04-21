@@ -50,15 +50,21 @@ import {
 } from "@/lib/game/chart";
 import {
   loadFpsLock,
+  loadJudgmentGlyphs,
   loadMetronome,
+  loadRenderQuality,
   loadSfx,
   loadVolume,
   nextFpsLock,
+  nextRenderQuality,
   saveFpsLock,
+  saveJudgmentGlyphs,
   saveMetronome,
+  saveRenderQuality,
   saveSfx,
   saveVolume,
   type FpsLock,
+  type RenderQuality,
 } from "@/lib/game/settings";
 import type {
   CatalogItem,
@@ -431,6 +437,8 @@ function PlayerSettingsCard() {
   const [metronome, setMetronomeState] = useState<boolean>(loadMetronome);
   const [sfx, setSfxState] = useState<boolean>(loadSfx);
   const [fpsLock, setFpsLockState] = useState<FpsLock>(loadFpsLock);
+  const [quality, setQualityState] = useState<RenderQuality>(loadRenderQuality);
+  const [judgmentGlyphs, setJudgmentGlyphsState] = useState<boolean>(loadJudgmentGlyphs);
 
   // Live-save handlers — persist on every change so closing the lobby
   // tab without a final "save" still keeps the player's choices.
@@ -456,6 +464,20 @@ function PlayerSettingsCard() {
     setFpsLockState((cur) => {
       const next = nextFpsLock(cur);
       saveFpsLock(next);
+      return next;
+    });
+  }, []);
+  const onCycleQuality = useCallback(() => {
+    setQualityState((cur) => {
+      const next = nextRenderQuality(cur);
+      saveRenderQuality(next);
+      return next;
+    });
+  }, []);
+  const onToggleGlyphs = useCallback(() => {
+    setJudgmentGlyphsState((cur) => {
+      const next = !cur;
+      saveJudgmentGlyphs(next);
       return next;
     });
   }, []);
@@ -546,6 +568,66 @@ function PlayerSettingsCard() {
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
             press N to toggle in-game
+          </span>
+        </label>
+      </div>
+
+      {/* Quality + glyph row — same 3-up grid pattern, but with two
+          tiles. Quality cycles HIGH ↔ PERF (full VFX vs no
+          shadow/particle/shockwave) and is read live by the renderer
+          on the next rAF tick (no remount). Glyphs prepends a small
+          ASCII glyph (`* + = x`) to judgment popups so judgments
+          remain distinguishable for color-blind players. Both
+          settings are persisted across sessions and shared with the
+          single-player HUD. */}
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={onCycleQuality}
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
+          data-tooltip={
+            quality === "high"
+              ? "Quality: HIGH — full visual effects (shadow glows, particles, shockwaves, milestone vignette). Click to switch to PERFORMANCE if you see frame-drops."
+              : "Quality: PERFORMANCE — visual effects disabled to keep frame rate steady. Click to switch back to HIGH."
+          }
+          aria-label="Cycle render quality preset"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Quality
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                quality === "high" ? "text-bone-50/60" : "text-accent"
+              }`}
+            >
+              {quality === "high" ? "HIGH" : "PERF"}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            HIGH = full vfx · PERF = no vfx
+          </span>
+        </button>
+
+        <label
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
+          data-tooltip="Add a glyph (* + = x) before each judgment popup so judgments are distinguishable without color."
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Glyphs
+            </span>
+            <input
+              type="checkbox"
+              checked={judgmentGlyphs}
+              onChange={onToggleGlyphs}
+              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
+              aria-label="Toggle judgment glyphs (color-blind helper)"
+            />
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            adds * + = x to judgment popups
           </span>
         </label>
       </div>

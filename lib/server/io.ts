@@ -287,6 +287,20 @@ interface InternalRoom {
    * and pollutes the metric/log surface.
    */
   countdownTimer: NodeJS.Timeout | null;
+  /**
+   * Stringified payload of the last snapshot we emitted on this room,
+   * used by `emitSnapshot` to skip identical re-broadcasts. Many call
+   * sites flip a flag to its current value (host re-clicks "ready",
+   * a snapshot is forced after `emitNotice`, the disconnect/reconnect
+   * path runs even when the player's slot already showed `online`),
+   * and serializing once + cmp-strings is cheaper than fanning the
+   * full object out to N sockets through Socket.IO's encoder.
+   *
+   * Cleared on close to free the string. Stays warm across emits;
+   * the payload is small enough (~1 KB at 8-player max) that holding
+   * one copy per room is fine.
+   */
+  lastSnapshotJson: string | null;
 }
 
 type Sock = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -352,8 +366,19 @@ class RoomRegistry {
   emitSnapshot(code: string): void {
     const room = this.rooms.get(code);
     if (!room) return;
+    // Build the wire payload, then cheap-compare against the last one
+    // we sent. Identical = nothing observable changed = skip the fan-
+    // out entirely (no Socket.IO encode, no per-socket frame, no
+    // wakeup on the client side). Activity is also NOT bumped on a
+    // no-op: a snapshot with identical bytes means whatever called us
+    // didn't actually mutate room state, which is precisely the kind
+    // of churn the inactivity timer is supposed to ignore.
+    const snap = this.snapshotOf(room);
+    const json = JSON.stringify(snap);
+    if (json === room.lastSnapshotJson) return;
+    room.lastSnapshotJson = json;
     this.bumpActivity(room);
-    this.io.to(`room:${code}`).emit("room:snapshot", this.snapshotOf(room));
+    this.io.to(`room:${code}`).emit("room:snapshot", snap);
   }
 
   /**
@@ -563,6 +588,7 @@ class RoomRegistry {
       matchSafetyTimer: null,
       inactivityTimer: null,
       countdownTimer: null,
+      lastSnapshotJson: null,
       lastActivityAt: Date.now(),
     };
     room.players.set(sessionId, {

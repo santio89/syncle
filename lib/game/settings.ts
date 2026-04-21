@@ -22,6 +22,65 @@ const SFX_KEY = "syncle.sfx";
 const DEFAULT_SFX = true;
 const METRONOME_KEY = "syncle.metronome";
 const DEFAULT_METRONOME = true;
+const QUALITY_KEY = "syncle.quality";
+const DEFAULT_QUALITY: RenderQuality = "high";
+const GLYPHS_KEY = "syncle.judgmentGlyphs";
+const DEFAULT_GLYPHS = false;
+
+/* -----------------------------------------------------------------------
+ * Storage-health signal — fires the first time a settings / resume /
+ * best-score write fails (quota exceeded, private mode, etc.). Components
+ * can subscribe via `onStorageFailure` to surface a single discreet
+ * "settings won't persist" toast so the player isn't silently surprised
+ * later. Idempotent per session — we don't spam the listener after the
+ * first failure since every subsequent save attempt would re-fire it.
+ * ------------------------------------------------------------------- */
+
+let storageFailureFired = false;
+const storageFailureListeners = new Set<() => void>();
+
+/**
+ * Record a localStorage / sessionStorage write failure. Safe to call
+ * from any try/catch arm — first call notifies listeners, subsequent
+ * calls are no-ops for the rest of the session.
+ */
+export function reportStorageFailure(): void {
+  if (storageFailureFired) return;
+  storageFailureFired = true;
+  for (const cb of storageFailureListeners) {
+    try {
+      cb();
+    } catch {
+      /* swallow — listener errors must not poison sibling listeners */
+    }
+  }
+}
+
+/**
+ * Subscribe to the first storage failure. Returns an unsubscribe
+ * function. If a failure has ALREADY been reported when the caller
+ * subscribes (e.g. a save failed in a render-loop tick before the HUD
+ * mounted), the listener fires synchronously so late subscribers still
+ * see the signal.
+ */
+export function onStorageFailure(cb: () => void): () => void {
+  storageFailureListeners.add(cb);
+  if (storageFailureFired) {
+    try {
+      cb();
+    } catch {
+      /* swallow */
+    }
+  }
+  return () => {
+    storageFailureListeners.delete(cb);
+  };
+}
+
+/** True if a write has failed at least once this session. */
+export function hasStorageFailed(): boolean {
+  return storageFailureFired;
+}
 
 /**
  * Optional render-loop frame-rate cap.
@@ -65,7 +124,90 @@ export function saveFpsLock(v: FpsLock): void {
   try {
     window.localStorage.setItem(FPS_LOCK_KEY, v == null ? "off" : String(v));
   } catch {
-    /* ignore */
+    reportStorageFailure();
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Render quality preset.
+ *
+ * - `"high"`       → full visual feedback: particles, shockwaves, glow
+ *                    halos, milestone vignette, lane-gate anticipation.
+ *                    The default and what every player sees out of the
+ *                    box. Tuned to look great on a desktop GPU.
+ *
+ * - `"performance"` → pruned VFX for low-end / integrated GPUs and
+ *                     accessibility-conscious players who want a
+ *                     calmer canvas. Particles + shockwaves + the
+ *                     milestone vignette + the canvas combo glow are
+ *                     skipped entirely; lane-gate and tap-note
+ *                     shadowBlur are also disabled (the most
+ *                     fillrate-expensive operations on the highway).
+ *                     Notes, hold trails, judgment line, and beat
+ *                     dot are still drawn — gameplay reads identical,
+ *                     just without the celebratory polish.
+ *
+ * Live-applied via `RenderOptions.quality` — the renderer's hot
+ * paths gate the heavy effects on this flag without re-allocating
+ * any state, so toggling the setting mid-match takes effect on the
+ * next frame.
+ * ------------------------------------------------------------------- */
+export type RenderQuality = "high" | "performance";
+
+/** Cycle order for the in-game quality toggle. */
+export const QUALITY_CYCLE: RenderQuality[] = ["high", "performance"];
+
+export function nextRenderQuality(current: RenderQuality): RenderQuality {
+  return current === "high" ? "performance" : "high";
+}
+
+export function loadRenderQuality(): RenderQuality {
+  if (typeof window === "undefined") return DEFAULT_QUALITY;
+  try {
+    const raw = window.localStorage.getItem(QUALITY_KEY);
+    if (raw === "performance") return "performance";
+    if (raw === "high") return "high";
+    return DEFAULT_QUALITY;
+  } catch {
+    return DEFAULT_QUALITY;
+  }
+}
+
+export function saveRenderQuality(v: RenderQuality): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(QUALITY_KEY, v);
+  } catch {
+    reportStorageFailure();
+  }
+}
+
+/**
+ * Color-blind / high-contrast helper for judgment popups. When `true`,
+ * the canvas prepends a small symbolic glyph (★ ◆ ▲ ✕) to the
+ * PERFECT / GREAT / GOOD / MISS label so judgments differentiate via
+ * SHAPE in addition to color — useful for color-vision differences
+ * where the brand red/green/blue/yellow palette can collapse onto
+ * the same hue. Off by default so the existing aesthetic stays the
+ * same for everyone who doesn't need it.
+ */
+export function loadJudgmentGlyphs(): boolean {
+  if (typeof window === "undefined") return DEFAULT_GLYPHS;
+  try {
+    const raw = window.localStorage.getItem(GLYPHS_KEY);
+    if (raw == null) return DEFAULT_GLYPHS;
+    return raw === "1" || raw === "true" || raw === "on";
+  } catch {
+    return DEFAULT_GLYPHS;
+  }
+}
+
+export function saveJudgmentGlyphs(on: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(GLYPHS_KEY, on ? "1" : "0");
+  } catch {
+    reportStorageFailure();
   }
 }
 
@@ -87,7 +229,7 @@ export function saveVolume(v: number): void {
   try {
     window.localStorage.setItem(VOL_KEY, String(Math.min(1, Math.max(0, v))));
   } catch {
-    /* ignore */
+    reportStorageFailure();
   }
 }
 
@@ -114,7 +256,7 @@ export function saveSfx(on: boolean): void {
   try {
     window.localStorage.setItem(SFX_KEY, on ? "1" : "0");
   } catch {
-    /* ignore */
+    reportStorageFailure();
   }
 }
 
@@ -139,6 +281,6 @@ export function saveMetronome(on: boolean): void {
   try {
     window.localStorage.setItem(METRONOME_KEY, on ? "1" : "0");
   } catch {
-    /* ignore */
+    reportStorageFailure();
   }
 }

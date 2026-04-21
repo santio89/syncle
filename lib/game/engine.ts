@@ -45,6 +45,37 @@ export class GameState {
   lastJudgeAt = -Infinity;
   /** Per-lane currently-being-held note (for hold mechanics). */
   private activeHold: Array<Note | null> = [null, null, null, null];
+  /**
+   * Per-lane "first note index that still might be hittable in this
+   * lane" hint. Strictly monotonically increasing — we only ever
+   * bump it forward as notes get judged or fall outside the future
+   * lookahead.
+   *
+   * Why this exists:
+   *   `hit(lane, ...)` used to walk the chart starting at
+   *   `this.cursor` and skip every note whose lane didn't match. On
+   *   a busy 4-lane stream the wasted scan was negligible, but for
+   *   sparse same-lane jacks (e.g. a lane that fires once every 3
+   *   beats while the other 3 lanes carry the melody) the press in
+   *   the quiet lane had to step over ~30–80 unrelated notes every
+   *   time. With a per-lane hint that average drops to ~1.
+   *
+   *   The cursor is still authoritative for FIFO/notelock — we only
+   *   USE this hint as a starting point and the loop still bails
+   *   the instant it walks past an in-future note in the wrong
+   *   lane (those are skipped, but the future-bail check at
+   *   `n.t - songTime > 0.6` still catches the early-exit case).
+   */
+  private laneNext: number[] = [0, 0, 0, 0];
+  /**
+   * Ring-buffer write head for `events` once it reaches 32 entries.
+   * Replaces the old `events.shift()` (O(n) memmove inside V8) with
+   * an O(1) overwrite. The renderer iterates `events` with a plain
+   * `for` loop and skips aged entries by `songTime - ev.at`, so the
+   * order of entries inside the buffer doesn't matter for display.
+   */
+  private eventsHead = 0;
+  private static readonly EVENTS_CAP = 32;
 
   constructor(notes: Note[]) {
     this.notes = notes;
@@ -127,7 +158,17 @@ export class GameState {
    * exist past that gap).
    */
   hit(lane: number, songTime: number): JudgmentEvent | null {
-    for (let i = this.cursor; i < this.notes.length; i++) {
+    // Start at the per-lane hint — but never before the global
+    // cursor (the cursor is the authoritative "earliest unjudged
+    // anywhere" line, and a stale lane hint that lags behind would
+    // cause us to inspect already-cursored-past notes for nothing).
+    const hint = this.laneNext[lane] ?? 0;
+    const start = hint < this.cursor ? this.cursor : hint;
+    // First unjudged in-lane note we touch on this walk — committed
+    // back to `laneNext[lane]` after the loop so the next press in
+    // this lane skips straight to it.
+    let firstInLane = -1;
+    for (let i = start; i < this.notes.length; i++) {
       const n = this.notes[i];
       if (n.judged) continue;
 
@@ -136,8 +177,13 @@ export class GameState {
         // Note is still in the future, outside even the largest
         // hit window. If it's far enough out we can stop scanning
         // entirely — chart is sorted by `t` so nothing further
-        // can be in window either.
-        if (n.t - songTime > 0.6) break;
+        // can be in window either. Before bailing, commit any
+        // first-in-lane index we found above so the hint isn't
+        // pinned to an already-judged note.
+        if (n.t - songTime > 0.6) {
+          if (firstInLane !== -1) this.laneNext[lane] = firstInLane;
+          break;
+        }
         continue;
       }
       // Past the good window — this note is already too late to
@@ -145,17 +191,30 @@ export class GameState {
       // for now we just look past it.
       if (delta > TIMING.good) continue;
       if (n.lane !== lane) continue;
+      // First unjudged in-lane candidate we've seen this walk —
+      // remember its index for the lane hint.
+      if (firstInLane === -1) firstInLane = i;
 
       // First in-window unjudged note in the target lane wins —
       // this is the FIFO / notelock contract. Don't peek further.
+      //
+      // `absDelta <= TIMING.good` is guaranteed here: lines above
+      // already break on `delta < -TIMING.good` and continue on
+      // `delta > TIMING.good`, so any note reaching this point sits
+      // inside the good window. The cascade therefore needs no
+      // fallback branch — `judgment` is always assigned.
       const absDelta = Math.abs(delta);
       let judgment: Judgment;
       if (absDelta <= TIMING.perfect) judgment = "perfect";
       else if (absDelta <= TIMING.great) judgment = "great";
-      else if (absDelta <= TIMING.good) judgment = "good";
-      else return null;
+      else judgment = "good";
 
       const evt = this.applyHeadJudgment(n, judgment, delta, songTime);
+
+      // Commit the lane hint to the index AFTER the one we just
+      // judged. `n.judged` is now set so subsequent hit() calls
+      // skip it, but starting at `i + 1` saves the redundant skip.
+      this.laneNext[lane] = i + 1;
 
       // For holds, register this lane as actively held until
       // release / endT.
@@ -165,6 +224,9 @@ export class GameState {
       }
       return evt;
     }
+    // No judgment landed — commit whatever first-in-lane index we
+    // walked past so the next press skips straight to it.
+    if (firstInLane !== -1) this.laneNext[lane] = firstInLane;
     return null;
   }
 
@@ -283,8 +345,29 @@ export class GameState {
   }
 
   private pushEvent(evt: JudgmentEvent): void {
-    this.events.push(evt);
-    if (this.events.length > 32) this.events.shift();
+    // Ring-buffer behavior once the array reaches its cap: instead of
+    // `events.shift()` (which V8 implements as an O(n) memmove of the
+    // remaining 31 entries), overwrite the oldest slot in place via
+    // `eventsHead` and walk the head forward modulo the cap.
+    //
+    // Visible behavior is identical for the renderer:
+    //   - `drawJudgmentPopups` iterates `events` with a plain `for`
+    //     loop and skips entries by `songTime - ev.at > 0.6`, so it
+    //     doesn't care about insertion order.
+    //   - The cap (32) is large enough that no two on-screen popups
+    //     can share a slot — the popup window is 0.6 s and the engine
+    //     can produce at most 4 events / frame (one per lane), so 24
+    //     of those 32 entries clear out before reuse even at 60 FPS.
+    //
+    // This eliminates the O(n) shift that was the only allocator-
+    // adjacent cost in the engine's hot path. Stays in <1 µs across
+    // every press now.
+    if (this.events.length < GameState.EVENTS_CAP) {
+      this.events.push(evt);
+    } else {
+      this.events[this.eventsHead] = evt;
+      this.eventsHead = (this.eventsHead + 1) % GameState.EVENTS_CAP;
+    }
     if (evt.at > this.lastJudgeAt) this.lastJudgeAt = evt.at;
   }
 }

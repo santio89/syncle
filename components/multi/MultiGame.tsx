@@ -61,7 +61,14 @@ import {
   loadFpsLock,
   saveFpsLock,
   nextFpsLock,
+  loadRenderQuality,
+  saveRenderQuality,
+  nextRenderQuality,
+  loadJudgmentGlyphs,
+  saveJudgmentGlyphs,
+  onStorageFailure,
   type FpsLock,
+  type RenderQuality,
 } from "@/lib/game/settings";
 import {
   createRenderState,
@@ -199,6 +206,15 @@ function CanvasPane({
   // has a path to "Resume" (or "Leave", for non-hosts).
   const [matchMenuOpen, setMatchMenuOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /**
+   * Most-recently observed CSS pixel size of the canvas. Mirrors the
+   * SP `canvasSizeRef` — fed to `drawFrame` so the renderer doesn't
+   * have to call `clientWidth` / `clientHeight` (those getters can
+   * trigger layout flushes mid-rAF). Updated by the resize effect
+   * below; (0, 0) until first observation, in which case `drawFrame`
+   * falls back to live getters.
+   */
+  const canvasSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
   // Mirror the engine prop into a ref so the existing `audioRef.current?.X`
   // call sites (settings effects, schedule effect, render loop) keep
   // working unchanged. The engine itself was created back at the page
@@ -319,6 +335,16 @@ function CanvasPane({
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
+  // Render quality preset + judgment glyphs — same persistence keys as
+  // single-player so the player's choice transfers between modes.
+  // Both are mirrored into `renderOptsRef` below so toggling takes
+  // effect on the very next rAF tick (no remount, no stutter).
+  const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
+  const [judgmentGlyphs, setJudgmentGlyphs] = useState<boolean>(loadJudgmentGlyphs);
+  // Sticky banner shown the first time storage refuses a write — same
+  // pattern as solo. The user can dismiss with one click.
+  const [storageBlocked, setStorageBlocked] = useState<boolean>(false);
+  useEffect(() => onStorageFailure(() => setStorageBlocked(true)), []);
   // `audioReady` is now sourced from the page-level prop instead of
   // local state. The page resolves it to true the moment the
   // AudioBuffer finishes decoding during the `loading` phase, which
@@ -326,6 +352,18 @@ function CanvasPane({
   // for normal flows. The `audioReady` gate on the schedule effect
   // still matters for the reconnect case (where a player drops in
   // mid-game and we re-decode after the fact).
+
+  // Mirror quality + glyphs into the renderer-options ref + persist on
+  // change. Same pattern as solo (Game.tsx) so a toggle picks up on
+  // the very next frame.
+  useEffect(() => {
+    renderOptsRef.current.quality = quality;
+    saveRenderQuality(quality);
+  }, [quality]);
+  useEffect(() => {
+    renderOptsRef.current.judgmentGlyphs = judgmentGlyphs;
+    saveJudgmentGlyphs(judgmentGlyphs);
+  }, [judgmentGlyphs]);
 
   const { theme } = useTheme();
   useEffect(() => {
@@ -382,6 +420,8 @@ function CanvasPane({
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
+      canvasSizeRef.current.w = rect.width;
+      canvasSizeRef.current.h = rect.height;
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
@@ -1062,6 +1102,8 @@ function CanvasPane({
           dt,
           renderOptsRef.current,
           rs,
+          canvasSizeRef.current.w,
+          canvasSizeRef.current.h,
         );
       }
 
@@ -1146,6 +1188,35 @@ function CanvasPane({
         className="absolute inset-0 block h-full w-full"
       />
 
+      {/* Discreet "settings won't persist" banner. Identical to the
+          solo flow's banner — surfaces the first time storage refuses
+          a write so the player understands why their toggles reset
+          on reload. Anchored top-center so it doesn't compete with
+          the HUD strip on either side. Dismissible. */}
+      {storageBlocked && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-3 pt-3">
+          <div className="pointer-events-auto w-full max-w-md rounded-2xl border border-bone-50/30 bg-bone-900/90 px-4 py-3 backdrop-blur">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-[0.6rem] uppercase tracking-[0.4em] text-bone-50/70">
+                  settings won&apos;t persist
+                </p>
+                <p className="mt-1 font-mono text-[0.7rem] text-bone-50/70">
+                  Browser refused a save (private browsing, full storage, or an extension). Toggles still work this session.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStorageBlocked(false)}
+                className="shrink-0 rounded-md border border-bone-50/30 px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-widest text-bone-50/70 transition hover:border-bone-50/60 hover:text-bone-50"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {stats && (
         // Same combined SCORE+COMBO panel as single-player, with the rock
         // meter card stacked directly underneath. The wrapping column is
@@ -1197,6 +1268,10 @@ function CanvasPane({
               fps={fps}
               fpsLock={fpsLock}
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
+              quality={quality}
+              onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+              judgmentGlyphs={judgmentGlyphs}
+              onToggleGlyphs={() => setJudgmentGlyphs((g) => !g)}
               songTitle={loaded?.meta.title ?? snapshot.selectedSong?.title ?? null}
               songArtist={loaded?.meta.artist ?? snapshot.selectedSong?.artist ?? null}
               songDuration={loaded?.meta.duration ?? null}
@@ -1617,6 +1692,10 @@ function HealthPanel({
   fps,
   fpsLock,
   onCycleFpsLock,
+  quality,
+  onCycleQuality,
+  judgmentGlyphs,
+  onToggleGlyphs,
   songTitle,
   songArtist,
   songDuration,
@@ -1633,6 +1712,14 @@ function HealthPanel({
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
+  /** Render quality preset — same control as the in-match HUD in
+   *  single-player. Persisted across sessions and shared between
+   *  modes. */
+  quality: RenderQuality;
+  onCycleQuality: () => void;
+  /** Color-blind helper toggle — adds glyphs to judgment popups. */
+  judgmentGlyphs: boolean;
+  onToggleGlyphs: () => void;
   songTitle: string | null;
   songArtist: string | null;
   /** Track duration in seconds, or null until the chart is loaded. */
@@ -1790,6 +1877,60 @@ function HealthPanel({
           {fpsLock == null ? "OFF" : fpsLock}
         </span>
       </button>
+      {/* Quality preset tile — see Game.tsx HUD for the full design
+          rationale. Same affordance as the FPS-lock tile above:
+          whole-tile click target, left caption + readout, right
+          chip flips to accent when not on the default value.
+          The HIGH ↔ PERF toggle is read on the very next rAF tick
+          via `renderOptsRef.current.quality`, so a player who
+          notices a frame-drop mid-match can switch live and feel
+          the change immediately without leaving the room. */}
+      <button
+        type="button"
+        onClick={onCycleQuality}
+        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
+        data-tooltip={
+          quality === "high"
+            ? "Quality: HIGH — full visual effects. Click to switch to PERFORMANCE if you see frame-drops."
+            : "Quality: PERFORMANCE — visual effects disabled for steady frame rate. Click to switch back to HIGH."
+        }
+        aria-label="Cycle render quality preset"
+      >
+        <span className="flex flex-col">
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+            Quality
+          </span>
+          <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
+            {quality === "high" ? "full vfx" : "no vfx"}
+          </span>
+        </span>
+        <span
+          aria-hidden
+          className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+        >
+          {quality === "high" ? "HIGH" : "PERF"}
+        </span>
+      </button>
+      {/* Color-blind glyphs tile — accessibility opt-in. Off by
+          default; on, judgment popups gain a small ASCII glyph
+          prefix (`* + = x`) so judgments are still
+          distinguishable for players who can't lean on the
+          blue/green/yellow/red color cue. */}
+      <label
+        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 sm:flex"
+        data-tooltip="Add a glyph (* + = x) before each judgment popup so judgments are distinguishable without color."
+      >
+        <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+          Glyphs
+        </span>
+        <input
+          type="checkbox"
+          checked={judgmentGlyphs}
+          onChange={onToggleGlyphs}
+          className="h-[14px] w-[14px] cursor-pointer accent-accent"
+          aria-label="Toggle judgment glyphs (color-blind helper)"
+        />
+      </label>
       <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2">
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           vol

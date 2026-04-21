@@ -690,10 +690,18 @@ async function pickSession(
   try {
     return await pickRandomRemote(onProgress);
   } catch (err) {
-    console.warn(
-      "[syncle] random remote pick failed across all mirrors, using local fallback:",
-      err,
-    );
+    // Dev-only — these warnings are signal during local debugging
+    // (mirror flake, search-api outage, CORS misconfig) but pure
+    // noise in production where the local fallback path immediately
+    // takes over and the player never notices. NODE_ENV is statically
+    // resolved by Next at build time so the entire branch is removed
+    // from the production bundle.
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "[syncle] random remote pick failed across all mirrors, using local fallback:",
+        err,
+      );
+    }
     onProgress?.("Mirrors unreachable, loading local song…");
   }
 
@@ -738,10 +746,16 @@ async function pickRandomRemote(
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[syncle] beatmapset ${pick.beatmapsetId} failed (attempt ${attempt + 1}/${REMOTE_MAX_ATTEMPTS}):`,
-        msg,
-      );
+      // Dev-only — same rationale as the outer mirror-failed warn.
+      // The retry loop itself decides whether to surface anything to
+      // the player; the per-attempt detail only helps when debugging
+      // why a *specific* mirror keeps rejecting a download.
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `[syncle] beatmapset ${pick.beatmapsetId} failed (attempt ${attempt + 1}/${REMOTE_MAX_ATTEMPTS}):`,
+          msg,
+        );
+      }
       lastErr = err;
     }
   }

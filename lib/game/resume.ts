@@ -48,6 +48,7 @@
  */
 
 import type { ChartMode } from "./chart";
+import { reportStorageFailure } from "./settings";
 
 const KEY = "syncle.solo.resume";
 
@@ -119,7 +120,12 @@ export function saveSoloResume(
     };
     window.sessionStorage.setItem(KEY, JSON.stringify(payload));
   } catch {
-    /* swallow — see comment above */
+    // Swallow at the call-site (resume is a convenience, not a
+    // correctness requirement) but surface a single discreet
+    // "settings won't persist" toast through the shared
+    // storage-health channel so the player isn't left wondering
+    // why "Resume last song?" never appears after a refresh.
+    reportStorageFailure();
   }
 }
 

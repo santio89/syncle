@@ -292,6 +292,17 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
   const socketRef = useRef<ClientSocket | null>(null);
   const codeRef = useRef<string | null>(roomCode);
   const noticeIdRef = useRef(0);
+  /**
+   * Outstanding `setTimeout` handles scheduled by the `room:notice`
+   * handler — one per notice still inside its TTL. Tracked so we can
+   * `clearTimeout` them on hook unmount: without this, a player who
+   * leaves the room while a notice is still on screen leaves React
+   * holding a closure over a `setNotices` setter for an unmounted
+   * component, which logs a noisy "Cannot update an unmounted
+   * component" warning AND keeps the closure (plus its captured
+   * notice) alive in the timer queue for up to NOTICE_TTL_MS.
+   */
+  const noticeTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   // Track highest chat message id we've seen so the snapshot reconciliation
   // step can tell append-only deltas from a backfill of older history.
   const seenChatIdsRef = useRef<Set<number>>(new Set());
@@ -423,9 +434,11 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       const id = ++noticeIdRef.current;
       const notice: RoomNotice = { id, kind, text, at: Date.now() };
       setNotices((prev) => [...prev.slice(-9), notice]);
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        noticeTimersRef.current.delete(timer);
         setNotices((prev) => prev.filter((n) => n.id !== id));
       }, NOTICE_TTL_MS);
+      noticeTimersRef.current.add(timer);
     });
 
     sock.on("phase:results", (payload) => {
@@ -444,6 +457,13 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       sock.removeAllListeners();
       sock.disconnect();
       socketRef.current = null;
+      // Cancel every still-pending notice TTL so we don't fire a
+      // setNotices() after the component has unmounted (React 18+
+      // dev mode logs a warning, and the timer otherwise pins the
+      // closure + its captured notice in memory until TTL expires).
+      const timers = noticeTimersRef.current;
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
     };
   }, []);
 

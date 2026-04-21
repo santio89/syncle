@@ -6,10 +6,17 @@ import { TooltipLayer } from "@/components/TooltipLayer";
 import { LeaveGuardProvider } from "@/components/LeaveGuardProvider";
 import { themeNoFlashScript } from "@/components/theme-no-flash-script";
 
+// Font weights are deliberately trimmed to what we actually render. Each
+// extra weight is one full WOFF2 file fetched/parsed at first paint, so the
+// audit pass dropped:
+//   - display 500: never used (no `font-medium` on display class anywhere)
+//   - mono 600:    never used (no `font-mono` + `font-semibold` combo)
+// If you add a new weight class in JSX, add the corresponding number here
+// or the browser will synthesize-bold and give you fuzzy edges.
 const display = Space_Grotesk({
   subsets: ["latin"],
   variable: "--font-display",
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "600", "700"],
 });
 
 const mono = JetBrains_Mono({
@@ -19,7 +26,7 @@ const mono = JetBrains_Mono({
   // for the lane-gate letters drawn on the canvas — without it the browser
   // silently falls back to the next-loaded weight (700), so a 900 request
   // looks identical to font-bold.
-  weight: ["400", "600", "700", "800"],
+  weight: ["400", "700", "800"],
 });
 
 export const metadata: Metadata = {

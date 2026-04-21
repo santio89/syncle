@@ -21,6 +21,25 @@ const LANE_ARROW_DIR: Record<number, ArrowDir> = {
 
 export type ThemeName = "dark" | "light";
 
+/**
+ * Visual quality preset.
+ *
+ * - `"high"`        → all VFX (particles, shockwaves, glow halos,
+ *                     milestone vignette, lane-gate anticipation,
+ *                     tap-note + hold-trail glow). Default.
+ * - `"performance"` → prunes the heaviest fillrate-bound effects so
+ *                     the highway stays smooth on integrated GPUs and
+ *                     on low-end mobile, AND so accessibility-minded
+ *                     players who don't want pulsing flashes can keep
+ *                     gameplay calm. Notes/holds/judgment line/beat
+ *                     dot still draw — gameplay reads identical, just
+ *                     without celebratory polish.
+ *
+ * Mirrors `RenderQuality` from `lib/game/settings` (kept here as a
+ * type alias so `renderer.ts` doesn't pull in the storage layer).
+ */
+export type RenderQualityMode = "high" | "performance";
+
 export interface RenderOptions {
   /** Seconds of look-ahead — note travels from top to judgment line in this time. */
   leadTime: number;
@@ -34,6 +53,21 @@ export interface RenderOptions {
   offset: number;
   /** Active UI theme — drives the canvas color palette. */
   theme: ThemeName;
+  /**
+   * Visual quality preset (`"high"` or `"performance"`). The hot
+   * draw paths short-circuit the heaviest VFX in `"performance"`
+   * mode without re-allocating any state, so toggling at runtime
+   * takes effect on the next frame.
+   */
+  quality: RenderQualityMode;
+  /**
+   * If true, judgment popups prepend a small symbolic glyph (★ ◆ ▲ ✕)
+   * so PERFECT / GREAT / GOOD / MISS are differentiated by SHAPE in
+   * addition to color — useful for color-vision differences. Off by
+   * default; the existing color-only popup is preserved for everyone
+   * who doesn't need the redundancy.
+   */
+  judgmentGlyphs: boolean;
 }
 
 /**
@@ -205,7 +239,17 @@ export interface MilestoneFlash {
 }
 
 export interface RenderState {
-  /** Last few judgment events for floating popups. */
+  /**
+   * Last few judgment events for floating popups.
+   *
+   * NOTE: this is intentionally aliased to the engine's own
+   * `state.events` ring buffer (see `Game.tsx` / `MultiGame.tsx`). We
+   * reference-share rather than slice every frame because the renderer
+   * only READS this array (drawJudgmentPopups iterates with a `for`
+   * loop and skips already-aged entries by `songTime - ev.at`). If you
+   * ever need to mutate this array from the renderer side, copy first
+   * — the engine reuses the same backing array across frames.
+   */
   recentEvents: JudgmentEvent[];
   /** Lane flash impulses [0..1] driven by hits. Indexed by lane. */
   laneFlash: number[];
@@ -326,6 +370,10 @@ interface RenderCache {
    */
   accentRgba: string[];
   judgeRgba: string[];
+  /** RGBA LUT for the off-beat (idle) beat dot. Built from
+   *  `palette.beatDotIdle` — saves a per-frame `rgb(...)` shadowColor
+   *  string + `rgba(...)` fill string in the upper-right beat indicator. */
+  beatDotIdleRgba: string[];
 }
 
 const PARTICLE_BUDGET = 200;
@@ -498,6 +546,17 @@ function laneRgba(lane: number, a: number): string {
   return rgbaFromLut(LANE_RGBA[lane], a);
 }
 
+// White-with-alpha LUT, used for "shine" overlays (gate label glow,
+// shockwave white core). Same allocation-elimination pattern as
+// LANE_RGBA — saves a `toFixed(3)` + template-literal allocation per
+// affected draw per frame, which matters because the shine fires on
+// every active lane on every keypress.
+const WHITE_SHINE_RGBA: string[] = makeRgbaLut({ r: 255, g: 255, b: 255 });
+
+function whiteShineRgba(a: number): string {
+  return rgbaFromLut(WHITE_SHINE_RGBA, a);
+}
+
 function hexToRgb(hex: string): RGB {
   return {
     r: parseInt(hex.slice(1, 3), 16),
@@ -513,6 +572,8 @@ export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
   bpm: 161,
   offset: 0.18,
   theme: "dark",
+  quality: "high",
+  judgmentGlyphs: false,
 };
 
 /**
@@ -695,10 +756,32 @@ export function drawFrame(
   dt: number,
   opts: RenderOptions,
   rs: RenderState,
+  /**
+   * Logical canvas size (CSS pixels). Caller passes the most-recently
+   * observed size from the resize handler / ResizeObserver, so the
+   * hot path doesn't have to read `ctx.canvas.clientWidth` /
+   * `clientHeight` every frame.
+   *
+   * Reading those `client*` getters forces a layout flush in any
+   * browser engine that has a pending style invalidation — Chrome's
+   * tracing showed it as ~0.1–0.4 ms per frame on contended layout
+   * pages (hot canvas + a sibling React subtree just re-rendered).
+   * Dropping the reads removes that variance entirely.
+   *
+   * Falls back to `ctx.canvas.clientWidth` / `clientHeight` when
+   * either argument is omitted or non-positive — keeps legacy
+   * call-sites (`prewarmRenderer`'s synthetic frame, any future
+   * embedder that doesn't track size) working unchanged.
+   */
+  width?: number,
+  height?: number,
 ): void {
-  const W = ctx.canvas.clientWidth;
-  const H = ctx.canvas.clientHeight;
+  const W =
+    width != null && width > 0 ? width : ctx.canvas.clientWidth;
+  const H =
+    height != null && height > 0 ? height : ctx.canvas.clientHeight;
   const palette = getPalette(opts.theme);
+  const perf = opts.quality === "performance";
   const cache = ensureCache(ctx, rs, W, H, palette, opts);
 
   // Clear to fully-transparent (NOT opaque pageBg) so the underlying
@@ -743,21 +826,38 @@ export function drawFrame(
   const isDownbeat =
     Math.round((songTime - opts.offset) / beatLen) % 4 === 0;
 
-  drainHits(rs, cache);
+  // Particles + shockwaves are pure celebration VFX — gameplay is
+  // identical without them, so `performance` mode skips drainHits
+  // (which spawns both) AND the corresponding draw passes. We
+  // still clear the pendingHits queue so the engine's per-hit push
+  // doesn't accumulate forever; same for particles / shockwaves
+  // in case the player flipped the toggle mid-match while pools
+  // were non-empty.
+  if (!perf) {
+    drainHits(rs, cache);
+  } else {
+    rs.pendingHits.length = 0;
+    if (rs.particles.length) rs.particles.length = 0;
+    if (rs.shockwaves.length) rs.shockwaves.length = 0;
+  }
   decayMilestone(rs, dt);
 
   drawHighway(
     ctx, state, songTime, opts, rs,
-    firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette,
+    firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette, perf,
   );
 
-  updateAndDrawShockwaves(ctx, rs, dt, palette);
-  updateAndDrawParticles(ctx, rs, dt);
+  if (!perf) {
+    updateAndDrawShockwaves(ctx, rs, dt, palette);
+    updateAndDrawParticles(ctx, rs, dt);
+  }
 
-    drawCanvasCombo(ctx, rs, cache, palette);
-  drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache);
-  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette, cache);
-  drawMilestoneVignette(ctx, rs, W, H, cache);
+  drawCanvasCombo(ctx, rs, cache, palette, perf);
+  drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache, opts.judgmentGlyphs, perf);
+  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette, cache, perf);
+  if (!perf) {
+    drawMilestoneVignette(ctx, rs, W, H, cache);
+  }
 }
 
 function decayMilestone(rs: RenderState, dt: number): void {
@@ -985,6 +1085,7 @@ function ensureCache(
     beatDotIdleRgb: hexToRgb(palette.beatDotIdle),
     accentRgba: makeRgbaLut(palette.accentRgb),
     judgeRgba: makeRgbaLut(palette.judgeRgb),
+    beatDotIdleRgba: makeRgbaLut(hexToRgb(palette.beatDotIdle)),
   };
   return rs.cache;
 }
@@ -1003,6 +1104,7 @@ function drawHighway(
   isDownbeat: boolean,
   cache: RenderCache,
   palette: ThemePalette,
+  perf: boolean,
 ) {
   // Trapezoid floor — drawn at the EXTENDED visual extent so the
   // baked highway gradient can fade alpha to 0 at top and bottom. The
@@ -1035,8 +1137,14 @@ function drawHighway(
   ctx.save();
   ctx.lineWidth = 3;
   ctx.strokeStyle = cache.railGradient;
-  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.95);
-  ctx.shadowBlur = 22;
+  // Rails carry the brand glow; in performance mode we drop the
+  // shadowBlur (the single most expensive operation per stroke on
+  // integrated GPUs) and let the gradient stroke alone read as the
+  // accent. Same color identity, no offscreen pass per draw.
+  if (!perf) {
+    ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.95);
+    ctx.shadowBlur = 22;
+  }
   ctx.beginPath();
   ctx.moveTo(cache.visTopLeftX, cache.topYVisual);
   ctx.lineTo(cache.visBottomLeftX, cache.bottomYVisual);
@@ -1148,7 +1256,7 @@ function drawHighway(
       }
     }
     if (trailAlpha <= 0.01) continue;
-    drawHoldTrail(ctx, n, songTime, opts, palette, trailAlpha, cache);
+    drawHoldTrail(ctx, n, songTime, opts, palette, trailAlpha, cache, perf);
   }
   // Reset anticipation each frame; we re-derive it from the upcoming notes.
   for (let i = 0; i < rs.laneAnticipation.length; i++) rs.laneAnticipation[i] = 0;
@@ -1190,18 +1298,24 @@ function drawHighway(
       const v = a * a;
       if (v > rs.laneAnticipation[n.lane]) rs.laneAnticipation[n.lane] = v;
     }
-    drawTapNote(ctx, n, lookahead, opts, palette, alpha, cache);
+    drawTapNote(ctx, n, lookahead, opts, palette, alpha, cache, perf);
   }
 
   // Judgment line — subtle pulse on the beat AND on combo milestones.
+  // In performance mode the pulsing shadow is the most repaint-heavy
+  // strip on the canvas (it grows + shrinks every beat); we still draw
+  // the line at the same alpha so timing is unambiguous, just without
+  // the accent glow.
   ctx.save();
   ctx.strokeStyle = rgbaFromLut(
     cache.judgeRgba,
     clamp(palette.judgeBaseAlpha + beatPulse * 0.15 + ms * 0.2, 0, 1),
   );
   ctx.lineWidth = 2 + ms * 1;
-  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.85);
-  ctx.shadowBlur = 14 + beatPulse * 14 + ms * 22;
+  if (!perf) {
+    ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.85);
+    ctx.shadowBlur = 14 + beatPulse * 14 + ms * 22;
+  }
   ctx.beginPath();
   ctx.moveTo(cache.bottomLeftX + 4, cache.judgeY);
   ctx.lineTo(cache.bottomRightX - 4, cache.judgeY);
@@ -1210,24 +1324,28 @@ function drawHighway(
 
   // Per-lane judgment-line "kiss" — a tiny accent segment under each gate
   // that swells with the lane's most recent flash. Reads as the lane
-  // "lighting up the floor" for half a beat after a hit. Cheap.
-  // Lane X is read from `cache.laneX` (baked in `ensureCache`) so the
-  // perspective lerp doesn't re-run every frame.
-  for (let i = 0; i < MAIN_LANE_COUNT; i++) {
-    const flash = rs.laneFlash[i] ?? 0;
-    if (flash <= 0.05) continue;
-    const x = cache.laneX[i];
-    const w = 36 + flash * 28;
-    ctx.save();
-    ctx.strokeStyle = laneRgba(i, 0.35 + flash * 0.55);
-    ctx.shadowColor = LANE_COLORS[i];
-    ctx.shadowBlur = 14 + flash * 18;
-    ctx.lineWidth = 3 + flash * 2;
-    ctx.beginPath();
-    ctx.moveTo(x - w / 2, cache.judgeY);
-    ctx.lineTo(x + w / 2, cache.judgeY);
-    ctx.stroke();
-    ctx.restore();
+  // "lighting up the floor" for half a beat after a hit. Skipped in
+  // performance mode because (a) it overlaps the lane gate so the
+  // visual cue isn't lost — the gate fill itself still flashes — and
+  // (b) it draws with shadowBlur per-lane per-frame, which is expensive
+  // on integrated GPUs.
+  if (!perf) {
+    for (let i = 0; i < MAIN_LANE_COUNT; i++) {
+      const flash = rs.laneFlash[i] ?? 0;
+      if (flash <= 0.05) continue;
+      const x = cache.laneX[i];
+      const w = 36 + flash * 28;
+      ctx.save();
+      ctx.strokeStyle = laneRgba(i, 0.35 + flash * 0.55);
+      ctx.shadowColor = LANE_COLORS[i];
+      ctx.shadowBlur = 14 + flash * 18;
+      ctx.lineWidth = 3 + flash * 2;
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, cache.judgeY);
+      ctx.lineTo(x + w / 2, cache.judgeY);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
@@ -1241,6 +1359,7 @@ function drawHighway(
       state.isHolding(i),
       rs.laneAnticipation[i] ?? 0,
       palette,
+      perf,
     );
   }
 }
@@ -1254,6 +1373,7 @@ function drawTapNote(
   palette: ThemePalette,
   alpha: number,
   cache: RenderCache,
+  perf: boolean,
 ) {
   const progress = lookahead / opts.leadTime;
   const y = cache.topY + (cache.judgeY - cache.topY) * (1 - progress);
@@ -1280,7 +1400,10 @@ function drawTapNote(
   // mid-range GPUs without changing the look in the player's focal area.
   // We always glow once a note starts fading (alpha < 1), since that's
   // the moment it sits at/near the line and visual punch matters most.
-  const closeToLine = progress < 0.55 || alpha < 1;
+  // In `performance` mode we drop the glow entirely — the colored ring
+  // + inner core still read clearly and we save ~1 offscreen pass per
+  // visible note per frame on integrated GPUs.
+  const closeToLine = !perf && (progress < 0.55 || alpha < 1);
   if (closeToLine) {
     ctx.shadowColor = color;
     ctx.shadowBlur = 18 * alpha;
@@ -1315,6 +1438,7 @@ function drawHoldTrail(
   palette: ThemePalette,
   alphaMul: number,
   cache: RenderCache,
+  perf: boolean,
 ) {
   const headLook = n.t - songTime;
   const tailLook = (n.endT as number) - songTime;
@@ -1362,8 +1486,10 @@ function drawHoldTrail(
   // is the most expensive part of its draw, but visually only matters
   // when the head is close to the judge line OR the note is being
   // actively sustained (consumed). Far-up trails skip the blur entirely.
-  const trailNearLine = visHead < 0.55 || visTail < 0.55;
-  if (consumed || trailNearLine) {
+  // Performance mode drops it everywhere; the colored ribbon body is
+  // still drawn so the sustain remains obvious.
+  const trailNearLine = !perf && (visHead < 0.55 || visTail < 0.55);
+  if (!perf && (consumed || trailNearLine)) {
     ctx.shadowColor = color;
     ctx.shadowBlur = (consumed ? 22 : 10) * alphaMul;
   }
@@ -1411,6 +1537,7 @@ function drawLaneGate(
   holding: boolean,
   anticipation: number,
   palette: ThemePalette,
+  perf: boolean,
 ) {
   // Gate geometry. Tuned so the letter+arrow stack reads as a single,
   // centered glyph block — see LETTER_DY / ARROW_DY below for the exact
@@ -1424,7 +1551,9 @@ function drawLaneGate(
   // Anticipation halo: a soft outer ring drawn behind everything else when
   // a note is about to land in this lane. Quadratic ease so the halo isn't
   // visible 200ms out — it materializes only in the last ~100ms.
-  if (anticipation > 0.05) {
+  // Skipped in perf mode — the gate glow on press still telegraphs the
+  // hit, and this halo costs an extra shadow pass per lane per frame.
+  if (!perf && anticipation > 0.05) {
     ctx.save();
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = laneRgba(lane, 0.35 * anticipation);
@@ -1439,11 +1568,14 @@ function drawLaneGate(
   ctx.save();
   ctx.lineWidth = 4;
   ctx.strokeStyle = color;
-  ctx.shadowColor = color;
-  // Held / flash glow + a small lift from anticipation so the gate "pulls"
-  // as the note approaches — extra anticipatory feel before any keypress.
-  ctx.shadowBlur =
-    held || holding ? 26 : 8 + flash * 22 + anticipation * 12;
+  if (!perf) {
+    ctx.shadowColor = color;
+    // Held / flash glow + a small lift from anticipation so the gate
+    // "pulls" as the note approaches — extra anticipatory feel before
+    // any keypress.
+    ctx.shadowBlur =
+      held || holding ? 26 : 8 + flash * 22 + anticipation * 12;
+  }
   ctx.beginPath();
   ctx.arc(x, y, r, 0, TAU);
   ctx.stroke();
@@ -1487,11 +1619,14 @@ function drawLaneGate(
   const shine = holding ? 1 : held ? 0.85 : flash * 0.6;
 
   ctx.fillStyle = color;
-  if (shine > 0.05) {
+  if (!perf && shine > 0.05) {
     // White-on-color glow halo: blooms the glyph silhouette without
     // washing out the lane color underneath. The shadow stacks under the
     // fill so the letter itself stays crisp.
-    ctx.shadowColor = `rgba(255,255,255,${(0.55 * shine).toFixed(3)})`;
+    // Quantize shine to 32 buckets so we hit one of N pre-built rgba
+    // strings in `WHITE_SHINE_RGBA` instead of allocating + parsing a
+    // brand-new "rgba(255,255,255,0.123)" every frame per lane.
+    ctx.shadowColor = whiteShineRgba(0.55 * shine);
     ctx.shadowBlur = 14 * shine;
   } else {
     ctx.shadowBlur = 0;
@@ -1549,7 +1684,7 @@ function drawArrow(
   ctx.lineJoin = "miter";
   ctx.miterLimit = 4;
   if (shine > 0.05) {
-    ctx.shadowColor = `rgba(255,255,255,${(0.45 * shine).toFixed(3)})`;
+    ctx.shadowColor = whiteShineRgba(0.45 * shine);
     ctx.shadowBlur = 8 * shine;
   } else {
     ctx.shadowBlur = 0;
@@ -1585,12 +1720,75 @@ function drawArrow(
   ctx.restore();
 }
 
+// ---------------------------------------------------------------------------
+// Judgment popup constants — keep ALL string literals out of the hot loop.
+// Pre-built LUTs / font cache / labels save 4 string allocations + a
+// `parseInt` × 3 + a `toFixed` per popup per frame. With 4 lanes firing
+// once per beat that's ~100 strings/sec eliminated, enough to keep this
+// path completely off the GC.
+// ---------------------------------------------------------------------------
+const JUDGE_PALETTE: Record<JudgmentEvent["judgment"], { rgba: string[]; rgb: string }> = {
+  perfect: { rgba: makeRgbaLut({ r: 61, g: 169, b: 255 }), rgb: "rgb(61,169,255)" },
+  great:   { rgba: makeRgbaLut({ r: 61, g: 255, b: 138 }), rgb: "rgb(61,255,138)" },
+  good:    { rgba: makeRgbaLut({ r: 255, g: 210, b: 63 }), rgb: "rgb(255,210,63)" },
+  miss:    { rgba: makeRgbaLut({ r: 255, g: 59, b: 107 }), rgb: "rgb(255,59,107)" },
+};
+
+const JUDGE_LABELS: Record<JudgmentEvent["judgment"], string> = {
+  perfect: "PERFECT",
+  great:   "GREAT",
+  good:    "GOOD",
+  miss:    "MISS",
+};
+
+const JUDGE_LABELS_HOLD: Record<JudgmentEvent["judgment"], string> = {
+  perfect: "PERFECT·HOLD",
+  great:   "GREAT·HOLD",
+  good:    "GOOD·HOLD",
+  miss:    "MISS·HOLD",
+};
+
+// Color-blind glyphs: prepended to the label when `judgmentGlyphs` is on
+// so judgments are distinguishable by shape, not just hue. ASCII-only so
+// any monospace fallback renders identically.
+const JUDGE_GLYPH: Record<JudgmentEvent["judgment"], string> = {
+  perfect: "* ",
+  great:   "+ ",
+  good:    "= ",
+  miss:    "x ",
+};
+
+// 32-bucket font cache: popup font size animates over a ~0.6s window so
+// we get away with 32 buckets between 15.5px ("just spawned, scaled to
+// 0.86") and 22px ("full punchy bump") without any visible step. One
+// font string per bucket + one for the static "MISS" size.
+const POPUP_FONT_BUCKETS = 32;
+const POPUP_FONT_MIN = 15;
+const POPUP_FONT_MAX = 22;
+const POPUP_FONT_LUT: string[] = (() => {
+  const out = new Array<string>(POPUP_FONT_BUCKETS);
+  for (let i = 0; i < POPUP_FONT_BUCKETS; i++) {
+    const px = POPUP_FONT_MIN + (POPUP_FONT_MAX - POPUP_FONT_MIN) * (i / (POPUP_FONT_BUCKETS - 1));
+    out[i] = `800 ${px.toFixed(1)}px var(--font-display), system-ui, sans-serif`;
+  }
+  return out;
+})();
+
+function popupFont(px: number): string {
+  let i = Math.round(((px - POPUP_FONT_MIN) / (POPUP_FONT_MAX - POPUP_FONT_MIN)) * (POPUP_FONT_BUCKETS - 1));
+  if (i < 0) i = 0;
+  else if (i > POPUP_FONT_BUCKETS - 1) i = POPUP_FONT_BUCKETS - 1;
+  return POPUP_FONT_LUT[i];
+}
+
 function drawJudgmentPopups(
   ctx: CanvasRenderingContext2D,
   events: JudgmentEvent[],
   songTime: number,
   y: number,
   cache: RenderCache,
+  glyphs: boolean,
+  perf: boolean,
 ) {
   ctx.save();
   ctx.textAlign = "center";
@@ -1616,23 +1814,19 @@ function drawJudgmentPopups(
     const scale = punchy
       ? 0.86 + (1 - Math.pow(1 - Math.min(1, t * 3), 2)) * 0.22
       : 1;
-    const fontPx = 18 * scale;
-    ctx.font = `800 ${fontPx.toFixed(1)}px var(--font-display), system-ui, sans-serif`;
-    const baseLabel =
-      ev.judgment === "perfect" ? "PERFECT"
-      : ev.judgment === "great" ? "GREAT"
-      : ev.judgment === "good"  ? "GOOD"
-      : "MISS";
-    const label = ev.tail ? `${baseLabel}·HOLD` : baseLabel;
-    const color =
-      ev.judgment === "perfect" ? "#3da9ff"
-      : ev.judgment === "great" ? "#3dff8a"
-      : ev.judgment === "good"  ? "#ffd23f"
-      : "#ff3b6b";
+    ctx.font = popupFont(18 * scale);
+    const tableLabels = ev.tail ? JUDGE_LABELS_HOLD : JUDGE_LABELS;
+    const baseLabel = tableLabels[ev.judgment];
+    // Glyph prefix uses small static strings — pre-built so we don't
+    // template-literal them per-popup.
+    const label = glyphs ? JUDGE_GLYPH[ev.judgment] + baseLabel : baseLabel;
+    const palette = JUDGE_PALETTE[ev.judgment];
     const x = cache.laneX[ev.lane] ?? cache.cx;
-    ctx.fillStyle = withAlpha(color, alpha);
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 12 * alpha;
+    ctx.fillStyle = rgbaFromLut(palette.rgba, alpha);
+    if (!perf) {
+      ctx.shadowColor = palette.rgb;
+      ctx.shadowBlur = 12 * alpha;
+    }
     ctx.fillText(label, x, y + yOff);
   }
   ctx.shadowBlur = 0;
@@ -1653,6 +1847,7 @@ function drawCanvasCombo(
   rs: RenderState,
   cache: RenderCache,
   palette: ThemePalette,
+  perf: boolean,
 ): void {
   if (rs.combo < 10) return;
   const ms = rs.milestone?.strength ?? 0;
@@ -1668,8 +1863,10 @@ function drawCanvasCombo(
   ctx.textBaseline = "alphabetic";
   ctx.font = `800 ${size.toFixed(0)}px var(--font-display), system-ui, sans-serif`;
   ctx.fillStyle = rgbaFromLut(cache.accentRgba, alpha);
-  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.6);
-  ctx.shadowBlur = 18 + ms * 28;
+  if (!perf) {
+    ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.6);
+    ctx.shadowBlur = 18 + ms * 28;
+  }
   ctx.fillText(`${rs.combo}`, cache.cx, y);
   ctx.shadowBlur = 0;
   ctx.font = `800 ${(size * 0.22).toFixed(0)}px var(--font-mono), ui-monospace, monospace`;
@@ -1745,7 +1942,7 @@ function updateAndDrawShockwaves(
     if (s.intense && t < 0.4) {
       // White core for the first ~180ms of perfect hits — the splash that
       // your eye reads as "yes that was clean".
-      ctx.strokeStyle = `rgba(255,255,255,${(0.55 * (1 - t * 2.5)).toFixed(3)})`;
+      ctx.strokeStyle = whiteShineRgba(0.55 * (1 - t * 2.5));
       ctx.lineWidth = 1.5;
       ctx.shadowBlur = 0;
       ctx.beginPath();
@@ -1769,18 +1966,23 @@ function drawBeatDot(
   isDownbeat: boolean,
   palette: ThemePalette,
   cache: RenderCache,
+  perf: boolean,
 ) {
   ctx.save();
   // Downbeats use the brand accent (theme-shifted), off-beats use the
-  // theme's idle dot color. Idle RGB is parsed once in `ensureCache`
-  // and reused — the previous code called `hexToRgb(palette.beatDotIdle)`
-  // every frame.
-  const colorRgb = isDownbeat ? palette.accentRgb : cache.beatDotIdleRgb;
-  const colorCss = `rgb(${colorRgb.r},${colorRgb.g},${colorRgb.b})`;
+  // theme's idle dot color. We re-use the prebuilt `accentRgba` /
+  // `beatDotIdleRgba` LUTs (baked once per resize / theme swap) for the
+  // fill alpha, so this hot path no longer concatenates an
+  // `rgba(...)` string + a `rgb(...)` shadowColor 60 times a second.
+  const lut = isDownbeat ? cache.accentRgba : cache.beatDotIdleRgba;
   const r = 5 + pulse * 5;
-  ctx.shadowColor = colorCss;
-  ctx.shadowBlur = 8 + pulse * 16;
-  ctx.fillStyle = rgba(colorRgb, 0.35 + pulse * 0.65);
+  if (!perf) {
+    // Solid (alpha 1) entry of the same LUT — the shadow only cares
+    // about the RGB channels.
+    ctx.shadowColor = rgbaFromLut(lut, 1);
+    ctx.shadowBlur = 8 + pulse * 16;
+  }
+  ctx.fillStyle = rgbaFromLut(lut, 0.35 + pulse * 0.65);
   ctx.beginPath();
   ctx.arc(x, y, r, 0, TAU);
   ctx.fill();
@@ -1795,8 +1997,14 @@ function drawBeatDot(
 // ---------------------------------------------------------------------------
 
 function drainHits(rs: RenderState, cache: RenderCache): void {
-  if (rs.pendingHits.length === 0) return;
-  for (const h of rs.pendingHits) {
+  const hits = rs.pendingHits;
+  const n = hits.length;
+  if (n === 0) return;
+  // Indexed loop (not for...of) — same hot-path convention used by the
+  // popup loop. Saves one Iterator allocation per frame at the price of
+  // one local variable.
+  for (let idx = 0; idx < n; idx++) {
+    const h = hits[idx];
     if (h.judgment === "miss") continue; // misses get the "duck" sfx, no sparkles
     const x = cache.laneX[h.lane];
     const y = cache.judgeY;
