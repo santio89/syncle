@@ -359,6 +359,74 @@ export interface ClientToServerEvents {
     ack: (res: AckResult<{ items: CatalogItem[] }>) => void,
   ) => void;
 
+  /**
+   * Host-only: paginated no-query catalog browse.
+   *
+   * Distinct from `host:catalogRequest` (one-shot random discovery)
+   * and `host:catalogSearch` (text query). Use this to walk the
+   * full ranked-mania pool page-by-page with an explicit sort
+   * order — the default in the lobby UI when the search input is
+   * empty.
+   *
+   * Server-cached per room with the same 5-min TTL as search; pass
+   * `refresh: true` to bypass the cache for the current page (the
+   * UI's ↻ button does this so the host can force-refresh without
+   * waiting out the TTL).
+   *
+   * Sort enum is validated server-side; unknown values fall back to
+   * `ranked_desc` (newest ranked first).
+   */
+  "host:catalogBrowse": (
+    payload: {
+      page: number;
+      sort?: "ranked_desc" | "ranked_asc" | "plays_desc" | "rating_desc";
+      refresh?: boolean;
+    },
+    ack: (
+      res: AckResult<{
+        items: CatalogItem[];
+        page: number;
+        sort: string;
+        hasMore: boolean;
+        source: string;
+      }>,
+    ) => void,
+  ) => void;
+
+  /**
+   * Host-only: text-query catalog search with explicit pagination.
+   *
+   * Distinct from `host:catalogRequest`:
+   *   - `catalogRequest` returns a one-shot RANDOM slice of the
+   *     ranked-mania pool (used as the default "browse" view when no
+   *     query is active).
+   *   - `catalogSearch` walks the FULL catalog by text query, page by
+   *     page, against the upstream mirrors. The caller is responsible
+   *     for advancing `page` and stopping when `hasMore` is false.
+   *
+   * Server caches each `(query, page)` for 5 min per room, so the
+   * Prev/Next navigation feels instant on revisits within the same
+   * session and a casual host doesn't burn the upstream mirrors with
+   * duplicate traffic.
+   *
+   * `hasMore` is a heuristic ("upstream returned a full page") — see
+   * SearchCatalogResult on the server for why it's not exact. UI should
+   * show Next on `true` and disable on `false` rather than treating it
+   * as a guarantee.
+   */
+  "host:catalogSearch": (
+    payload: { query: string; page: number },
+    ack: (
+      res: AckResult<{
+        items: CatalogItem[];
+        page: number;
+        query: string;
+        hasMore: boolean;
+        source: string;
+      }>,
+    ) => void,
+  ) => void;
+
   /** Host-only: announce the chosen song to the room (lobby phase). */
   "host:selectSong": (payload: SongRef) => void;
 

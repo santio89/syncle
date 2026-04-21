@@ -187,8 +187,8 @@ export default function HomePage() {
               right side of the header reads as a uniform strip. The
               old wider "░ multi" pill drifted off-grid; the icon-only
               MultiButton keeps the rhythm with ThemeToggle. Tooltip
-              still spells out "Multiplayer · up to 50 players per
-              room" so the affordance isn't lost with the label. */}
+              just says "Multiplayer" — the icon is the affordance,
+              the long descriptor lives on the entry page itself. */}
           <MultiButton />
           <ThemeToggle />
         </nav>

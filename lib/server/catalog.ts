@@ -160,6 +160,297 @@ export async function fetchCatalog(): Promise<CatalogItem[]> {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Text-search catalog (paginated)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-mirror URL builders for *text-query* search. Same three mirrors as
+ * `SEARCH_SOURCES`, but with the relevant `q=` / `query=` parameter
+ * appended and pagination expressed in the mirror's native form. Kept
+ * separate from the random-browse builders so changes to either mode
+ * don't accidentally cross-contaminate (random-browse hits its own
+ * page-window math, search uses the host-supplied page directly).
+ */
+const QUERY_SOURCES: Array<{
+  name: string;
+  url: (query: string, page: number, ps: number) => string;
+  extract: (json: unknown) => unknown[];
+}> = [
+  {
+    name: "nerinyan.moe",
+    url: (q, page, ps) =>
+      `https://api.nerinyan.moe/search?m=3&s=ranked&ps=${ps}&p=${page}&q=${encodeURIComponent(q)}`,
+    extract: (j) => (Array.isArray(j) ? j : []),
+  },
+  {
+    // catboy uses the same v2 schema; appending `q=` switches it from
+    // browse to search mode without any other parameter changes.
+    name: "catboy.best",
+    url: (q, page, ps) =>
+      `https://catboy.best/api/v2/search?m=3&s=ranked&ps=${ps}&p=${page}&q=${encodeURIComponent(q)}`,
+    extract: (j) => (Array.isArray(j) ? j : []),
+  },
+  {
+    // osu.direct's v2 search supports `query=` (alias `q=` works on
+    // some builds; we use the documented form). Pagination uses
+    // offset/amount instead of page/ps so we translate `page` → offset.
+    name: "osu.direct",
+    url: (q, page, ps) =>
+      `https://osu.direct/api/v2/search?mode=3&status=1&amount=${ps}&offset=${page * ps}&query=${encodeURIComponent(q)}`,
+    extract: (j: any) =>
+      Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : [],
+  },
+];
+
+/** Default upstream page size (matches the mirrors' natural pagination). */
+const SEARCH_PAGE_SIZE = 50;
+/** Max pages a single query may walk. Cheap guard against runaway requests. */
+export const SEARCH_MAX_PAGES = 20;
+/**
+ * Max pages a no-query browse may walk. Higher than SEARCH_MAX_PAGES
+ * because browse-mode pagination is the primary discovery surface
+ * (without it, a host who doesn't know what to search for can only
+ * see the most-recently-ranked 50 sets) — letting them go ~5 000 sets
+ * deep covers most of the practical "I'll know it when I see it"
+ * range without inviting infinite scrolling against the upstream.
+ */
+export const BROWSE_MAX_PAGES = 100;
+
+/**
+ * Sort orders we expose for the no-query browse view. The mirror
+ * implementations differ in detail (some accept `sort=ranked_desc`,
+ * others infer ordering from `s=ranked` alone) but every value here
+ * is a no-op-safe parameter on every mirror — the worst case is the
+ * mirror ignores it and you get its default ordering, which for the
+ * `s=ranked / status=1` filter we always pass is "most recently
+ * ranked first" everywhere we tested.
+ *
+ * Default is `ranked_desc` because that's what the host wants 90 %
+ * of the time when they open the browser ("show me what's new").
+ * Other values reserved for the Pass 2 sort dropdown.
+ */
+export const BROWSE_SORT_VALUES = [
+  "ranked_desc",
+  "ranked_asc",
+  "plays_desc",
+  "rating_desc",
+] as const;
+export type BrowseSort = (typeof BROWSE_SORT_VALUES)[number];
+
+const BROWSE_SOURCES: Array<{
+  name: string;
+  url: (page: number, ps: number, sort: BrowseSort) => string;
+  extract: (json: unknown) => unknown[];
+}> = [
+  {
+    name: "nerinyan.moe",
+    url: (page, ps, sort) =>
+      `https://api.nerinyan.moe/search?m=3&s=ranked&ps=${ps}&p=${page}&sort=${sort}`,
+    extract: (j) => (Array.isArray(j) ? j : []),
+  },
+  {
+    name: "catboy.best",
+    url: (page, ps, sort) =>
+      `https://catboy.best/api/v2/search?m=3&s=ranked&ps=${ps}&p=${page}&sort=${sort}`,
+    extract: (j) => (Array.isArray(j) ? j : []),
+  },
+  {
+    name: "osu.direct",
+    url: (page, ps, sort) =>
+      `https://osu.direct/api/v2/search?mode=3&status=1&amount=${ps}&offset=${page * ps}&sort=${sort}`,
+    extract: (j: any) =>
+      Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : [],
+  },
+];
+
+export interface SearchCatalogResult {
+  items: CatalogItem[];
+  /**
+   * True iff the upstream page came back full (== requested page size),
+   * which heuristically indicates "there's probably more". The mirrors
+   * we use don't reliably return total counts, so this is the cleanest
+   * signal we can give the UI for showing/hiding a Next button without
+   * a second probe request.
+   */
+  hasMore: boolean;
+  /** Page index we actually fetched (echoed for the client to anchor pagination on). */
+  page: number;
+  /** Effective page size after applying SEARCH_PAGE_SIZE clamp. */
+  pageSize: number;
+  /** Mirror that delivered this page (diagnostic; surfaced in card metadata too). */
+  source: string;
+}
+
+/**
+ * Fetch ONE page of text-query catalog results.
+ *
+ * Strategy:
+ *   - Try mirrors in fixed order (nerinyan → catboy → osu.direct).
+ *     Unlike the random-browse path we DON'T shuffle, because pagination
+ *     consistency matters for the UI: page 2 must show "the next slice
+ *     of what page 1 showed", which only works if both calls hit the
+ *     same mirror. Locking to the first responding mirror per call gives
+ *     us that without per-room session state.
+ *   - First mirror that returns a 200 with a non-empty (or definitively
+ *     empty) body wins; transient errors bump to the next mirror. This
+ *     mirrors the behavior `fetchCatalog` already uses for browse but
+ *     applied per-page instead of per-session.
+ *   - Apply the same 4K-mania filter + dedupe pass `normalize()` does,
+ *     so the UI never sees a row it can't actually load.
+ *
+ * Caveats worth knowing:
+ *   - Different mirrors index differently — searching "spectre" on
+ *     nerinyan vs catboy can return different sets in different
+ *     orders. Locking to one mirror per call sidesteps this within
+ *     a single browse session.
+ *   - `hasMore` is a *heuristic*. A mirror returning exactly `pageSize`
+ *     items can still be the last page if that page is full. The UI
+ *     should disable Next on a subsequent empty page rather than
+ *     blindly trusting the flag — same way GitHub/Reddit handle it.
+ */
+export async function searchCatalogPage(opts: {
+  query: string;
+  page: number;
+  pageSize?: number;
+}): Promise<SearchCatalogResult> {
+  const query = opts.query.trim();
+  if (!query) {
+    throw new Error("searchCatalogPage requires a non-empty query");
+  }
+  const page = Math.max(0, Math.min(SEARCH_MAX_PAGES - 1, Math.floor(opts.page)));
+  const pageSize = Math.max(
+    1,
+    Math.min(SEARCH_PAGE_SIZE, Math.floor(opts.pageSize ?? SEARCH_PAGE_SIZE)),
+  );
+
+  const errors: string[] = [];
+  for (const src of QUERY_SOURCES) {
+    const url = src.url(query, page, pageSize);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        headers: { accept: "application/json" },
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        errors.push(`${src.name} q="${query}" p${page}: HTTP ${res.status}`);
+        continue;
+      }
+      const json = await res.json();
+      const sets = src.extract(json);
+      const seen = new Set<number>();
+      const items: CatalogItem[] = [];
+      for (const raw of sets) {
+        const item = normalize(raw, src.name);
+        if (!item || seen.has(item.beatmapsetId)) continue;
+        seen.add(item.beatmapsetId);
+        items.push(item);
+      }
+      // Treat a 200-OK with zero raw rows as a definitive "no results"
+      // for THIS mirror — return immediately rather than falling
+      // through, so the UI can render an honest empty state instead of
+      // pulling identical empty pages from the next two mirrors.
+      const upstreamWasEmpty = sets.length === 0;
+      const hasMore = !upstreamWasEmpty && sets.length >= pageSize;
+      return {
+        items,
+        hasMore,
+        page,
+        pageSize,
+        source: src.name,
+      };
+    } catch (err: any) {
+      const msg =
+        err?.name === "AbortError" ? "timeout" : err?.message ?? String(err);
+      errors.push(`${src.name} q="${query}" p${page}: ${msg}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error(
+    `Catalog search failed for "${query}" page ${page}:\n  ${errors.join("\n  ")}`,
+  );
+}
+
+/**
+ * Fetch ONE page of the no-query browse view.
+ *
+ * Mechanically identical to `searchCatalogPage` (mirror fan-out, dedupe,
+ * 4K filter via `normalize`, hasMore heuristic) — but with no `q=` and
+ * an explicit sort order baked in. Default `ranked_desc` matches the
+ * host's most common intent when opening the browser ("show me what's
+ * new"). Mirrors are tried in fixed order so pagination consistency
+ * holds within a session: page 2 is the next slice of the same mirror
+ * that served page 1, not a different mirror's page 2.
+ */
+export async function browseCatalogPage(opts: {
+  page: number;
+  pageSize?: number;
+  sort?: BrowseSort;
+}): Promise<SearchCatalogResult> {
+  const page = Math.max(0, Math.min(BROWSE_MAX_PAGES - 1, Math.floor(opts.page)));
+  const pageSize = Math.max(
+    1,
+    Math.min(SEARCH_PAGE_SIZE, Math.floor(opts.pageSize ?? SEARCH_PAGE_SIZE)),
+  );
+  // Validate the sort enum BEFORE building a URL so a mirror never
+  // sees a bogus param (some mirrors 400 on unknown sort values
+  // instead of ignoring them).
+  const sort: BrowseSort =
+    opts.sort && BROWSE_SORT_VALUES.includes(opts.sort)
+      ? opts.sort
+      : "ranked_desc";
+
+  const errors: string[] = [];
+  for (const src of BROWSE_SOURCES) {
+    const url = src.url(page, pageSize, sort);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        headers: { accept: "application/json" },
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        errors.push(`${src.name} browse(${sort}) p${page}: HTTP ${res.status}`);
+        continue;
+      }
+      const json = await res.json();
+      const sets = src.extract(json);
+      const seen = new Set<number>();
+      const items: CatalogItem[] = [];
+      for (const raw of sets) {
+        const item = normalize(raw, src.name);
+        if (!item || seen.has(item.beatmapsetId)) continue;
+        seen.add(item.beatmapsetId);
+        items.push(item);
+      }
+      const upstreamWasEmpty = sets.length === 0;
+      const hasMore = !upstreamWasEmpty && sets.length >= pageSize;
+      return {
+        items,
+        hasMore,
+        page,
+        pageSize,
+        source: src.name,
+      };
+    } catch (err: any) {
+      const msg =
+        err?.name === "AbortError" ? "timeout" : err?.message ?? String(err);
+      errors.push(`${src.name} browse(${sort}) p${page}: ${msg}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error(
+    `Catalog browse failed for sort="${sort}" page ${page}:\n  ${errors.join("\n  ")}`,
+  );
+}
+
 function normalize(raw: any, source: string): CatalogItem | null {
   if (!raw || typeof raw !== "object") return null;
   if (typeof raw.id !== "number") return null;

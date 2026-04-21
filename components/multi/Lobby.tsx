@@ -808,11 +808,43 @@ function HostPane({
   code: string;
   allReady: boolean;
 }) {
-  const [catalog, setCatalog] = useState<CatalogItem[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ChartMode>("easy");
-  const [filter, setFilter] = useState("");
+  // Search input. Drives upstream catalog search when non-empty; when
+  // empty the lobby falls back to paginated browse (newest ranked
+  // first). Renamed from the old `filter` (which was a local
+  // Array.filter against a 100-item random slice) to make the new
+  // behavior explicit at call sites.
+  const [query, setQuery] = useState("");
+  // Debounced copy of `query` — the input updates per-keystroke for
+  // snappy UI feedback, but we only fire upstream requests when the
+  // user pauses typing for ~300 ms. Without this the host typing
+  // "spectre" would fire 7 mirror requests; with it, exactly 1.
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Browse-mode state (no query, paginated by ranked_desc by default).
+  // The `browseRefreshTick` int is bumped by the ↻ button to force a
+  // re-fetch of the current page even if React would otherwise skip
+  // it (no other dep changed) — also tells the effect to send
+  // `refresh: true` upstream so the server bypasses its 5-min cache.
+  const [browsePage, setBrowsePage] = useState(0);
+  const [browseRefreshTick, setBrowseRefreshTick] = useState(0);
+  const [browseResults, setBrowseResults] = useState<CatalogItem[] | null>(null);
+  const [browseHasMore, setBrowseHasMore] = useState(false);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [browseSource, setBrowseSource] = useState<string | null>(null);
+  const browseReqId = useRef(0);
+  // Search-mode state (text query, paginated).
+  const [searchPage, setSearchPage] = useState(0);
+  const [searchResults, setSearchResults] = useState<CatalogItem[] | null>(null);
+  const [searchHasMore, setSearchHasMore] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchSource, setSearchSource] = useState<string | null>(null);
+  // Monotonic request id — debounced typing guarantees only the latest
+  // (query, page) pair gets to update React state. Without this, a
+  // slow page-1 response could land AFTER the user has already
+  // navigated to page 2, overwriting newer results with stale ones.
+  const searchReqId = useRef(0);
   // The "starting" state is now driven entirely by the server snapshot
   // (`prestartEndsAt !== null`). The 3 s prestart countdown overlay
   // doubles as the click debounce — between click and next snapshot the
@@ -826,37 +858,116 @@ function HostPane({
   const [probeError, setProbeError] = useState<string | null>(null);
   const probeReqId = useRef(0);
 
-  const fetchCatalog = useCallback(
-    async (refresh: boolean) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const items = await actions.requestCatalog(refresh);
-        setCatalog(items);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Failed to load catalog";
-        setError(msg);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [actions],
-  );
-
+  // Browse-mode fetch. Fires whenever `browsePage` changes (Prev/Next)
+  // OR when `browseRefreshTick` is bumped by the ↻ button. The refresh
+  // tick also flips the upstream `refresh` flag so the server bypasses
+  // its 5-min cache for that page — without it, ↻ inside the TTL
+  // window would just re-render the same cached payload and feel
+  // broken to the host.
   useEffect(() => {
-    if (catalog === null && !loading) void fetchCatalog(false);
-  }, [catalog, loading, fetchCatalog]);
+    const reqId = ++browseReqId.current;
+    const isRefresh = browseRefreshTick > 0;
+    setBrowseLoading(true);
+    setBrowseError(null);
+    actions
+      .browseCatalog(browsePage, isRefresh ? { refresh: true } : undefined)
+      .then((res) => {
+        if (reqId !== browseReqId.current) return;
+        if (!res) {
+          setBrowseResults([]);
+          setBrowseHasMore(false);
+          setBrowseSource(null);
+          setBrowseError("Failed to load catalog — try again.");
+          return;
+        }
+        setBrowseResults(res.items);
+        setBrowseHasMore(res.hasMore);
+        setBrowseSource(res.source);
+      })
+      .catch((e: unknown) => {
+        if (reqId !== browseReqId.current) return;
+        const msg = e instanceof Error ? e.message : "Failed to load catalog";
+        setBrowseResults([]);
+        setBrowseHasMore(false);
+        setBrowseSource(null);
+        setBrowseError(msg);
+      })
+      .finally(() => {
+        if (reqId !== browseReqId.current) return;
+        setBrowseLoading(false);
+      });
+  }, [browsePage, browseRefreshTick, actions]);
 
-  const filtered = useMemo(() => {
-    if (!catalog) return [];
-    const q = filter.trim().toLowerCase();
-    if (!q) return catalog;
-    return catalog.filter(
-      (c) =>
-        c.title.toLowerCase().includes(q) ||
-        c.artist.toLowerCase().includes(q),
-    );
-  }, [catalog, filter]);
+  // Typing debounce. 300 ms was tuned from feel:
+  // shorter than that and a normal-pace typist still fires 2-3 mid-
+  // word requests; longer and feels laggy after the user has clearly
+  // stopped. Reset `searchPage` to 0 whenever the query changes —
+  // paging always starts at the top of a new query.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQuery(query.trim());
+      setSearchPage(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Whenever the debounced query OR the page changes, fetch the
+  // matching upstream page. An empty debounced query short-circuits
+  // back to the random-browse `catalog` view, so we clear search
+  // state instead of firing a request.
+  useEffect(() => {
+    if (!debouncedQuery) {
+      setSearchResults(null);
+      setSearchHasMore(false);
+      setSearchLoading(false);
+      setSearchError(null);
+      setSearchSource(null);
+      return;
+    }
+    const reqId = ++searchReqId.current;
+    setSearchLoading(true);
+    setSearchError(null);
+    actions
+      .searchCatalog(debouncedQuery, searchPage)
+      .then((res) => {
+        // Stale response — the user typed (or paged) past this
+        // request before it landed. Drop it without touching state.
+        if (reqId !== searchReqId.current) return;
+        if (!res) {
+          setSearchResults([]);
+          setSearchHasMore(false);
+          setSearchSource(null);
+          setSearchError("Search failed — try again.");
+          return;
+        }
+        setSearchResults(res.items);
+        setSearchHasMore(res.hasMore);
+        setSearchSource(res.source);
+      })
+      .catch((e: unknown) => {
+        if (reqId !== searchReqId.current) return;
+        const msg = e instanceof Error ? e.message : "Search failed";
+        setSearchResults([]);
+        setSearchHasMore(false);
+        setSearchSource(null);
+        setSearchError(msg);
+      })
+      .finally(() => {
+        if (reqId !== searchReqId.current) return;
+        setSearchLoading(false);
+      });
+  }, [debouncedQuery, searchPage, actions]);
+
+  // Source of truth for the rendered list. Search mode (non-empty
+  // debounced query) shows ONLY upstream search results — there's no
+  // client-side filtering of the browse view because the user already
+  // told us what they're looking for. Browse mode (empty query) shows
+  // the paginated browse slice (newest ranked first by default).
+  const inSearchMode = debouncedQuery.length > 0;
+  const displayItems: CatalogItem[] = useMemo(() => {
+    if (inSearchMode) return searchResults ?? [];
+    return browseResults ?? [];
+  }, [inSearchMode, searchResults, browseResults]);
 
   const selected = snapshot.selectedSong;
 
@@ -990,22 +1101,41 @@ function HostPane({
         )}
       </div>
 
-      {/* Catalog */}
+      {/* Catalog search row.
+          - Empty input → random-browse mode: refresh button repulls
+            the 100-item random slice.
+          - Non-empty input → search mode: refresh button is hidden
+            (a fresh search is one keystroke away anyway), and the
+            input becomes a true text query against the upstream
+            mirrors with pagination underneath the list.
+          The single input drives both modes so the host doesn't
+          need a separate "search vs filter" toggle — typing IS the
+          mode switch. */}
       <div className="mt-4 flex items-center gap-2">
         <input
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="filter by title or artist…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="search the full catalog by title or artist…"
           className="flex-1 border-2 border-bone-50/20 bg-transparent px-3 py-2 font-mono text-[0.79rem] text-bone-50 outline-none focus:border-accent"
         />
-        <button
-          onClick={() => fetchCatalog(true)}
-          disabled={loading}
-          className="brut-btn px-3 py-2 text-[0.79rem] disabled:opacity-50"
-          data-tooltip="Refresh the candidate pool"
-        >
-          {loading ? "…" : "↻"}
-        </button>
+        {inSearchMode ? (
+          <button
+            onClick={() => setQuery("")}
+            className="brut-btn px-3 py-2 text-[0.79rem]"
+            data-tooltip="Clear search · back to browse"
+          >
+            ✕
+          </button>
+        ) : (
+          <button
+            onClick={() => setBrowseRefreshTick((t) => t + 1)}
+            disabled={browseLoading}
+            className="brut-btn px-3 py-2 text-[0.79rem] disabled:opacity-50"
+            data-tooltip="Refresh this page (bypass cache)"
+          >
+            {browseLoading ? "…" : "↻"}
+          </button>
+        )}
       </div>
 
       {/* Catalog has its own internal scroller so the difficulty
@@ -1024,32 +1154,53 @@ function HostPane({
           `min-h-[10rem]` keeps the loading / empty states from
           collapsing the table to nothing. */}
       <div className="mt-2 max-h-[24rem] min-h-[10rem] flex-1 overflow-y-auto border-2 border-bone-50/10 lg:max-h-none">
-        {error && (
+        {/* Errors are mode-specific. Browse errors come from
+            `browseError`; search errors from `searchError`. Showing
+            them in the same banner means the host always sees the
+            relevant failure for the action they just took
+            (paging vs typing). */}
+        {(inSearchMode ? searchError : browseError) && (
           <p className="border-b-2 border-rose-500 p-3 font-mono text-[0.79rem] text-rose-400">
-            {error}
+            {inSearchMode ? searchError : browseError}
           </p>
         )}
-        {loading && !catalog && (
+        {/* Loading state: separate copies per mode so the host knows
+            WHAT is being fetched (a page vs their search). The browse
+            loader only renders on the first load (no results yet);
+            subsequent paginations show the previous page until the
+            new one lands, which feels much less janky than blanking
+            the list every Next click. */}
+        {inSearchMode && searchLoading && (
+          <p className="p-3 font-mono text-[0.79rem] text-bone-50/50">
+            Searching “{debouncedQuery}”…
+          </p>
+        )}
+        {!inSearchMode && browseLoading && browseResults === null && (
           <p className="p-3 font-mono text-[0.79rem] text-bone-50/50">
             Fetching osu!mania 4K candidates…
           </p>
         )}
-        {!loading && filtered.length === 0 && (
-          <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
-            {/* Distinguish "you typed something that excluded everyone"
-                from "the upstream catalog returned zero rows" — the
-                fix is different in each case (clear the filter vs.
-                hit refresh) and the old single string blamed the
-                filter even when there was no filter. */}
-            {filter.trim()
-              ? "No tracks match that filter."
-              : (catalog && catalog.length === 0)
+        {/* Empty states. Each branch tells the host what to DO next
+            (clear the search, paginate back, hit refresh) instead of
+            a generic "nothing here". */}
+        {!searchLoading &&
+          !browseLoading &&
+          displayItems.length === 0 &&
+          (inSearchMode ? (
+            <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
+              {searchPage === 0
+                ? `No 4K mania tracks found for “${debouncedQuery}”.`
+                : "No more results on this page — try Prev."}
+            </p>
+          ) : (
+            <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
+              {browsePage === 0
                 ? "No tracks available — try refreshing."
-                : "No tracks available."}
-          </p>
-        )}
+                : "No more results on this page — try Prev."}
+            </p>
+          ))}
         <ul>
-          {filtered.map((c) => {
+          {displayItems.map((c) => {
             const active = selected?.beatmapsetId === c.beatmapsetId;
             return (
               <li key={c.beatmapsetId}>
@@ -1088,6 +1239,68 @@ function HostPane({
             );
           })}
         </ul>
+      </div>
+
+      {/* Pagination — visible in both modes. Browse defaults to
+          ranked_desc (newest ranked first), so Prev/Next walks back
+          through ranked history. In search mode the same controls
+          paginate over text-query results.
+          The middle label tells the host WHICH view they're looking
+          at (page number + the active mode tag + the mirror that
+          served this page). The mirror tag is diagnostic — useful
+          when results look weird, since different mirrors can
+          disagree on ordering for the same query. */}
+      <div className="mt-2 flex items-center justify-between gap-2 font-mono text-[0.7rem] text-bone-50/55">
+        <button
+          onClick={() =>
+            inSearchMode
+              ? setSearchPage((p) => Math.max(0, p - 1))
+              : setBrowsePage((p) => Math.max(0, p - 1))
+          }
+          disabled={
+            inSearchMode
+              ? searchPage === 0 || searchLoading
+              : browsePage === 0 || browseLoading
+          }
+          className="brut-btn px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
+          data-tooltip="Previous page"
+        >
+          ← Prev
+        </button>
+        <span className="tabular-nums">
+          Page {(inSearchMode ? searchPage : browsePage) + 1}
+          <span className="ml-2 text-bone-50/35">
+            ·{" "}
+            {inSearchMode
+              ? `search`
+              : `newest`}
+          </span>
+          {(inSearchMode ? searchSource : browseSource) && (
+            <span className="ml-1 text-bone-50/35">
+              · {inSearchMode ? searchSource : browseSource}
+            </span>
+          )}
+        </span>
+        <button
+          onClick={() =>
+            inSearchMode
+              ? setSearchPage((p) => p + 1)
+              : setBrowsePage((p) => p + 1)
+          }
+          disabled={
+            inSearchMode
+              ? !searchHasMore || searchLoading
+              : !browseHasMore || browseLoading
+          }
+          className="brut-btn px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
+          data-tooltip={
+            (inSearchMode ? searchHasMore : browseHasMore)
+              ? "Next page"
+              : "End of results"
+          }
+        >
+          Next →
+        </button>
       </div>
 
       {/* Single-row tier slider. `flex-1 min-w-[5.5rem]` on each

@@ -90,6 +90,47 @@ export interface RoomActions {
   setRoomVisibility(visibility: RoomVisibility): void;
   /** Host: ask server to (re)fetch the catalog. */
   requestCatalog(refresh?: boolean): Promise<CatalogItem[]>;
+  /**
+   * Host: paginated no-query catalog browse, sorted by `sort`
+   * (default: `ranked_desc`). `refresh: true` bypasses the server's
+   * 5-min cache for the current page — used by the ↻ button.
+   * Returns `null` on error (surfaced via lastError toast).
+   */
+  browseCatalog(
+    page: number,
+    opts?: {
+      sort?: "ranked_desc" | "ranked_asc" | "plays_desc" | "rating_desc";
+      refresh?: boolean;
+    },
+  ): Promise<{
+    items: CatalogItem[];
+    page: number;
+    sort: string;
+    hasMore: boolean;
+    source: string;
+  } | null>;
+  /**
+   * Host: text-query catalog search with explicit pagination.
+   *
+   * Resolves to `{ items, hasMore, page, query }`. `query` is the
+   * normalized form the server actually used — caller can compare it
+   * against the input they sent to detect that a stale (debounced)
+   * response arrived AFTER a newer one. `hasMore` is a heuristic — UI
+   * should disable Next on `false` rather than trusting it as exact.
+   *
+   * On error returns `null`; the error is surfaced via `lastError` for
+   * the existing room-error toast, mirroring `requestCatalog`.
+   */
+  searchCatalog(
+    query: string,
+    page: number,
+  ): Promise<{
+    items: CatalogItem[];
+    page: number;
+    query: string;
+    hasMore: boolean;
+    source: string;
+  } | null>;
   selectSong(song: SongRef): void;
   /** Host: continuously sync the picker's mode so the server has the
    * authoritative record of which tier is queued. */
@@ -503,6 +544,52 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
     [callWithAck],
   );
 
+  const browseCatalog = useCallback(
+    async (
+      page: number,
+      opts?: {
+        sort?: "ranked_desc" | "ranked_asc" | "plays_desc" | "rating_desc";
+        refresh?: boolean;
+      },
+    ) => {
+      const res = await callWithAck<{
+        items: CatalogItem[];
+        page: number;
+        sort: string;
+        hasMore: boolean;
+        source: string;
+      }>("host:catalogBrowse", {
+        page,
+        sort: opts?.sort,
+        refresh: opts?.refresh,
+      });
+      if (!res.ok) {
+        setLastError({ code: res.code, message: res.message });
+        return null;
+      }
+      return res.data;
+    },
+    [callWithAck],
+  );
+
+  const searchCatalog = useCallback(
+    async (query: string, page: number) => {
+      const res = await callWithAck<{
+        items: CatalogItem[];
+        page: number;
+        query: string;
+        hasMore: boolean;
+        source: string;
+      }>("host:catalogSearch", { query, page });
+      if (!res.ok) {
+        setLastError({ code: res.code, message: res.message });
+        return null;
+      }
+      return res.data;
+    },
+    [callWithAck],
+  );
+
   const selectSong = useCallback((song: SongRef) => {
     socketRef.current?.emit("host:selectSong", song);
   }, []);
@@ -618,6 +705,8 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       setRoomName,
       setRoomVisibility,
       requestCatalog,
+      browseCatalog,
+      searchCatalog,
       selectSong,
       setMode,
       startMatch,
@@ -647,6 +736,8 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       setRoomName,
       setRoomVisibility,
       requestCatalog,
+      browseCatalog,
+      searchCatalog,
       selectSong,
       setMode,
       startMatch,

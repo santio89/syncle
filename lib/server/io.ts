@@ -49,7 +49,14 @@ import {
   sanitizeName,
   sanitizeRoomName,
 } from "@/lib/multi/protocol";
-import { fetchCatalog } from "./catalog";
+import {
+  fetchCatalog,
+  searchCatalogPage,
+  browseCatalogPage,
+  BROWSE_SORT_VALUES,
+  type BrowseSort,
+  type SearchCatalogResult,
+} from "./catalog";
 
 /* -------------------------------------------------------------------------- */
 /* Tunables                                                                   */
@@ -108,6 +115,21 @@ const PRESTART_COUNTDOWN_MS = 3_000;
 const COUNTDOWN_LEAD_MS = MATCH_COUNTDOWN_LEAD_MS;
 /** Score broadcast cadence (ms). 200 ms = 5 Hz, plenty smooth for a sidebar. */
 const SCOREBOARD_TICK_MS = 200;
+
+/**
+ * TTL on per-room search cache entries. Mirrors typically reindex on the
+ * order of minutes, and a host browsing pages of one query rarely takes
+ * longer than a couple of minutes — so 5 min strikes the balance between
+ * "fresh enough" and "actually saves the upstream a request".
+ */
+const SEARCH_CACHE_TTL_MS = 5 * 60_000;
+/**
+ * Capacity of the per-room search-cache LRU. Each entry is at most
+ * SEARCH_PAGE_SIZE (50) catalog items × ~80-120 bytes ≈ 5 KB, so 32
+ * entries caps memory at ~160 KB per room — trivial. Past 32 distinct
+ * (query, page) tuples we evict oldest-first.
+ */
+const SEARCH_CACHE_MAX_ENTRIES = 32;
 
 /* -------------------------------------------------------------------------- */
 /* Internal types                                                             */
@@ -204,6 +226,27 @@ interface InternalRoom {
   nextChatId: number;
   catalog: CatalogItem[] | null;
   catalogFetchedAt: number | null;
+  /**
+   * Per-room LRU cache of paginated catalog pages — both text-search
+   * AND no-query browse share this map. Keys are prefix-tagged to keep
+   * the two views in their own namespaces:
+   *   - `s|${normalizedQuery}|${page}` for text search
+   *   - `b|${sort}|${page}` for sorted browse
+   * Distinct from the random-discovery `catalog` field above because
+   * those access patterns differ: random discovery is "show me a fresh
+   * slice once" (single cached snapshot), pagination is "browse pages
+   * of THIS view" (many small cached entries, evicted oldest-first).
+   *
+   * Bounded by SEARCH_CACHE_MAX_ENTRIES so a host bouncing between
+   * dozens of queries / pages can't unbounded-grow the room object.
+   * TTL is enforced lazily on read (no background sweep needed) so a
+   * stale entry just gets re-fetched on next access — matches the
+   * "5-minute freshness window" the upstream mirrors update on.
+   */
+  searchCache: Map<
+    string,
+    { result: SearchCatalogResult; at: number }
+  > | null;
   emptyTtlTimer: NodeJS.Timeout | null;
   loadingTimer: NodeJS.Timeout | null;
   /**
@@ -514,6 +557,7 @@ class RoomRegistry {
       nextChatId: 1,
       catalog: null,
       catalogFetchedAt: null,
+      searchCache: null,
       emptyTtlTimer: null,
       loadingTimer: null,
       matchSafetyTimer: null,
@@ -937,6 +981,115 @@ class RoomRegistry {
     room.catalog = items;
     room.catalogFetchedAt = Date.now();
     return items;
+  }
+
+  /**
+   * Text-query catalog search with per-room TTL'd LRU cache.
+   *
+   * `query` is normalized (trimmed, lowercased, internal whitespace
+   * collapsed) so trivially-different inputs like "  ABBA  " and
+   * "abba" share a single cache slot — the upstream mirrors are
+   * case-insensitive anyway, so this is a pure cache-hit-rate win.
+   *
+   * Cache eviction:
+   *   - Stale entries (older than SEARCH_CACHE_TTL_MS) are skipped on
+   *     read and the result re-fetched. No background sweep — the next
+   *     read on a stale key will simply overwrite it.
+   *   - Capacity-driven LRU: when inserting past
+   *     SEARCH_CACHE_MAX_ENTRIES, drop the oldest-inserted entry.
+   *     Map iteration order in V8 is insertion order, so
+   *     `cache.keys().next().value` IS the LRU candidate.
+   */
+  async searchCatalog(
+    code: string,
+    rawQuery: string,
+    page: number,
+  ): Promise<SearchCatalogResult> {
+    const room = this.rooms.get(code);
+    if (!room) throw new RoomError("ROOM_NOT_FOUND", "Room gone");
+    const query = rawQuery.trim().toLowerCase().replace(/\s+/g, " ");
+    if (!query) {
+      throw new RoomError("BAD_QUERY", "Search query cannot be empty");
+    }
+    if (query.length > 64) {
+      // Mirrors typically reject overlong queries with a 400; trim
+      // here so the user sees a clean error instead of a mirror-shaped
+      // network failure.
+      throw new RoomError("BAD_QUERY", "Search query too long");
+    }
+    const safePage = Math.max(0, Math.floor(page));
+    const cacheKey = `s|${query}|${safePage}`;
+
+    if (!room.searchCache) {
+      room.searchCache = new Map();
+    }
+    const cached = room.searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
+      return cached.result;
+    }
+
+    const result = await searchCatalogPage({ query, page: safePage });
+    room.searchCache.set(cacheKey, { result, at: Date.now() });
+
+    while (room.searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
+      const oldestKey = room.searchCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      room.searchCache.delete(oldestKey);
+    }
+
+    return result;
+  }
+
+  /**
+   * No-query catalog browse with explicit pagination + sort.
+   *
+   * Default sort is `ranked_desc` (newest-ranked first), which is what
+   * a host opening the picker without a specific song in mind almost
+   * always wants ("show me what's new"). Other sorts are validated
+   * against `BROWSE_SORT_VALUES` server-side so the upstream never
+   * sees a bogus param.
+   *
+   * `refresh: true` deletes the cached entry for the requested page
+   * BEFORE fetching, so the host's ↻ button always pulls live data
+   * even within the 5-minute TTL window.
+   */
+  async browseCatalog(
+    code: string,
+    rawSort: string | undefined,
+    page: number,
+    refresh: boolean,
+  ): Promise<SearchCatalogResult> {
+    const room = this.rooms.get(code);
+    if (!room) throw new RoomError("ROOM_NOT_FOUND", "Room gone");
+    const sort: BrowseSort = (BROWSE_SORT_VALUES as readonly string[]).includes(
+      rawSort ?? "",
+    )
+      ? (rawSort as BrowseSort)
+      : "ranked_desc";
+    const safePage = Math.max(0, Math.floor(page));
+    const cacheKey = `b|${sort}|${safePage}`;
+
+    if (!room.searchCache) {
+      room.searchCache = new Map();
+    }
+    if (refresh) {
+      room.searchCache.delete(cacheKey);
+    }
+    const cached = room.searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
+      return cached.result;
+    }
+
+    const result = await browseCatalogPage({ page: safePage, sort });
+    room.searchCache.set(cacheKey, { result, at: Date.now() });
+
+    while (room.searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
+      const oldestKey = room.searchCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      room.searchCache.delete(oldestKey);
+    }
+
+    return result;
   }
 
   /* ---- phase transitions ---- */
@@ -1946,6 +2099,80 @@ export function wireSocketServer(io: IO): void {
         }
         const items = await reg.ensureCatalog(ref.code, !!payload?.refresh);
         ack?.(ackOk({ items }));
+      } catch (e) {
+        ack?.(ackErr(e));
+      }
+    });
+
+    socket.on("host:catalogBrowse", async (payload, ack) => {
+      try {
+        const ref = reg.refOf(socket.id);
+        if (!ref) throw new RoomError("NOT_IN_ROOM", "Not in a room");
+        // Same host-only gate as `host:catalogRequest` /
+        // `host:catalogSearch` — every browse page that misses the
+        // cache hits a real mirror, so guests must not be able to
+        // trigger them or they could exhaust the room's mirror
+        // quota with a tight loop.
+        if (!reg.isHostSession(ref.code, ref.sessionId)) {
+          throw new RoomError("NOT_HOST", "Only the host can browse the catalog");
+        }
+        const page = Number(payload?.page ?? 0);
+        if (!Number.isFinite(page) || page < 0) {
+          throw new RoomError("BAD_PAGE", "Invalid page index");
+        }
+        const result = await reg.browseCatalog(
+          ref.code,
+          typeof payload?.sort === "string" ? payload.sort : undefined,
+          page,
+          !!payload?.refresh,
+        );
+        ack?.(
+          ackOk({
+            items: result.items,
+            page: result.page,
+            sort: ((BROWSE_SORT_VALUES as readonly string[]).includes(
+              (payload?.sort as string) ?? "",
+            )
+              ? (payload!.sort as string)
+              : "ranked_desc"),
+            hasMore: result.hasMore,
+            source: result.source,
+          }),
+        );
+      } catch (e) {
+        ack?.(ackErr(e));
+      }
+    });
+
+    socket.on("host:catalogSearch", async (payload, ack) => {
+      try {
+        const ref = reg.refOf(socket.id);
+        if (!ref) throw new RoomError("NOT_IN_ROOM", "Not in a room");
+        // Same host-only gate as `host:catalogRequest`. Each search call
+        // hits a real mirror (after the per-room LRU cache misses), so
+        // letting guests trigger searches would be a trivial way to
+        // exhaust the room's mirror quota.
+        if (!reg.isHostSession(ref.code, ref.sessionId)) {
+          throw new RoomError("NOT_HOST", "Only the host can search the catalog");
+        }
+        const query = String(payload?.query ?? "");
+        const page = Number(payload?.page ?? 0);
+        if (!Number.isFinite(page) || page < 0) {
+          throw new RoomError("BAD_PAGE", "Invalid page index");
+        }
+        const result = await reg.searchCatalog(ref.code, query, page);
+        ack?.(
+          ackOk({
+            items: result.items,
+            page: result.page,
+            // Echo the normalized query back so the client can detect
+            // out-of-order responses (debounced typing → multiple
+            // in-flight requests; only the latest matters).
+            query: query.trim().toLowerCase().replace(/\s+/g, " "),
+            hasMore: result.hasMore,
+            source: result.source,
+          }),
+        );
       } catch (e) {
         ack?.(ackErr(e));
       }
