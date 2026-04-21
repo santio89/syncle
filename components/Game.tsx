@@ -487,9 +487,10 @@ export default function Game() {
   }, [fpsLock]);
 
   // Mirror the SFX toggle into the audio engine. The engine no-ops
-  // `playHit` / `playMiss` / `playRelease` / `playComboMilestone`
-  // when off so the player gets pure music with no whiff cue, but
-  // the song bus + the metronome stay live.
+  // `playHit` / `playEmptyPress` / `playRelease` / `playMissDistort`
+  // / `playComboBreak` / `playComboMilestone` when off so the player
+  // gets pure music with no input-feedback cues (including the
+  // per-miss song distort), but the song bus + metronome stay live.
   useEffect(() => {
     audioRef.current?.setSfx(sfx);
     saveSfx(sfx);
@@ -810,7 +811,7 @@ export default function Game() {
       audio.playHit(lane, evt.judgment);
     } else {
       renderStateRef.current.laneFlash[lane] = 0.45;
-      audio.playMiss(true);
+      audio.playEmptyPress();
     }
   }, []);
 
@@ -926,6 +927,12 @@ export default function Game() {
     let last = performance.now();
     let lastHudUpdate = 0;
     let lastMissCount = stateRef.current?.stats.hits.miss ?? 0;
+    // Level-edge tracker for the dedicated combo-break SFX. The engine
+    // bumps `state.stats.comboBreaks` whenever a miss zeroes a combo
+    // ≥ COMBO_BREAK_THRESHOLD, so watching it as a counter (not a
+    // "prev >= 20 && now === 0" inequality) survives the rare frame
+    // where combo bounces back to ≥ 1 between rAF reads.
+    let lastComboBreakCount = stateRef.current?.stats.comboBreaks ?? 0;
     // Rolling FPS sample window — frames per ~500ms.
     let fpsAccumFrames = 0;
     let fpsAccumStart = last;
@@ -999,7 +1006,7 @@ export default function Game() {
       // down + recreated across a phase transition. Pre-fix this loop
       // listed `phase` in its deps and React would cancel the running
       // rAF + spawn a fresh closure (with reset `last`, `pacedNext`,
-      // `lastMissCount`, `fpsAccumStart`) at the EXACT countdown→playing
+      // `lastMissCount`, `lastComboBreakCount`, `fpsAccumStart`) at the EXACT countdown→playing
       // moment — i.e. the instant the song's first frame fires. That
       // boundary lined up with the audible song onset, which is why
       // players felt a small "stutter" right at song start. With the
@@ -1010,10 +1017,22 @@ export default function Game() {
       if (state && currentPhase === "playing") {
         state.expireMisses(songTime);
 
+        // Per-miss SFX is silent by design — but we DO fire a subtle
+        // Guitar-Hero-style song distort (45 % dip + light lowpass +
+        // 30-cent pitch wobble, ~220 ms) on every miss so the player
+        // hears the song itself wobble. The dedicated combo-break cue
+        // (with its own deeper duck) fires AFTER this in the same
+        // frame and `cancelScheduledValues` inside `duckSong` lets it
+        // override the lighter per-miss duck — exactly what we want.
         const misses = state.stats.hits.miss;
         if (misses > lastMissCount) {
-          audio?.playMiss(false);
+          audio?.playMissDistort();
           lastMissCount = misses;
+        }
+        const breaks = state.stats.comboBreaks;
+        if (breaks > lastComboBreakCount) {
+          audio?.playComboBreak();
+          lastComboBreakCount = breaks;
         }
 
         // End-of-song detection. Two short-circuited paths:

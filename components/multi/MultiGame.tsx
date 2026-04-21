@@ -607,7 +607,7 @@ function CanvasPane({
       audio.playHit(lane, evt.judgment);
     } else {
       renderStateRef.current.laneFlash[lane] = 0.45;
-      audio.playMiss(true);
+      audio.playEmptyPress();
     }
   }, []);
 
@@ -751,6 +751,12 @@ function CanvasPane({
     let last = performance.now();
     let lastHud = 0;
     let lastMissCount = stateRef.current?.stats.hits.miss ?? 0;
+    // Level-edge tracker for the dedicated combo-break SFX. Same
+    // pattern as `lastMissCount`: the engine increments
+    // `state.stats.comboBreaks` whenever a miss zeros a combo
+    // ≥ COMBO_BREAK_THRESHOLD, and we observe the counter as a
+    // monotonic edge so a rapid miss-then-hit can't lose the trigger.
+    let lastComboBreakCount = stateRef.current?.stats.comboBreaks ?? 0;
     // FPS sampling — same 500ms window as Game.tsx.
     let fpsAccumStart = last;
     let fpsAccumFrames = 0;
@@ -812,10 +818,21 @@ function CanvasPane({
 
       if (state && currentPhase === "playing") {
         state.expireMisses(songTime);
+        // Per-miss SFX is silent — but a subtle Guitar-Hero-style
+        // song distort fires on every miss (45 % dip + light lowpass
+        // + 30-cent pitch wobble, ~220 ms). The combo-break watcher
+        // runs immediately after with its own deeper duck; `duckSong`
+        // cancels + re-schedules its ramps each call so the bigger
+        // duck wins on combo-break frames.
         const misses = state.stats.hits.miss;
         if (misses > lastMissCount) {
-          audio?.playMiss(false);
+          audio?.playMissDistort();
           lastMissCount = misses;
+        }
+        const breaks = state.stats.comboBreaks;
+        if (breaks > lastComboBreakCount) {
+          audio?.playComboBreak();
+          lastComboBreakCount = breaks;
         }
 
         // Score upload throttle (5 Hz) with a "no change → no send" guard

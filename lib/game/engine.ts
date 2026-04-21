@@ -1,4 +1,5 @@
 import {
+  COMBO_BREAK_THRESHOLD,
   COMBO_MULTIPLIERS,
   INITIAL_STATS,
   Judgment,
@@ -255,6 +256,14 @@ export class GameState {
     s.notesPlayed += 1;
 
     if (judgment === "miss") {
+      // Sample combo BEFORE the reset so the renderer's level-edge
+      // SFX trigger can tell whether this miss broke a "meaningful"
+      // combo. Increment is gated on the threshold so trivial 0-19
+      // streaks don't fire the combobreak cue (matches osu! convention
+      // — a 3-note streak loss isn't a "moment").
+      if (s.combo >= COMBO_BREAK_THRESHOLD) {
+        s.comboBreaks += 1;
+      }
       s.combo = 0;
       s.multiplier = 1;
       s.health = Math.max(0, s.health - 0.04);

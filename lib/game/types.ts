@@ -124,6 +124,19 @@ export interface PlayerStats {
   notesPlayed: number;
   totalNotes: number;
   health: number; // 0..1
+  /**
+   * Monotonic counter of "meaningful combo breaks" — incremented every
+   * time a miss/early-release resets a combo of ≥ COMBO_BREAK_THRESHOLD
+   * (20) to zero. The render loop watches this counter as a level-edge
+   * trigger to fire `audio.playComboBreak()` exactly once per break,
+   * regardless of inter-frame timing (a miss followed immediately by a
+   * hit can leave `combo` at 1 by the time the next rAF reads it, so a
+   * naive `prev >= 20 && now === 0` check would miss the event).
+   *
+   * Audio-only — never read by the engine itself or surfaced to the
+   * scoreboard. The standard miss tally lives in `hits.miss`.
+   */
+  comboBreaks: number;
 }
 
 export const INITIAL_STATS: PlayerStats = {
@@ -141,4 +154,14 @@ export const INITIAL_STATS: PlayerStats = {
   // is purely a UI indicator (no game-over threshold), so starting at
   // 0 is safe.
   health: 0,
+  comboBreaks: 0,
 };
+
+/**
+ * Minimum combo length at which a break fires the dedicated
+ * combo-break SFX. Mirrors osu!'s convention: small streak losses
+ * are silent (you barely felt the streak existed), but breaking a
+ * 20+ chain plays a distinct, slightly jarring cue so the player
+ * registers what they just lost.
+ */
+export const COMBO_BREAK_THRESHOLD = 20;

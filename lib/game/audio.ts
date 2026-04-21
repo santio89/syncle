@@ -7,13 +7,14 @@ import { Judgment } from "./types";
  * boosts SFX as the master slider drops, so the music vs feedback
  * mix doesn't perceptually collapse at low volumes. 1.0 = no extra
  * attenuation at the top of the slider; the per-hit oscillator
- * amplitudes (in `playHit`, `playMiss`, `playRelease`,
- * `playComboMilestone`, `scheduleClick`) are the only thing setting
- * the SFX loudness ceiling at master = 100 %. Those amplitudes were
- * jointly trimmed -1 % in a final smoothing pass so high-master hits
- * don't feel disproportionately punchier than low-master hits even
- * after the loudness comp curve has done its work — see `playHit`
- * for the rationale.
+ * amplitudes (in `playHit`, `playRelease`, `playEmptyPress`,
+ * `playComboBreak`, `playComboMilestone`, `scheduleClick`) are the
+ * only thing setting the SFX loudness ceiling at master = 100 %.
+ * (`playMissDistort` adds no SFX; it only modulates the song bus.)
+ * Those amplitudes were jointly trimmed -1 % in a final smoothing
+ * pass so high-master hits don't feel disproportionately punchier
+ * than low-master hits even after the loudness comp curve has done
+ * its work — see `playHit` for the rationale.
  *
  * History — this value has been tuned three times to chase the right
  * music vs feedback balance:
@@ -37,10 +38,12 @@ import { Judgment } from "./types";
  *                        peak SFX around 41-56 % of song peak at
  *                        slider 1.0 — the same "punchy but never
  *                        on top of the song" feel osu! and friends
- *                        ship with. Miss runs slightly hotter than
- *                        hit because its low-frequency body content
- *                        gets masked by the song's bass; see
- *                        playMiss for the full rationale.
+ *                        ship with. The combo-break cue runs slightly
+ *                        hotter than hits because its low-frequency
+ *                        sweep + sub layer gets masked by the song's
+ *                        bass; see playComboBreak for the rationale.
+ *                        (Per-note misses are now silent — only
+ *                        breaking a streak ≥ 20 plays an audible cue.)
  *
  * Even at BASE_SFX_LEVEL = 1.0 the SFX bus stays NATURALLY below the
  * song peak because per-source peaks max out around 0.56 (constructive
@@ -212,18 +215,39 @@ function perceivedToSfxGain(perceived: number): number {
  *
  * In addition to song playback this engine produces gameplay feedback:
  *   - playHit(lane, judgment) — an atonal filtered-noise drum tap.
- *     Brightness scales with judgment (perfect = crisp, good = muted)
- *     plus a subtle low body for snap. ATONAL by design — uses noise
- *     not oscillators so it never clashes with the song's key.
- *   - playRelease(lane, judgment) — a softer / duller variant of the
- *     hit drum for hold-tail releases. Same atonal noise basis.
- *   - playMiss(empty) — split by intent. Real miss (empty=false) is
- *     a lowpass-filtered descending sawtooth (140→55 Hz) plus the
- *     song-duck cue (briefly drops song volume, low-passes it, and
- *     pitch-bends it down so the song sounds "off" for ~250ms —
- *     like an unplugged guitar moment). Empty press (empty=true) is
- *     a muted drum (lowpass noise + low body sine) with no song
- *     duck — just an acknowledgement that the input registered.
+ *     Built off the empty-press recipe with two TINY ladders applied:
+ *     a brightness lift (filter cutoff, capped at +2 % for "perfect")
+ *     and a volume lift (capped at +5 % for "perfect", ≈ +0.42 dB).
+ *     Both are deliberately minimal — successful hits sit a hair
+ *     above empty without breaking the "same drum" timbre. ATONAL
+ *     by design (noise, not oscillators) so it never clashes with
+ *     the song's key. Judgment is communicated mostly visually
+ *     (popups, score) plus this small audio delta for tactile
+ *     reinforcement.
+ *   - playRelease(lane, judgment) — same recipe as playHit (head and
+ *     tail collapse into one timbral family). The player tells head
+ *     and tail apart by gameplay context, not by sound.
+ *   - playEmptyPress() — fires when the player taps a lane with no
+ *     note in the hit window. A muted drum (lowpass noise + low body
+ *     sine), no song duck — a soft acknowledgement that the input
+ *     registered, intentionally not punitive.
+ *   - playMissDistort() — Guitar-Hero-style song "choke" that fires
+ *     on every missed note. NOT an SFX layer (per-miss SFX is silent);
+ *     instead it routes through `duckSong` to briefly drop the song
+ *     volume ~45 %, lowpass-roll the high band, and pitch-wobble
+ *     ~30 cents over ~220 ms. Subtle but noticeable — the song
+ *     itself acknowledges the whiff without slapping a separate
+ *     sound on top of it. Recovers fast so consecutive misses don't
+ *     turn the music into mud.
+ *   - playComboBreak() — the only miss-adjacent SFX layer. Per-note misses
+ *     are SILENT now; this dedicated cue fires once when a streak of
+ *     ≥ COMBO_BREAK_THRESHOLD (20) is broken. Level-edge triggered
+ *     from `state.stats.comboBreaks` in the game loop. Three-layer
+ *     synthesis (sub-thump + highpass noise burst + descending
+ *     sawtooth sweep) with an aggressive song duck (deeper / longer
+ *     than the old per-miss duck) — distinct, slightly jarring, and
+ *     impossible to miss against any song. Mirrors osu!'s combobreak
+ *     convention so streak losses feel like moments, not noise.
  *   - playComboMilestone(milestone) — a brief tonal arpeggio (the one
  *     intentional musical cue, since milestones are rewards not
  *     input feedback).
@@ -271,12 +295,12 @@ export class AudioEngine {
   private sfxGain: GainNode | null = null;
   /**
    * Cached white-noise AudioBuffer reused by every drum-style SFX
-   * (`playHit`, `playRelease`, `playMiss`, empty press). Generated
-   * lazily on first need and held for the lifetime of the context —
-   * one ~400ms mono buffer is ~70 KB at 44.1kHz, negligible. Reusing
-   * the same buffer means filter+envelope variations are what
-   * differentiate hit from miss from empty-press, not different noise
-   * source allocations per call.
+   * (`playHit`, `playRelease`, `playEmptyPress`, the noise-burst layer
+   * inside `playComboBreak`). Generated lazily on first need and held
+   * for the lifetime of the context — one ~400 ms mono buffer is ~70 KB
+   * at 44.1 kHz, negligible. Reusing the same buffer means filter +
+   * envelope variations are what differentiate the cues, not different
+   * noise source allocations per call.
    */
   private noiseBuf: AudioBuffer | null = null;
 
@@ -681,8 +705,9 @@ export class AudioEngine {
 
   /**
    * Master switch for the "Feedback" SFX bus. Mirrors `setMetronome` —
-   * the engine still functions normally, the gated `playHit` / `playMiss`
-   * / `playRelease` / `playComboMilestone` calls just no-op. Cheap,
+   * the engine still functions normally, the gated `playHit` /
+   * `playEmptyPress` / `playRelease` / `playComboBreak` /
+   * `playComboMilestone` calls just no-op. Cheap,
    * stateless, safe to flip mid-song.
    */
   setSfx(on: boolean): void {
@@ -745,212 +770,244 @@ export class AudioEngine {
     if (!this.ctx || !this.sfxGain) return;
     if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
-
-    // Lane brightness offset. Lane 0 (leftmost) gets the warmest
-    // tap, lane 3 (rightmost) the crispest. Spread intentionally
-    // small (±180 Hz) so 4 lanes read as "slight texture variation"
-    // rather than 4 distinct pitches — and so the brightest lane
-    // doesn't drift too far from empty-press territory now that the
-    // base cutoffs sit much closer to empty's 800 Hz.
-    const laneOffset = (lane - 1.5) * 120;
-
-    // Cutoffs sit close to empty-press's 800 Hz lowpass so the hit
-    // sound reads as a sibling timbre — same muted-drum family,
-    // just a touch brighter to mark "you connected with a note".
-    // Body frequencies pulled down toward empty's 140 Hz for the
-    // same coherence reason; perfect is the brightest, good the
-    // dullest, but the whole hit family stays in empty's
-    // neighborhood instead of jumping to a stick-on-snare timbre.
-    // Volume ladder (perceived, post-lowpass): empty ≈ 0.32 → good
-    // ≈ 0.34 → great ≈ 0.38 → perfect ≈ 0.44. Every hit lands above
-    // empty so any successful judgment feels stronger than a whiff
-    // tap, the steps are small enough to read as one drum family
-    // (not three different instruments), and the ceiling sits at
-    // 0.44 so even a perfect doesn't punch through the song mix.
-    if (judgment === "perfect") {
-      this.playDrum({
-        when: t,
-        filterType: "lowpass",
-        filterHz: 2200 + laneOffset,
-        noiseVol: 0.586,
-        dur: 0.085,
-        bodyHz: 180,
-        bodyVol: 0.268,
-        bodyDur: 0.10,
-      });
-    } else if (judgment === "great") {
-      this.playDrum({
-        when: t,
-        filterType: "lowpass",
-        filterHz: 1900 + laneOffset,
-        noiseVol: 0.525,
-        dur: 0.08,
-        bodyHz: 170,
-        bodyVol: 0.232,
-        bodyDur: 0.09,
-      });
-    } else {
-      // "good" (or anything else that reaches here): softest drum,
-      // closest to empty-press in both cutoff and body. Reads as a
-      // padded tap — still distinguishable from empty by a small
-      // brightness lift, but timbrally the nearest to it. Sits a
-      // hair ABOVE empty so even the loosest valid hit feels at
-      // least as substantial as a whiff press.
-      this.playDrum({
-        when: t,
-        filterType: "lowpass",
-        filterHz: 1600 + laneOffset,
-        noiseVol: 0.455,
-        dur: 0.075,
-        bodyHz: 160,
-        bodyVol: 0.232,
-        bodyDur: 0.08,
-      });
-    }
+    this.playInputFeedback(lane, judgment, t);
   }
 
   /**
-   * Hold-tail release feedback — a softer/duller variant of `playHit`.
-   * Releases are SECONDARY feedback (the player already got the head
-   * cue when they pressed; this just confirms the tail landed) so
-   * the drum is ~25-30 % quieter and a touch warmer than the
-   * corresponding hit. Same atonal lowpass-noise basis to keep the
-   * whole input-feedback family coherent.
+   * Hold-tail release feedback. Shares `playInputFeedback` with
+   * `playHit` so head and tail collapse into one timbral family —
+   * the player tells them apart by gameplay context (they know
+   * they're releasing), not by a separate sound. Real-miss tails
+   * still get the descending sawtooth thud, identical to a
+   * missed head.
    */
   playRelease(lane: number, judgment: Judgment): void {
     if (!this.ctx || !this.sfxGain) return;
     if (!this.sfxOn) return;
-    const t = this.ctx.currentTime;
-
     if (judgment === "miss") {
-      // A missed tail = the player let go too early/late. Same
-      // impact as a head miss (descending sawtooth thud + song duck).
-      this.playMiss(false);
+      // A missed tail behaves like a head miss for audio purposes:
+      // SILENT individually. The engine's `tallyJudgment("miss")`
+      // already incremented `state.stats.comboBreaks` if this broke
+      // a streak ≥ 20, and the render loop's combo-break watcher
+      // will fire `playComboBreak()` on the next frame.
       return;
     }
-
-    const laneOffset = (lane - 1.5) * 300;
-
-    // Release ladder (perceived, post-lowpass): good ≈ 0.24 → great
-    // ≈ 0.32 → perfect ≈ 0.40. Even ~0.08 steps and every rung sits
-    // ~25-30 % below its hit counterpart, matching the "softer /
-    // duller variant of playHit" intent in the doc above. That gap
-    // is what lets the player hear "head hit" vs "tail release" as
-    // primary vs secondary feedback rather than two equal events.
-    if (judgment === "perfect") {
-      this.playDrum({
-        when: t,
-        filterType: "lowpass",
-        filterHz: 5000 + laneOffset,
-        noiseVol: 0.50,
-        dur: 0.075,
-        bodyHz: 200,
-        bodyVol: 0.20,
-        bodyDur: 0.09,
-      });
-    } else if (judgment === "great") {
-      this.playDrum({
-        when: t,
-        filterType: "lowpass",
-        filterHz: 4000 + laneOffset,
-        noiseVol: 0.42,
-        dur: 0.07,
-        bodyHz: 180,
-        bodyVol: 0.17,
-        bodyDur: 0.08,
-      });
-    } else {
-      this.playDrum({
-        when: t,
-        filterType: "lowpass",
-        filterHz: 3000 + laneOffset,
-        noiseVol: 0.32,
-        dur: 0.065,
-        bodyHz: 160,
-        bodyVol: 0.138,
-        bodyDur: 0.07,
-      });
-    }
+    const t = this.ctx.currentTime;
+    this.playInputFeedback(lane, judgment, t);
   }
 
   /**
-   * Miss feedback — split by intent:
+   * Shared input-feedback routine for head hits and hold-tail
+   * releases. Reuses the empty-press recipe with a tiny brightness
+   * lift AND a tiny volume lift per judgment — both capped small
+   * enough that the entire hit + release family still reads as
+   * "same drum as empty, just barely more present when you connect".
    *
-   *   empty=false  (real miss / wrong key on a note):
-   *     The original "off" cue: a lowpass-filtered sawtooth
-   *     descending 140 → 55 Hz, plus the song-duck cue (briefly
-   *     drops song volume, low-passes it, and pitch-bends it down
-   *     so the song itself sounds "off" for ~250ms). Distinctive,
-   *     unmistakable, and after experimenting with a kick+snare
-   *     drum variant we kept this one because it reads more clearly
-   *     as "you whiffed" than a generic drum hit — the descending
-   *     pitch is doing semantic work.
-   *   empty=true   (player tapped a lane with no note):
-   *     A MUTED drum: a soft mid-low body (140→70 Hz) + a
-   *     lowpass noise tail (~800 Hz) for "padded surface" texture.
-   *     No song duck. Soft enough that warm-up taps don't feel
-   *     punishing; loud enough that the press is physically
-   *     acknowledged. Combined peak ~0.32, well under a real miss.
+   * Brightness ladder (filter cutoff vs empty's 800 Hz):
+   *   good     → +0.6 %  (805 Hz)
+   *   great    → +1.25 % (810 Hz)
+   *   perfect  → +2 %    (816 Hz)
+   * Body frequency tracks the same envelope (140 → ~143 Hz at
+   * perfect) so the body and noise stay phase-coherent.
+   *
+   * Volume ladder (multiplier on empty's noiseVol/bodyVol):
+   *   empty    → 1.000  (0.566 noise, 0.212 body — reference)
+   *   good     → 1.015  (+1.5 %)
+   *   great    → 1.030  (+3 %)
+   *   perfect  → 1.050  (+5 %)
+   * That's roughly +0.13 dB / +0.26 dB / +0.42 dB perceived — the
+   * SMALLEST step that's still audible against an actively-playing
+   * song. Below ~+1.5 % the difference disappears under any music
+   * bed; above ~+5 % the family stops reading as "the same sound"
+   * and starts reading as a louder hit drum on top of the empty
+   * drum, which the user explicitly wanted to avoid.
+   *
+   * Lane offset stays tiny (±6 Hz on the cutoff, well under 1 %)
+   * so each lane gets a hair of texture variation without breaking
+   * the "same drum" rule.
    */
-  playMiss(empty: boolean = false): void {
+  private playInputFeedback(
+    lane: number,
+    judgment: Judgment,
+    when: number,
+  ): void {
+    const laneOffset = (lane - 1.5) * 4;
+    let cutoffBumpHz: number;
+    let bodyBumpHz: number;
+    let volMul: number;
+    if (judgment === "perfect") {
+      cutoffBumpHz = 16;
+      bodyBumpHz = 3;
+      volMul = 1.05;
+    } else if (judgment === "great") {
+      cutoffBumpHz = 10;
+      bodyBumpHz = 2;
+      volMul = 1.03;
+    } else {
+      cutoffBumpHz = 5;
+      bodyBumpHz = 1;
+      volMul = 1.015;
+    }
+    this.playDrum({
+      when,
+      filterType: "lowpass",
+      filterHz: 800 + cutoffBumpHz + laneOffset,
+      filterQ: 0.7,
+      noiseVol: 0.566 * volMul,
+      dur: 0.09,
+      bodyHz: 140 + bodyBumpHz,
+      bodyVol: 0.212 * volMul,
+      bodyDur: 0.08,
+    });
+  }
+
+  /**
+   * Per-miss song distort — the Guitar-Hero-style "guitar choke" cue
+   * that fires on EVERY missed note (not just combo breaks). The
+   * actual SFX layer for individual misses is silent by design (see
+   * `playComboBreak` for the streak-loss cue), so this is the only
+   * audio feedback for a routine miss. Three light cues stacked:
+   *
+   *   - 45 % volume dip (vs the old 64 % per-miss dip — was tuned
+   *     to pair with a loud descending-sawtooth SFX that no longer
+   *     exists; without that SFX a deeper dip felt aggressive)
+   *   - ~650 Hz lowpass roll-off (muffles the song's high band for
+   *     a beat — reads as "the song just wobbled")
+   *   - 30-cent pitch wobble (≈ 1/3 of a semitone — audibly off,
+   *     well short of "broken")
+   *
+   * Recovery in 220 ms so consecutive misses don't drag the song
+   * into mud. `duckSong` cancels + re-schedules its ramps each call,
+   * so back-to-back misses just keep extending the dip — which is
+   * the right behaviour: if the player is actively whiffing, the
+   * song staying choked makes semantic sense.
+   *
+   * Gated by `sfxOn` so the Feedback toggle kills it cleanly.
+   */
+  playMissDistort(): void {
+    if (!this.sfxOn) return;
+    this.duckSong(0.55, 220, 30);
+  }
+
+  /**
+   * Empty-press feedback — fires when the player taps a lane that
+   * has no note within the hit window. A MUTED drum: soft mid-low
+   * body sine (~140 Hz) plus a lowpass-noise tail (~800 Hz) for
+   * "padded surface" texture. No song duck — an empty tap is
+   * acknowledgement, not punishment. Combined peak ~0.32.
+   *
+   * Note: per-note misses are now SILENT by design. The dedicated
+   * `playComboBreak()` cue fires (level-edge triggered from
+   * `state.stats.comboBreaks`) when a streak of ≥ 20 ends. Routine
+   * 1-19 misses get only the visual popup — matches osu! convention.
+   */
+  playEmptyPress(): void {
     if (!this.ctx || !this.sfxGain) return;
-    // Gating playMiss here also suppresses the song-duck cue below
-    // (which only fires from this method), so when the player turns
-    // SFX off they get pure music with zero whiff feedback — exactly
-    // what the toggle promises.
     if (!this.sfxOn) return;
     const t = this.ctx.currentTime;
+    this.playDrum({
+      when: t,
+      filterType: "lowpass",
+      filterHz: 800,
+      filterQ: 0.7,
+      noiseVol: 0.566,
+      dur: 0.09,
+      bodyHz: 140,
+      bodyVol: 0.212,
+      bodyDur: 0.08,
+    });
+  }
 
-    if (empty) {
-      // Muted drum: soft body sine + low-passed noise tail.
-      // The body carries most of the audible level (sines come out
-      // at full amplitude, noise through a narrow lowpass doesn't),
-      // the noise just adds "texture" so it doesn't sound like a
-      // pure tone. No song duck — empty press is acknowledgement,
-      // not punishment.
-      this.playDrum({
-        when: t,
-        filterType: "lowpass",
-        filterHz: 800,
-        filterQ: 0.7,
-        noiseVol: 0.566,
-        dur: 0.09,
-        bodyHz: 140,
-        bodyVol: 0.212,
-        bodyDur: 0.08,
-      });
-      return;
+  /**
+   * Combo-break feedback — the only audible cue tied to losing a
+   * streak. Fires from the render loop when `state.stats.comboBreaks`
+   * advances (i.e., a miss/early-release just zeroed a combo of ≥ 20).
+   *
+   * Designed to be DISTINCT and slightly jarring — three layered
+   * elements wider/sharper than any other in-game SFX so the player
+   * registers "you broke it" without ambiguity:
+   *
+   *   1. Sub-thump (sine ~80 Hz, ~70 ms): low-end weight on the front
+   *      so the cue lands physically before the eye sees the popup.
+   *   2. Noise burst (highpass ~3 kHz, ~50 ms): sharp "shatter" snap
+   *      that occupies the upper band — distinct from the lowpass
+   *      noise that powers all other input feedback, which is what
+   *      makes it cut through the mix.
+   *   3. Descending sawtooth (300 → 70 Hz over 200 ms, lowpass 800 Hz):
+   *      the "deflation" sweep, wider and lower than the original
+   *      per-miss saw so it reads as "moment ended", not "small whiff".
+   *
+   * Plus an aggressive `duckSong` (deeper drop, longer recovery, more
+   * pitch wobble than the old per-miss duck) so the SONG itself
+   * acknowledges the break for ~380 ms. The whole event totals about
+   * 0.4 s of audible material before the song fully recovers.
+   */
+  playComboBreak(): void {
+    if (!this.ctx || !this.sfxGain) return;
+    if (!this.sfxOn) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+
+    // Layer 1 — sub-thump.
+    {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(80, t);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.42, t + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+      osc.connect(env).connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.08);
     }
 
-    // Real miss: lowpass-filtered descending sawtooth. The original
-    // design — kept on purpose. The 140→55 Hz glide reads
-    // semantically as "wrong / falling apart" in a way no generic
-    // drum hit does, and the lowpass at 700 Hz gives it the dull
-    // body that pairs with the song-duck cue underneath.
-    const osc = this.ctx.createOscillator();
-    osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(140, t);
-    osc.frequency.exponentialRampToValueAtTime(55, t + 0.18);
+    // Layer 2 — sharp highpass noise burst. Reuses the shared
+    // noise buffer (cached + prewarmed) and slams it through a
+    // highpass so it sits in the 3-8 kHz band — a region none of
+    // the input-feedback drums occupy, which is exactly what makes
+    // it punch through.
+    {
+      const buf = this.getNoiseBuffer();
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filt = ctx.createBiquadFilter();
+      filt.type = "highpass";
+      filt.frequency.value = 3000;
+      filt.Q.value = 0.7;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.55, t + 0.003);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      src.connect(filt).connect(env).connect(this.sfxGain);
+      src.start(t);
+      src.stop(t + 0.06);
+    }
 
-    const filt = this.ctx.createBiquadFilter();
-    filt.type = "lowpass";
-    filt.frequency.value = 700;
+    // Layer 3 — descending sawtooth. Wider sweep than the old
+    // per-miss saw (300 → 70 Hz vs 140 → 55) so the "deflation"
+    // arc reads bigger.
+    {
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(300, t);
+      osc.frequency.exponentialRampToValueAtTime(70, t + 0.20);
+      const filt = ctx.createBiquadFilter();
+      filt.type = "lowpass";
+      filt.frequency.value = 800;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.50, t + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+      osc.connect(filt).connect(env).connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.26);
+    }
 
-    const env = this.ctx.createGain();
-    // 0.55 peak: the same level the drum-redesign experiment
-    // landed on, sized for parity-of-audibility against the song's
-    // bass band (the lowpass-filtered sawtooth puts most of its
-    // energy in the same range as a typical kick + bass, so it
-    // needs more raw amplitude than a hit drum to clear the song).
-    env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(0.5445, t + 0.005);
-    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-
-    osc.connect(filt).connect(env).connect(this.sfxGain);
-    osc.start(t);
-    osc.stop(t + 0.25);
-
-    this.duckSong();
+    // Aggressive song duck — deeper / longer / more wobble than the
+    // old per-miss duck because this only fires on actual moments,
+    // and the song should momentarily acknowledge the break.
+    this.duckSong(0.25, 380, 90);
   }
 
   /**
@@ -1110,8 +1167,10 @@ export class AudioEngine {
    * Atonal by construction — noise has no defined fundamental, and
    * the optional body sine bends DOWN so it reads as percussive
    * impact rather than a held tone. Used by `playHit`, `playRelease`,
-   * and `playMiss` (both branches) to give the whole input-feedback
-   * family a coherent drum-kit timbre.
+   * and `playEmptyPress` to give the whole input-feedback family a
+   * coherent drum-kit timbre. (`playComboBreak` builds its own graph
+   * inline because it layers a sub-thump + highpass noise burst
+   * + descending sawtooth that don't match the `playDrum` recipe.)
    *
    * Filter choice matters a LOT for audibility:
    *   - "highpass" — passes ~70-80 % of the noise spectrum (everything
@@ -1241,16 +1300,21 @@ export class AudioEngine {
       dur: 0.005,
     });
 
-    // Real-miss sawtooth path — distinct biquad / oscillator config
-    // from `playDrum`, so JIT it independently.
+    // Combo-break sawtooth path — same osc + lowpass-biquad shape
+    // the descending sweep layer of `playComboBreak` builds. Distinct
+    // from `playDrum`'s graph (no buffer source), so JIT it
+    // independently here. Without this the FIRST combo break of the
+    // session would JIT the sawtooth + filter + envelope graph live
+    // on the audio thread, which has been observed as a brief glitch
+    // on resource-constrained devices.
     {
       const ctx = this.ctx;
       const osc = ctx.createOscillator();
       osc.type = "sawtooth";
-      osc.frequency.setValueAtTime(140, t);
+      osc.frequency.setValueAtTime(300, t);
       const filt = ctx.createBiquadFilter();
       filt.type = "lowpass";
-      filt.frequency.value = 700;
+      filt.frequency.value = 800;
       const env = ctx.createGain();
       env.gain.setValueAtTime(0, t);
       env.gain.linearRampToValueAtTime(0.0001, t + 0.001);
