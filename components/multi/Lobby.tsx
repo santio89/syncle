@@ -254,7 +254,6 @@ export function Lobby({
           actions={actions}
           allReady={allReady}
           matchInProgress={matchInProgress}
-          onOpenSettings={() => setSettingsOpen(true)}
         />
         {/* Chat wrapper:
             - Mobile / tablet (`< lg`): fixed `h-[36rem]` so the
@@ -321,14 +320,13 @@ export function Lobby({
             actions={actions}
             code={code}
             allReady={allReady}
-            meId={meId}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         ) : (
           <GuestPane
             snapshot={snapshot}
             code={code}
-            meId={meId}
-            actions={actions}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         )}
       </div>
@@ -358,7 +356,6 @@ function PlayerRoster({
   actions,
   allReady,
   matchInProgress,
-  onOpenSettings,
 }: {
   snapshot: RoomSnapshot;
   meId: string;
@@ -366,8 +363,6 @@ function PlayerRoster({
   actions: RoomActions;
   allReady: boolean;
   matchInProgress: boolean;
-  /** Opens the per-player settings modal. State lives in Lobby above. */
-  onOpenSettings: () => void;
 }) {
   const me = snapshot.players.find((p) => p.id === meId);
   const [editing, setEditing] = useState(false);
@@ -404,37 +399,70 @@ function PlayerRoster({
         </span>
       </div>
 
-      {/* Ready quorum bar — only visible during the lobby phase. While
-          a match is in progress the "ready" signal is irrelevant
-          (everyone in the match was pulled in at start time; watchers
-          in the lobby aren't waiting for a ready check), so collapsing
-          it cuts visual noise and the watcher's eyes go straight to
-          the roster + match-progress panel on the right. */}
-      {!matchInProgress && (
-        <ReadyQuorumBar
-          ready={readyCount}
-          total={onlineCount}
-          allReady={allReady}
-        />
-      )}
+      {/* Rename Player strip — sits DIRECTLY under the PLAYERS header
+          so the user's "personal identity" control lands at the very
+          top of the card (the spot the user looks first when
+          orienting "what's mine here?"). When clicked, the strip
+          swaps to an inline rename input + save button so the edit
+          happens in place, no modal hop. The Settings text-button
+          that used to share this row has moved to the right-hand
+          controls box (next to the copy-code button) — it's a
+          different concept (audio / FPS / quality preferences) from
+          rename (identity) and never really belonged in the same
+          strip. Stays mounted regardless of match phase because
+          rename is useful for watchers between rounds too. */}
+      <div className="mt-3">
+        {editing ? (
+          <div className="flex gap-2">
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.slice(0, NAME_MAX_LEN))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commit();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              maxLength={NAME_MAX_LEN}
+              className="flex-1 border-2 border-bone-50/20 bg-transparent px-2 py-1 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent"
+            />
+            <button
+              onClick={commit}
+              className="brut-btn-accent brut-btn-flat px-3 py-1 text-[0.79rem]"
+            >
+              save
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => {
+              setDraft(me?.name ?? "");
+              setEditing(true);
+            }}
+            className="font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 transition-colors hover:text-accent"
+          >
+            Rename Player
+          </button>
+        )}
+      </div>
 
       {/* Roster has its own scroller. Sizing strategy is
           breakpoint-split:
             • Below lg (stacked layout, page scrolls naturally) we
               cap with `max-h-[30rem]` so a near-full 50-player
-              room doesn't push the rename + Mark Ready strip off-
+              room doesn't push the quorum + mark-ready footer off-
               screen on phones / tablets.
             • On lg+ (no page scroll — page is `overflow-hidden`,
               each card owns its own scroller) we drop the cap and
               flex into the card's available height. The CARD itself
               gets a 2x flex share of the column (see the wrapper
               comment above), and this ul absorbs the leftover space
-              inside the card after the header / quorum / footer
-              chrome. At 1080p that lands ≈ 26rem of ul → ~10 rows
-              visible, exactly what we want, AND it leaves the chat
-              underneath with enough height to be usable + clickable
-              (the previous fixed 30rem cap was the root cause of
-              the chat input getting clipped below the fold).
+              inside the card after the header / rename strip /
+              quorum + mark-ready footer chrome. At 1080p that
+              lands ≈ 26rem of ul → ~10 rows visible, exactly what
+              we want, AND it leaves the chat underneath with enough
+              height to be usable + clickable (the previous fixed
+              30rem cap was the root cause of the chat input getting
+              clipped below the fold).
           The internal scrollbar lives flush against the card's
           right edge — symmetric with the host pane's catalog
           scroller. `pr-1` keeps the scrollbar thumb from sitting
@@ -452,121 +480,79 @@ function PlayerRoster({
         ))}
       </ul>
 
-      {/* "You" controls strip: rename + settings. Mark Ready USED to
-          live here too as the strip's primary action, but it now
-          lives in the right-hand controls box — co-located with the
-          host's Start Match CTA on the host side, and as the guest's
-          sole CTA on the guest side. That swap keeps the LEFT column
-          purely about "who's in the room" (roster + my identity)
-          and the RIGHT column purely about "what we're about to do"
-          (selected song / difficulty / readiness / start), which
-          mirrors the eye-flow most lobby UIs converge on.
-
-          The strip stays mounted regardless of match phase because
-          rename is still useful for watchers between rounds. */}
-      <div className="mt-4 space-y-4 border-t-2 border-bone-50/10 pt-5">
-        {editing ? (
-          <div className="flex gap-2">
-            <input
-              autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value.slice(0, NAME_MAX_LEN))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commit();
-                if (e.key === "Escape") setEditing(false);
-              }}
-              maxLength={NAME_MAX_LEN}
-              className="flex-1 border-2 border-bone-50/20 bg-transparent px-2 py-1 font-mono text-[0.92rem] text-bone-50 outline-none focus:border-accent"
+      {/* Bottom action footer: Ready Quorum readout immediately
+          followed by the Mark Ready button that affects it. The
+          two are visually paired (`space-y-3` between them only)
+          so the user reads "0 / 2 ready", drops their eye one row,
+          and hits the action that changes it — zero scanning. Both
+          are gated on `!matchInProgress` because:
+            - the quorum is meaningless once the match is live
+              (everyone in the match was pulled in at start time;
+              the lobby watcher list isn't waiting for a ready
+              check anymore), and
+            - there's no "ready" state to toggle either.
+          A horizontal divider separates this footer from the
+          roster list above so "scrollable list ends here, actions
+          start here" reads at a glance. */}
+      {!matchInProgress && (
+        <div className="mt-4 space-y-4 border-t-2 border-bone-50/10 pt-3.5">
+          <ReadyQuorumBar
+            ready={readyCount}
+            total={onlineCount}
+            allReady={allReady}
+          />
+          {me && (
+            <MarkReadyButton
+              me={me}
+              onToggle={(next) => actions.setReady(next)}
             />
-            <button
-              onClick={commit}
-              className="brut-btn-accent px-3 py-1 text-[0.79rem]"
-            >
-              save
-            </button>
-          </div>
-        ) : (
-          // Rename + Settings row: paired text-buttons sharing the
-          // same dim-mono-uppercase treatment so they read as the
-          // "secondary actions" strip under the roster.
-          <div className="flex items-center justify-between gap-3 font-mono text-[0.79rem] uppercase tracking-widest">
-            <button
-              onClick={() => {
-                setDraft(me?.name ?? "");
-                setEditing(true);
-              }}
-              className="text-bone-50/70 transition-colors hover:text-accent"
-            >
-              Rename Player
-            </button>
-            <button
-              onClick={onOpenSettings}
-              className="text-bone-50/70 transition-colors hover:text-accent"
-              data-tooltip="Adjust your audio / FPS / quality settings"
-            >
-              Settings
-            </button>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * Personal "I'm ready" toggle, factored out of PlayerRoster so it can
- * be reused by HostPane and GuestPane (both render it inside the
- * right-hand controls box now — see PlayerRoster's strip comment for
- * the rationale).
+ * Personal "I'm ready" toggle, rendered at the bottom of the players
+ * card directly under the Ready Quorum bar so the count and the
+ * action that changes it are visually paired. Factored into its own
+ * component so the styling (saturated accent button + 6px shadow,
+ * with a desaturated mirror-state when not yet ready) lives in one
+ * place — the same control swings between two opposite intents
+ * (mark / un-mark) and the "saturate vs desaturate the same shape"
+ * pattern reads as a toggle, not a swap between two different
+ * buttons.
  *
- * Two visual variants:
- *   - "primary" (GuestPane): saturated accent button with a 6px
- *     drop-shadow. This is the GUEST'S ONLY action in the lobby —
- *     they don't pick songs, don't start the match, can't mute or
- *     kick — so the button screams. Ready state = filled accent;
- *     unready = same shape with attenuated opacity (the "saturate
- *     vs desaturate the same control" pattern reads as a toggle, not
- *     a swap between two different buttons).
- *   - "compact" (HostPane): the same shape but smaller padding +
- *     smaller text + reduced shadow. The host's PRIMARY action is
- *     Start Match (which lives directly below); a full-strength
- *     Mark Ready right above it would create two competing CTAs.
- *     The compact variant still tracks readiness (which feeds the
- *     `allReady` quorum the start button announces) but visually
- *     defers to the start CTA underneath it.
- *
- * Tooltip copy adapts to the current state — either "click to
- * un-ready" or "mark yourself ready so the host knows you're set" —
- * because the same control swings between two opposite intents and
- * a single static tooltip would feel misleading on the toggled-on
+ * Tooltip copy adapts to the current state — "click to un-ready"
+ * vs "mark yourself ready so the host knows you're set" — because a
+ * single static tooltip would feel misleading on the toggled-on
  * state.
  */
 function MarkReadyButton({
   me,
   onToggle,
-  variant = "primary",
 }: {
   me: PlayerSnapshot;
   onToggle: (next: boolean) => void;
-  variant?: "primary" | "compact";
 }) {
-  const compact = variant === "compact";
-  const padding = compact ? "px-3 py-2" : "px-4 py-3";
-  const fontSize = compact ? "text-[0.79rem]" : "text-[0.86rem]";
-  const tracking = compact ? "tracking-[0.25em]" : "tracking-[0.3em]";
-  const onShadow = compact
-    ? "shadow-[4px_4px_0_rgb(var(--shadow-accent))]"
-    : "shadow-[6px_6px_0_rgb(var(--shadow-accent))]";
-  const offShadow = compact
-    ? "shadow-[4px_4px_0_rgb(var(--shadow-accent)/0.35)]"
-    : "shadow-[6px_6px_0_rgb(var(--shadow-accent)/0.35)]";
   return (
     <button
       onClick={() => onToggle(!me.lobbyReady)}
-      className={`w-full border-2 ${padding} font-mono ${fontSize} uppercase ${tracking} transition-colors ${
+      // Brutalist lift on hover, slam on click — same shape the
+      // `.brut-btn-accent` global uses, just inlined because this
+      // button needs a 6 px shadow (vs. brut-btn's 4 px) AND a
+      // dual color treatment (saturated when ready, attenuated when
+      // not). On hover: shift up-left by 1 px and grow the shadow
+      // 1 px to suggest "lifted off the page". On active: slam the
+      // button down 3 px and crush the shadow to 1 px so the press
+      // reads as a real key press, not just a colour swap.
+      // `transition-all` (not `transition-colors`) so the transform
+      // animates with the rest.
+      className={`w-full border-2 px-4 py-3 font-mono text-[0.86rem] uppercase tracking-[0.3em] transition-all duration-150 ease-out ${
         me.lobbyReady
-          ? `border-accent bg-accent text-ink-900 ${onShadow}`
-          : `border-accent/40 bg-accent/5 text-accent/75 ${offShadow} hover:border-accent hover:bg-accent/10 hover:text-accent`
+          ? "border-accent bg-accent text-ink-900 shadow-[6px_6px_0_rgb(var(--shadow-accent))] hover:-translate-x-px hover:-translate-y-px hover:shadow-[7px_7px_0_rgb(var(--shadow-accent))] active:translate-x-[3px] active:translate-y-[3px] active:shadow-[1px_1px_0_rgb(var(--shadow-accent))]"
+          : "border-accent/40 bg-accent/5 text-accent/75 shadow-[6px_6px_0_rgb(var(--shadow-accent)/0.35)] hover:-translate-x-px hover:-translate-y-px hover:border-accent hover:bg-accent/10 hover:text-accent hover:shadow-[7px_7px_0_rgb(var(--shadow-accent))] active:translate-x-[3px] active:translate-y-[3px] active:shadow-[1px_1px_0_rgb(var(--shadow-accent)/0.35)]"
       }`}
       data-tooltip={
         me.lobbyReady
@@ -587,12 +573,13 @@ function MarkReadyButton({
  * Compact settings panel mirroring the single-player StartCard's
  * settings strip (FPS lock + Metronome + Feedback as a tile row,
  * Quality + Music volume in their own tiles below). Rendered as a
- * centered modal overlay — opened via the "settings" text-button
- * next to "rename player" in the roster card. Used to live as an
- * always-on card pinned above the host pane, but the screen real
- * estate it consumed was choking the catalog scroller and roster
- * list at common 1080p layouts; moving it into a modal frees that
- * vertical space for the two lists players actually scan most.
+ * centered modal overlay — opened via the "Settings" text-button
+ * next to the copy-code button in the right-hand controls box
+ * (HostPane / GuestPane header). Used to live as an always-on card
+ * pinned above the host pane, but the screen real estate it
+ * consumed was choking the catalog scroller and roster list at
+ * common 1080p layouts; moving it into a modal frees that vertical
+ * space for the two lists players actually scan most.
  *
  * Why per-player and self-contained:
  *   - These are LOCAL preferences, not room state. They never get sent
@@ -954,8 +941,13 @@ function ReadyQuorumBar({
 }) {
   if (total === 0) return null;
   const pct = Math.round((ready / total) * 100);
+  // No `mt-*` here — outer spacing is owned by the caller (the
+  // PlayerRoster footer wraps this in a `space-y-4` divider block
+  // and tunes the top padding to mirror `space-y-2` below).
+  // Baking a top margin in here would compound with the caller's
+  // padding and create an uneven gap above vs below the label.
   return (
-    <div className="mt-3 space-y-1">
+    <div className="space-y-2">
       <div className="flex items-baseline justify-between font-mono text-[9.5px] uppercase tracking-widest text-bone-50/55">
         <span>
           {allReady ? "All ready" : "Ready quorum"}
@@ -1167,23 +1159,17 @@ function HostPane({
   actions,
   code,
   allReady,
-  meId,
+  onOpenSettings,
 }: {
   snapshot: RoomSnapshot;
   actions: RoomActions;
   code: string;
   allReady: boolean;
-  /** Local player id — needed so we can render the host's own
-   *  Mark Ready toggle inline with the start CTA below. */
-  meId: string;
+  /** Opens the per-player settings modal — wired here so the
+   *  "Settings" text-button next to the copy-code button can fire
+   *  it. State + handler live in the Lobby parent. */
+  onOpenSettings: () => void;
 }) {
-  // The host can mark themselves ready just like any other player.
-  // Their ready state feeds the `allReady` quorum that the Start
-  // Match button surfaces ("EVERYONE IS READY" vs "WAITING FOR
-  // PLAYERS, START ANYWAY"), so leaving the toggle out would mean
-  // the start button could never reach its all-ready copy unless
-  // the host happened to be the only one in the room.
-  const me = snapshot.players.find((p) => p.id === meId);
   const [mode, setMode] = useState<ChartMode>("easy");
   // Search input. Drives upstream catalog search when non-empty; when
   // empty the lobby falls back to paginated browse (newest ranked
@@ -1415,18 +1401,35 @@ function HostPane({
             onVisibility={actions.setRoomVisibility}
           />
         </div>
-        <div className="relative">
-          <CopyToast visible={copied} />
+        {/* Right-hand "personal tools" cluster: Settings text-button +
+            copy-code button. Settings opens the per-player audio /
+            FPS / quality modal — moved here from the players card's
+            bottom strip so it sits next to the OTHER infrequent
+            personal action (copy-code) rather than next to the
+            frequent identity action (rename). The two are paired
+            with a `gap-3` so they read as a single utilities
+            cluster, not two unrelated buttons. */}
+        <div className="flex items-center gap-3">
           <button
-            onClick={() => copy(code)}
-            className="brut-btn inline-flex items-center gap-2 px-3 py-2 font-mono text-[0.86rem] uppercase tracking-wider"
-            data-tooltip="Copy room code"
+            onClick={onOpenSettings}
+            className="font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 transition-colors hover:text-accent"
+            data-tooltip="Adjust your audio / FPS / quality settings"
           >
-            <span>{code}</span>
-            <span aria-hidden className="text-[0.92rem] leading-none">
-              ⧉
-            </span>
+            Settings
           </button>
+          <div className="relative">
+            <CopyToast visible={copied} />
+            <button
+              onClick={() => copy(code)}
+              className="brut-btn brut-btn-flat inline-flex items-center gap-2 px-3 py-2 font-mono text-[0.86rem] uppercase tracking-wider"
+              data-tooltip="Copy room code"
+            >
+              <span>{code}</span>
+              <span aria-hidden className="text-[0.92rem] leading-none">
+                ⧉
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1503,7 +1506,7 @@ function HostPane({
         {inSearchMode ? (
           <button
             onClick={() => setQuery("")}
-            className="brut-btn px-3 py-2 text-[0.79rem]"
+            className="brut-btn brut-btn-flat px-3 py-2 text-[0.79rem]"
             data-tooltip="Clear search · back to browse"
           >
             ✕
@@ -1512,7 +1515,7 @@ function HostPane({
           <button
             onClick={() => setBrowseRefreshTick((t) => t + 1)}
             disabled={browseLoading}
-            className="brut-btn px-3 py-2 text-[0.79rem] disabled:opacity-50"
+            className="brut-btn brut-btn-flat px-3 py-2 text-[0.79rem] disabled:opacity-50"
             data-tooltip="Refresh this page (bypass cache)"
           >
             {browseLoading ? "…" : "↻"}
@@ -1644,7 +1647,7 @@ function HostPane({
               ? searchPage === 0 || searchLoading
               : browsePage === 0 || browseLoading
           }
-          className="brut-btn inline-flex items-center gap-1 px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
+          className="brut-btn brut-btn-flat inline-flex items-center gap-1 px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
           data-tooltip="Previous page"
         >
           <ArrowIcon direction="left" strokeWidth={2.75} />
@@ -1675,7 +1678,7 @@ function HostPane({
               ? !searchHasMore || searchLoading
               : !browseHasMore || browseLoading
           }
-          className="brut-btn inline-flex items-center gap-1 px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
+          className="brut-btn brut-btn-flat inline-flex items-center gap-1 px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
           data-tooltip={
             (inSearchMode ? searchHasMore : browseHasMore)
               ? "Next page"
@@ -1717,24 +1720,6 @@ function HostPane({
         <p className="mt-2 font-mono text-[10.5px] uppercase tracking-widest text-rose-400">
           {probeError}
         </p>
-      )}
-
-      {/* Host's own Mark Ready toggle, rendered as the COMPACT variant
-          (smaller padding / shadow) so it visually defers to the
-          Start Match CTA directly underneath. Two stacked CTAs would
-          fight; the compact treatment makes this read as a "personal
-          state" affordance under the difficulty picker, with Start
-          Match as the actual call to action. Hidden if for some
-          reason `me` isn't in the snapshot yet (very brief hydration
-          race on first connect). */}
-      {me && (
-        <div className="mt-3">
-          <MarkReadyButton
-            me={me}
-            onToggle={(next) => actions.setReady(next)}
-            variant="compact"
-          />
-        </div>
       )}
 
       <button
@@ -1833,7 +1818,7 @@ function RoomTitleEditor({
           />
           <button
             onClick={commit}
-            className="brut-btn-accent px-3 py-1 text-[0.79rem]"
+            className="brut-btn-accent brut-btn-flat px-3 py-1 text-[0.79rem]"
           >
             save
           </button>
@@ -2295,22 +2280,16 @@ function PhasePill({
 function GuestPane({
   snapshot,
   code,
-  meId,
-  actions,
+  onOpenSettings,
 }: {
   snapshot: RoomSnapshot;
   code: string;
-  /** Local player id — needed to render the guest's Mark Ready
-   *  toggle as the bottom CTA of the controls box. */
-  meId: string;
-  /** Same RoomActions surface the host pane uses. The guest only
-   *  reaches for `setReady`, but passing the whole bag keeps the
-   *  prop signature stable if more guest actions land later
-   *  (request-difficulty, request-song, etc.). */
-  actions: RoomActions;
+  /** Opens the per-player settings modal — wired here so the
+   *  "Settings" text-button next to the copy-code button can fire
+   *  it. State + handler live in the Lobby parent. */
+  onOpenSettings: () => void;
 }) {
   const selected = snapshot.selectedSong;
-  const me = snapshot.players.find((p) => p.id === meId);
   // Same copy-to-clipboard surface the HostPane uses. Guests need the
   // affordance just as much as (arguably MORE than) hosts: they're the
   // ones most likely to want to share the code with the next friend
@@ -2335,24 +2314,32 @@ function GuestPane({
             </h3>
             <VisibilityBadge visibility={snapshot.visibility} />
           </div>
-          <p className="mt-2 max-w-md text-[0.92rem] text-bone-50/65">
-            Hit{" "}
-            <span className="font-mono text-bone-50">Mark ready</span> to
-            tell the host you&apos;re good to go.
-          </p>
         </div>
-        <div className="relative">
-          <CopyToast visible={copied} />
+        {/* Right-hand "personal tools" cluster, mirroring HostPane:
+            Settings text-button + copy-code button paired at gap-3
+            so they read as a single utilities cluster. Settings
+            opens the per-player audio / FPS / quality modal. */}
+        <div className="flex items-center gap-3">
           <button
-            onClick={() => copy(code)}
-            className="brut-btn inline-flex items-center gap-2 px-3 py-2 font-mono text-[0.86rem] uppercase tracking-wider"
-            data-tooltip="Copy room code"
+            onClick={onOpenSettings}
+            className="font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 transition-colors hover:text-accent"
+            data-tooltip="Adjust your audio / FPS / quality settings"
           >
-            <span>{code}</span>
-            <span aria-hidden className="text-[0.92rem] leading-none">
-              ⧉
-            </span>
+            Settings
           </button>
+          <div className="relative">
+            <CopyToast visible={copied} />
+            <button
+              onClick={() => copy(code)}
+              className="brut-btn brut-btn-flat inline-flex items-center gap-2 px-3 py-2 font-mono text-[0.86rem] uppercase tracking-wider"
+              data-tooltip="Copy room code"
+            >
+              <span>{code}</span>
+              <span aria-hidden className="text-[0.92rem] leading-none">
+                ⧉
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2402,25 +2389,6 @@ function GuestPane({
           </p>
         )}
       </div>
-
-      {/* Mark Ready CTA — sole action available to a guest in the
-          lobby (they can't pick songs, change difficulty, or start
-          the match), so it gets the FULL "primary" treatment:
-          saturated accent button + 6px shadow, rendered at the
-          bottom of the card. `mt-auto` pushes it down so the empty
-          space between the "Currently selected" tile and this
-          button stretches with the card's height — symmetric with
-          how HostPane stacks chrome above its Start Match CTA at
-          the bottom. */}
-      {me && (
-        <div className="mt-auto pt-4">
-          <MarkReadyButton
-            me={me}
-            onToggle={(next) => actions.setReady(next)}
-            variant="primary"
-          />
-        </div>
-      )}
     </div>
   );
 }

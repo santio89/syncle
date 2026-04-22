@@ -579,6 +579,47 @@ html::-webkit-scrollbar-thumb:hover {
   box-shadow: 1px 1px 0 0 rgb(var(--shadow-accent));
 }
 
+/* Flat modifier for `.brut-btn` and `.brut-btn-accent`. Drops the
+ * drop-shadow AND the hover/active translate so the button reads as
+ * a simple flat tile instead of a brutalist offset card.
+ *
+ * Use cases: small inline buttons that sit INSIDE other UI blocks
+ * where the brutalist shadow visually competes with the surrounding
+ * chrome — e.g. the rename "save" button next to a text input, the
+ * pagination ← PREV / NEXT → buttons under the catalog, the copy-
+ * code button in the lobby header, the catalog refresh / clear-
+ * search buttons. In those contexts the shadow doubled up against
+ * the input borders / card edges and made the row feel cluttered;
+ * dropping it lets the buttons sit flush against their neighbors.
+ *
+ * The translate is also removed because translating a button with
+ * NO shadow looks like the button is drifting in space (there's
+ * nothing left behind to indicate where it was). Hover feedback
+ * comes from a subtle `filter: brightness` ramp instead — short
+ * 80ms timing matches the original lift/slam timing so the
+ * interaction feel is preserved, just visually flat.
+ *
+ * `:hover` / `:active` rules are listed individually rather than
+ * as a comma list so the cascade order against the originals
+ * (`.brut-btn:hover { ... box-shadow }`) is explicit. */
+.brut-btn-flat,
+.brut-btn-accent.brut-btn-flat {
+  box-shadow: none;
+  transition: filter 80ms ease;
+}
+.brut-btn-flat:hover,
+.brut-btn-accent.brut-btn-flat:hover {
+  transform: none;
+  box-shadow: none;
+  filter: brightness(0.92);
+}
+.brut-btn-flat:active,
+.brut-btn-accent.brut-btn-flat:active {
+  transform: none;
+  box-shadow: none;
+  filter: brightness(0.85);
+}
+
 /* Big play CTA on the home page. Square on >=sm, full-width banner below. */
 .brut-play-cta {
   position: relative;
