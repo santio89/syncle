@@ -860,23 +860,35 @@ export class AudioEngine {
       filterType: "lowpass",
       filterHz: 800 + cutoffBumpHz + laneOffset,
       filterQ: 0.7,
-      // 0.6464 / 0.2414 = empty's 0.6403 / 0.2394 base * 1.01 — the
-      // hit family is lifted +1 % above empty so a successful connect
-      // reads a hair more present than a dry tap on a lane with
-      // nothing to hit. The per-judgment ladder (volMul = 1.015 /
-      // 1.030 / 1.050 for good / great / perfect) stacks on top of
-      // this hit-base.
+      // 0.75 / 0.35 — round-number hit base, opened wider above the
+      // shared empty base (0.65 / 0.25 in playEmptyPress) for a
+      // clearly punchier successful-connect feel:
+      //   noise: +15.4 % over empty (0.75 / 0.65)
+      //   body:  +40.0 % over empty (0.35 / 0.25)
+      // The asymmetric body lift is intentional — body sine carries
+      // the "thump" character, so a fatter low-end on hits reads as
+      // physical impact vs the flatter empty-tap timbre. Noise gets
+      // a smaller bump because it's already differentiated by the
+      // ~800 Hz + cutoffBumpHz filter cutoff (vs empty's flat
+      // 800 Hz) and the per-lane laneOffset, so it doesn't need a
+      // huge volume delta to read as a different texture.
       //
-      // Empty's full compound history vs the pre-tuning reference is
-      // documented at playEmptyPress; the hit family rides that base
-      // plus this +1 % uplift (so total hit-vs-pre-tuning compound =
-      // +14.21 %, +15.93 %, +17.64 %, +19.92 % at empty / good /
-      // great / perfect respectively, after the latest +1 % bump on
-      // both empty and hit layers).
-      noiseVol: 0.6464 * volMul,
+      // The per-judgment `volMul` ladder (1.000 / 1.015 / 1.030 /
+      // 1.050 for empty / good / great / perfect judgments) stacks
+      // on top of this hit base, so a perfect tap lands at 0.7875
+      // noise / 0.3675 body — combined peak ~0.56 vs the historic
+      // ~0.44, well under the song-bus 1.0 peak budget. See the
+      // peak-budget docs at the top of this file for headroom math.
+      //
+      // Total vs pre-tuning reference (0.566 / 0.212):
+      //   empty (volMul 1.000): +32.51 % / +65.09 % (noise / body)
+      //   good  (volMul 1.015): +34.50 % / +67.57 %
+      //   great (volMul 1.030): +36.49 % / +70.04 %
+      //   perfect (volMul 1.050): +39.13 % / +73.35 %
+      noiseVol: 0.75 * volMul,
       dur: 0.09,
       bodyHz: 140 + bodyBumpHz,
-      bodyVol: 0.2414 * volMul,
+      bodyVol: 0.35 * volMul,
       bodyDur: 0.08,
     });
   }
@@ -952,19 +964,27 @@ export class AudioEngine {
       filterType: "lowpass",
       filterHz: 800,
       filterQ: 0.7,
-      // 0.6403 / 0.2394 = 0.566 / 0.212 * 1.01 * 1.015 * 1.01 * 1.05
-      // * 1.02 * 1.01 * 1.01 — original +1 % global SFX bump, +1.5 %
-      // on the input-feedback + metronome layer, +1 % on the input-
-      // feedback layer, +5 % on the input-feedback layer, +2 % on
-      // the input-feedback layer, +1 % on the input-feedback layer,
-      // and the latest +1 % bump on both empty + hit layers. Kept
-      // in lockstep with the reference numbers in playInputFeedback
-      // so empty stays the floor of the volume ladder; hits ride
-      // this base +1 % then +1.5/3/5 % depending on judgment.
-      noiseVol: 0.6403,
+      // 0.65 / 0.25 — round-number rebase. After ~7 incremental
+      // tuning passes the empty-press base had drifted to the
+      // ungainly 0.6403 / 0.2394; we re-anchor here to clean
+      // values for easier future tweaking.
+      //
+      // Empty sits intentionally below the hit-family base (0.75 /
+      // 0.35 in playInputFeedback) — a missed tap reads softer +
+      // less impactful than a successful connect:
+      //   noise: empty is -13.3 % below hit (0.65 vs 0.75)
+      //   body:  empty is -28.6 % below hit (0.25 vs 0.35)
+      // The bigger body delta is what really sells the difference;
+      // empty's flat 140 Hz sine at 0.25 reads as a soft "padded
+      // click", while hit's 140 + bodyBumpHz at 0.35 lands as a
+      // tuned drum.
+      //
+      // Total vs the 0.566 / 0.212 pre-tuning reference:
+      //   noiseVol: +14.84 %   bodyVol: +17.92 %
+      noiseVol: 0.65,
       dur: 0.09,
       bodyHz: 140,
-      bodyVol: 0.2394,
+      bodyVol: 0.25,
       bodyDur: 0.08,
     });
   }
