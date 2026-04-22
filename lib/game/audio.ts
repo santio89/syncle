@@ -798,36 +798,42 @@ export class AudioEngine {
 
   /**
    * Shared input-feedback routine for head hits and hold-tail
-   * releases. Reuses the empty-press recipe with a tiny brightness
-   * lift AND a tiny volume lift per judgment — both capped small
-   * enough that the entire hit + release family still reads as
-   * "same drum as empty, just barely more present when you connect".
+   * releases. Reuses the empty-press recipe with a brightness
+   * lift, a body-pitch lift, and a volume lift per judgment — so
+   * the entire hit + release family still reads as the SAME
+   * drum as empty, just punchier and a hair crispier when you
+   * actually connect.
    *
    * Brightness ladder (filter cutoff vs empty's 800 Hz):
    *   good     → +0.6 %  (805 Hz)
    *   great    → +1.25 % (810 Hz)
    *   perfect  → +2 %    (816 Hz)
-   * Body frequency tracks the same envelope (140 → ~143 Hz at
-   * perfect) so the body and noise stay phase-coherent.
    *
-   * Volume ladder:
-   *   empty    →  base  (0.634 noise, 0.237 body — empty-press
-   *                      reference, see playEmptyPress)
-   *   hit-base →  base * 1.01  (0.640 noise, 0.239 body — the hit
-   *                      family is now lifted +1 % above empty so
-   *                      a successful connect reads a hair more
-   *                      present than a dry tap on a lane with
-   *                      nothing to hit)
+   * Body-pitch ladder (vs empty's 140 Hz sine):
+   *   good     → +1.4 % (142 Hz, ~25 cents)
+   *   great    → +2.9 % (144 Hz, ~49 cents)
+   *   perfect  → +4.3 % (146 Hz, ~73 cents — a hair under a
+   *                      semitone)
+   * Body and noise both climb together so the timbral family
+   * stays phase-coherent across judgments. The body-pitch climb
+   * is faintly-audible (vs the brightness climb which is fully
+   * subliminal) — perfect taps read as "tuned a touch higher"
+   * than goods, but at 80 ms duration the ear can't lock onto
+   * the absolute pitch, so the climb registers as crispness
+   * rather than melody.
+   *
+   * Volume ladder (stacks on the 0.70 noise / 0.30 body hit base):
+   *   empty    →  empty-press base  (0.65 noise, 0.25 body — see
+   *                                  playEmptyPress)
+   *   hit-base →  0.70 noise, 0.30 body (+7.7 % noise / +20 % body
+   *                                  over empty — body lift is
+   *                                  asymmetrically larger because
+   *                                  the body sine carries the
+   *                                  "thump" character that sells
+   *                                  physical impact)
    *   good     →  hit-base * 1.015  (+1.5 % on top of hit-base)
    *   great    →  hit-base * 1.030  (+3 % on top of hit-base)
    *   perfect  →  hit-base * 1.050  (+5 % on top of hit-base)
-   * That's roughly +0.22 dB / +0.34 dB / +0.51 dB hit-vs-empty at
-   * good/great/perfect — the SMALLEST step that's still audible
-   * against an actively-playing song. Below ~+1.5 % the per-
-   * judgment difference disappears under any music bed; above
-   * ~+5 % the family stops reading as "the same drum as empty"
-   * and starts reading as a louder hit drum on top of the empty
-   * drum, which the user explicitly wanted to avoid.
    *
    * Lane offset stays tiny (±6 Hz on the cutoff, well under 1 %)
    * so each lane gets a hair of texture variation without breaking
@@ -844,15 +850,15 @@ export class AudioEngine {
     let volMul: number;
     if (judgment === "perfect") {
       cutoffBumpHz = 16;
-      bodyBumpHz = 3;
+      bodyBumpHz = 6;
       volMul = 1.05;
     } else if (judgment === "great") {
       cutoffBumpHz = 10;
-      bodyBumpHz = 2;
+      bodyBumpHz = 4;
       volMul = 1.03;
     } else {
       cutoffBumpHz = 5;
-      bodyBumpHz = 1;
+      bodyBumpHz = 2;
       volMul = 1.015;
     }
     this.playDrum({
@@ -860,11 +866,11 @@ export class AudioEngine {
       filterType: "lowpass",
       filterHz: 800 + cutoffBumpHz + laneOffset,
       filterQ: 0.7,
-      // 0.75 / 0.35 — round-number hit base, opened wider above the
-      // shared empty base (0.65 / 0.25 in playEmptyPress) for a
-      // clearly punchier successful-connect feel:
-      //   noise: +15.4 % over empty (0.75 / 0.65)
-      //   body:  +40.0 % over empty (0.35 / 0.25)
+      // 0.70 / 0.30 — round-number hit base, opened above the shared
+      // empty base (0.65 / 0.25 in playEmptyPress) for a punchier
+      // successful-connect feel:
+      //   noise: +7.7 % over empty (0.70 / 0.65)
+      //   body:  +20.0 % over empty (0.30 / 0.25)
       // The asymmetric body lift is intentional — body sine carries
       // the "thump" character, so a fatter low-end on hits reads as
       // physical impact vs the flatter empty-tap timbre. Noise gets
@@ -875,20 +881,20 @@ export class AudioEngine {
       //
       // The per-judgment `volMul` ladder (1.000 / 1.015 / 1.030 /
       // 1.050 for empty / good / great / perfect judgments) stacks
-      // on top of this hit base, so a perfect tap lands at 0.7875
-      // noise / 0.3675 body — combined peak ~0.56 vs the historic
-      // ~0.44, well under the song-bus 1.0 peak budget. See the
-      // peak-budget docs at the top of this file for headroom math.
+      // on top of this hit base, so a perfect tap lands at 0.7350
+      // noise / 0.3150 body — combined peak ~0.50, well under the
+      // song-bus 1.0 peak budget. See the peak-budget docs at the
+      // top of this file for headroom math.
       //
       // Total vs pre-tuning reference (0.566 / 0.212):
-      //   empty (volMul 1.000): +32.51 % / +65.09 % (noise / body)
-      //   good  (volMul 1.015): +34.50 % / +67.57 %
-      //   great (volMul 1.030): +36.49 % / +70.04 %
-      //   perfect (volMul 1.050): +39.13 % / +73.35 %
-      noiseVol: 0.75 * volMul,
+      //   empty (volMul 1.000): +23.67 % / +41.51 % (noise / body)
+      //   good  (volMul 1.015): +25.53 % / +43.63 %
+      //   great (volMul 1.030): +27.38 % / +45.75 %
+      //   perfect (volMul 1.050): +29.86 % / +48.58 %
+      noiseVol: 0.70 * volMul,
       dur: 0.09,
       bodyHz: 140 + bodyBumpHz,
-      bodyVol: 0.35 * volMul,
+      bodyVol: 0.30 * volMul,
       bodyDur: 0.08,
     });
   }
@@ -969,14 +975,14 @@ export class AudioEngine {
       // ungainly 0.6403 / 0.2394; we re-anchor here to clean
       // values for easier future tweaking.
       //
-      // Empty sits intentionally below the hit-family base (0.75 /
-      // 0.35 in playInputFeedback) — a missed tap reads softer +
+      // Empty sits intentionally below the hit-family base (0.70 /
+      // 0.30 in playInputFeedback) — a missed tap reads softer +
       // less impactful than a successful connect:
-      //   noise: empty is -13.3 % below hit (0.65 vs 0.75)
-      //   body:  empty is -28.6 % below hit (0.25 vs 0.35)
+      //   noise: empty is -7.1 % below hit (0.65 vs 0.70)
+      //   body:  empty is -16.7 % below hit (0.25 vs 0.30)
       // The bigger body delta is what really sells the difference;
       // empty's flat 140 Hz sine at 0.25 reads as a soft "padded
-      // click", while hit's 140 + bodyBumpHz at 0.35 lands as a
+      // click", while hit's 140 + bodyBumpHz at 0.30 lands as a
       // tuned drum.
       //
       // Total vs the 0.566 / 0.212 pre-tuning reference:
