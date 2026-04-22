@@ -21,11 +21,20 @@ const FPS_LOCK_KEY = "syncle.fpsLock";
 const SFX_KEY = "syncle.sfx";
 const DEFAULT_SFX = true;
 const METRONOME_KEY = "syncle.metronome";
-const DEFAULT_METRONOME = true;
+// Off by default — most players treat the metronome as a learning aid
+// for unfamiliar tracks rather than a permanent gameplay layer, and a
+// surprise click on every beat the first time the app loads reads as a
+// bug instead of a feature. Players who want it can flip it on from
+// the StartCard / HUD / Lobby tile (key: M); the choice persists in
+// `METRONOME_KEY` across sessions.
+const DEFAULT_METRONOME = false;
 const QUALITY_KEY = "syncle.quality";
-const DEFAULT_QUALITY: RenderQuality = "high";
-const GLYPHS_KEY = "syncle.judgmentGlyphs";
-const DEFAULT_GLYPHS = false;
+// Performance is the default — tuned to ship the steadiest frame rate
+// out of the box across the widest hardware spread (integrated GPUs,
+// laptops on battery, older browsers). Players who want the full VFX
+// reel can flip to HIGH from the StartCard / HUD / Lobby tile; the
+// choice persists across sessions in `QUALITY_KEY`.
+const DEFAULT_QUALITY: RenderQuality = "performance";
 
 /* -----------------------------------------------------------------------
  * Storage-health signal — fires the first time a settings / resume /
@@ -177,35 +186,6 @@ export function saveRenderQuality(v: RenderQuality): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(QUALITY_KEY, v);
-  } catch {
-    reportStorageFailure();
-  }
-}
-
-/**
- * Color-blind / high-contrast helper for judgment popups. When `true`,
- * the canvas prepends a small symbolic glyph (★ ◆ ▲ ✕) to the
- * PERFECT / GREAT / GOOD / MISS label so judgments differentiate via
- * SHAPE in addition to color — useful for color-vision differences
- * where the brand red/green/blue/yellow palette can collapse onto
- * the same hue. Off by default so the existing aesthetic stays the
- * same for everyone who doesn't need it.
- */
-export function loadJudgmentGlyphs(): boolean {
-  if (typeof window === "undefined") return DEFAULT_GLYPHS;
-  try {
-    const raw = window.localStorage.getItem(GLYPHS_KEY);
-    if (raw == null) return DEFAULT_GLYPHS;
-    return raw === "1" || raw === "true" || raw === "on";
-  } catch {
-    return DEFAULT_GLYPHS;
-  }
-}
-
-export function saveJudgmentGlyphs(on: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(GLYPHS_KEY, on ? "1" : "0");
   } catch {
     reportStorageFailure();
   }

@@ -42,8 +42,6 @@ import {
   loadRenderQuality,
   saveRenderQuality,
   nextRenderQuality,
-  loadJudgmentGlyphs,
-  saveJudgmentGlyphs,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
@@ -246,11 +244,6 @@ export default function Game() {
    *  across sessions; mirrored into `renderOptsRef` so toggling takes
    *  effect on the very next frame. */
   const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
-  /** When true, judgment popups (`PERFECT` / `GREAT` / `GOOD` / `MISS`)
-   *  prepend a small ASCII glyph (`* + = x`) so judgments are still
-   *  distinguishable for color-blind players who can't lean on the
-   *  blue/green/yellow/red color cue. Persisted across sessions. */
-  const [judgmentGlyphs, setJudgmentGlyphs] = useState<boolean>(loadJudgmentGlyphs);
   /** Persistent banner when localStorage / sessionStorage refuses a
    *  write (typical causes: Safari Private Browsing quota, exhausted
    *  per-origin quota, an extension that blocks storage). Surfaces a
@@ -354,19 +347,15 @@ export default function Game() {
     renderStateRef.current.cache = undefined;
   }, [theme]);
 
-  // Mirror render quality + judgment glyph settings into the rAF-loop
-  // options ref. Persist on change so the choice survives reloads. We
-  // also save here (not in the toggle handler) so the *initial value*
-  // hydrated from localStorage doesn't count as a write — `loadX()` is
+  // Mirror render quality into the rAF-loop options ref. Persist on
+  // change so the choice survives reloads. We also save here (not in
+  // the toggle handler) so the *initial value* hydrated from
+  // localStorage doesn't count as a write — `loadRenderQuality()` is
   // already a no-op when the key is missing.
   useEffect(() => {
     renderOptsRef.current.quality = quality;
     saveRenderQuality(quality);
   }, [quality]);
-  useEffect(() => {
-    renderOptsRef.current.judgmentGlyphs = judgmentGlyphs;
-    saveJudgmentGlyphs(judgmentGlyphs);
-  }, [judgmentGlyphs]);
 
   // Force-load the JetBrains Mono ExtraBold weight used by the lane-gate
   // letters drawn on the canvas. next/font only downloads weights that are
@@ -1430,8 +1419,6 @@ export default function Game() {
             onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
             quality={quality}
             onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
-            judgmentGlyphs={judgmentGlyphs}
-            onToggleGlyphs={() => setJudgmentGlyphs((g) => !g)}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
             songDuration={displayMeta?.duration ?? null}
@@ -1476,8 +1463,6 @@ export default function Game() {
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               quality={quality}
               onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
-              judgmentGlyphs={judgmentGlyphs}
-              onToggleGlyphs={() => setJudgmentGlyphs((g) => !g)}
               songSource={songSource}
               chartMode={chartMode}
               onChangeMode={setChartMode}
@@ -1515,10 +1500,36 @@ export default function Game() {
                 {countdownStage.n}
               </p>
             )}
-            <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
-              {touchOnly
-                ? "tap the four lanes"
-                : "D F J K · or ← ↓ ↑ →"}
+            {/* Keyboard hint footer. The four arrow keys are rendered
+                with the brutalist <ArrowIcon> SVG (same family used for
+                the osu! external-link chip, lobby return arrows, etc.)
+                instead of the unicode `←↓↑→` glyphs — those render as
+                thin, unweighted strokes in most monospace fonts and
+                clash visually with the chunky D F J K letters next to
+                them. The icon inherits `currentColor` so the
+                bone-50/60 paragraph color carries through, and `1em`
+                sizing keeps the icons in lockstep with the surrounding
+                text. */}
+            <p className="mt-2 inline-flex items-center justify-center gap-1.5 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
+              {touchOnly ? (
+                "tap the four lanes"
+              ) : (
+                <>
+                  <span>D F J K</span>
+                  <span aria-hidden>·</span>
+                  <span>or</span>
+                  <span aria-hidden>·</span>
+                  <span
+                    className="inline-flex items-center gap-1"
+                    aria-label="left, down, up, right arrow keys"
+                  >
+                    <ArrowIcon direction="left" strokeWidth={2.75} />
+                    <ArrowIcon direction="down" strokeWidth={2.75} />
+                    <ArrowIcon direction="up" strokeWidth={2.75} />
+                    <ArrowIcon direction="right" strokeWidth={2.75} />
+                  </span>
+                </>
+              )}
             </p>
           </div>
         </Overlay>
@@ -1733,6 +1744,66 @@ function StorageBlockedBanner({ onDismiss }: { onDismiss: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Compact relative-time formatter used by the per-track stats panel
+ * ("best set 2d ago", "last played 3h ago"). Mirrors the style used
+ * elsewhere in the app (see `formatRelative` in `ChatPanel.tsx`) so
+ * timestamps everywhere read with the same vocabulary. Returns "—"
+ * for missing input so the caller can blindly pass `best.lastPlayedAt`
+ * without an extra null guard at the call site.
+ */
+function formatStatsAge(at: number | undefined): string {
+  if (!at) return "—";
+  const diff = Date.now() - at;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(at).toLocaleDateString();
+}
+
+/**
+ * Six-cell stats strip for the StartCard's "Stats on this track"
+ * panel. Two rows of three: top row is the score record (score /
+ * accuracy / max combo), bottom row is the play-history aggregate
+ * (when the best was set, how many runs total, when you last played).
+ *
+ * Each cell is its own column so the grid stays balanced regardless
+ * of label length, and each value uses `tabular-nums` so swapping
+ * between digits doesn't reflow neighbours mid-frame.
+ */
+function TrackStatsGrid({ best }: { best: RunBest }) {
+  const runs = best.runs ?? 1;
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <StatCell label="best score" value={best.score.toLocaleString()} />
+      <StatCell label="accuracy" value={`${best.accuracy.toFixed(1)}%`} />
+      <StatCell label="max combo" value={`×${best.maxCombo}`} />
+      <StatCell label="best set" value={formatStatsAge(best.at)} />
+      <StatCell label="runs" value={runs.toLocaleString()} />
+      <StatCell label="last played" value={formatStatsAge(best.lastPlayedAt ?? best.at)} />
+    </div>
+  );
+}
+
+function StatCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      {/* Label uses the accent tint at low alpha to match the panel's
+          themed border + header (StartCard's "Stats on this track"
+          uses `border-accent/40` + `text-accent`). The value stays in
+          bone-50 so the actual number reads at full contrast against
+          the tinted background. */}
+      <span className="font-mono text-[8.5px] uppercase tracking-widest text-accent/55">
+        {label}
+      </span>
+      <span className="font-mono text-[11px] tabular-nums text-bone-50/90">
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function StartCard({
   meta,
   onStart,
@@ -1746,8 +1817,6 @@ function StartCard({
   onCycleFpsLock,
   quality,
   onCycleQuality,
-  judgmentGlyphs,
-  onToggleGlyphs,
   songSource,
   chartMode,
   onChangeMode,
@@ -1780,9 +1849,6 @@ function StartCard({
    *  can opt into PERFORMANCE mode before the run even starts. */
   quality: RenderQuality;
   onCycleQuality: () => void;
-  /** Color-blind helper toggle — same setting as the HUD. */
-  judgmentGlyphs: boolean;
-  onToggleGlyphs: () => void;
   songSource: "osu" | "fallback" | null;
   chartMode: ChartMode;
   onChangeMode: (m: ChartMode) => void;
@@ -1999,41 +2065,30 @@ function StartCard({
           everything stacks in a single column so each tile gets the
           full width and the captions / chips stay readable on a
           narrow screen. From `sm` up we switch to the 2x2 layout —
-          top row: Best score on the left, FPS Lock cycler on the
-          right; bottom row: Metronome toggle on the left, Input
-          Feedback toggle on the right. All four tiles share the same
-          border / padding / typography treatment so they read as one
-          cohesive panel, and the three settings tiles all mirror the
-          in-game HUD's state — toggling here is the same as toggling
-          in the HUD chip during play. */}
+          top row: FPS Lock cycler on the left, Quality preset on the
+          right (the two render-budget knobs paired so the perf
+          controls sit at the top of the panel); bottom row:
+          Metronome toggle on the left, Input Feedback toggle on the
+          right (the two audible-cue toggles paired). All four tiles
+          share the same border / padding / typography treatment so
+          they read as one cohesive panel, and each settings tile
+          mirrors the in-game HUD's state — toggling here is the
+          same as toggling in the HUD chip during play. */}
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {/* Same 2-line layout as the FPS / Metronome / Feedback
-            tiles: caption row on top, single small-mono detail row on
-            the bottom. The big numeric score that used to live in the
-            middle was making this tile a third taller than its
-            neighbors, breaking the 2x2 grid's vertical rhythm. We now
-            just show "no runs yet" or "score · acc · ×combo" in the
-            same caption font as the other tiles' hints.
+        {/* Settings tiles. All four (FPS lock, Metronome, Feedback,
+            Quality) share the same border / padding / typography
+            treatment so they read as one cohesive 2x2 panel, and
+            each setting tile mirrors the in-game HUD's state —
+            toggling here is the same as toggling in the HUD chip
+            during play. The full-width "Stats on this track" panel
+            below the toggles carries the per-(song, mode) history. */}
 
-            The top row is wrapped in a `min-h-[1.05rem]` flex so it
-            matches the height of the chip / checkbox rows in the
-            sibling tiles — without that the label is ~4px shorter,
-            which (combined with `justify-between` and the shared
-            grid-row height) leaks an extra ~4px of empty space
-            between the two text lines and breaks the vertical rhythm
-            you'd otherwise expect across all four tiles. */}
-        <div className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
-          <div className="flex min-h-[1.05rem] items-center">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Best on this track
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            {best
-              ? `${best.score.toLocaleString()} · ${best.accuracy.toFixed(1)}% · ×${best.maxCombo} combo`
-              : "no runs yet"}
-          </span>
-        </div>
+        {/* Tile order is read top-to-bottom, left-to-right by the 2-up
+            grid: FPS lock / Quality on the top row (the two
+            render-budget controls, paired so the perf knobs sit
+            together at the top of the panel), Metronome / Feedback
+            on the bottom row (the two audio-output toggles, also
+            paired). */}
         {/* FPS lock tile — the entire tile is the click target (acts
             like the <label> tiles next to it), so clicking anywhere on
             the card — including the "FPS LOCK" caption — cycles
@@ -2049,10 +2104,10 @@ function StartCard({
           className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
           data-tooltip={
             fpsLock == null
-              ? "FPS lock off — click to cap at 30 FPS"
-              : `Render frame-rate capped at ${fpsLock} FPS — click to ${
-                  fpsLock === 30 ? "cap at 60" : "uncap"
-                }`
+              ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+              : fpsLock === 30
+                ? "Frame-rate capped at 30 FPS — saves battery on laptops"
+                : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
           }
           aria-label="Cycle render FPS lock"
         >
@@ -2073,38 +2128,6 @@ function StartCard({
             click to cycle off / 30 / 60
           </span>
         </button>
-        <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Metronome
-            </span>
-            <input
-              type="checkbox"
-              checked={metronome}
-              onChange={onToggleMetronome}
-              className="h-[1.05rem] w-[1.05rem] accent-accent"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press M to toggle in-game
-          </span>
-        </label>
-        <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Feedback
-            </span>
-            <input
-              type="checkbox"
-              checked={sfx}
-              onChange={onToggleSfx}
-              className="h-[1.05rem] w-[1.05rem] accent-accent"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press N to toggle in-game
-          </span>
-        </label>
         {/* Quality preset tile — same affordance vocabulary as the
             FPS lock tile (whole tile click cycles, right chip flips
             to accent when not on the default value). The default
@@ -2117,8 +2140,8 @@ function StartCard({
           className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
           data-tooltip={
             quality === "high"
-              ? "Quality: HIGH — full visual effects (shadow glows, particles, shockwaves, milestone vignette). Click to switch to PERFORMANCE if you see frame-drops."
-              : "Quality: PERFORMANCE — visual effects disabled to keep frame rate steady. Click to switch back to HIGH."
+              ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
+              : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
           }
           aria-label="Cycle render quality preset"
         >
@@ -2139,47 +2162,108 @@ function StartCard({
             HIGH = full vfx · PERF = no vfx
           </span>
         </button>
-        {/* Color-blind glyph tile — opt-in. Same checkbox aesthetic as
-            Metronome / Feedback above. Caption explains the cue
-            without demanding the player click into a separate menu. */}
-        <label className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer">
+        <label
+          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer"
+          data-tooltip="Audible click track on every beat (key: M)"
+        >
           <div className="flex items-center justify-between gap-3">
             <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Glyphs
+              Metronome
             </span>
             <input
               type="checkbox"
-              checked={judgmentGlyphs}
-              onChange={onToggleGlyphs}
+              checked={metronome}
+              onChange={onToggleMetronome}
               className="h-[1.05rem] w-[1.05rem] accent-accent"
-              aria-label="Prepend glyph (color-blind helper)"
             />
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
-            adds * + = x to judgment popups
+            press M to toggle in-game
           </span>
         </label>
+        <label
+          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer"
+          data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Feedback
+            </span>
+            <input
+              type="checkbox"
+              checked={sfx}
+              onChange={onToggleSfx}
+              className="h-[1.05rem] w-[1.05rem] accent-accent"
+            />
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            press N to toggle in-game
+          </span>
+        </label>
+
+        {/* Music volume — full-width slider tucked into the 2x2 toggle
+            grid as `sm:col-span-2` so it sits IMMEDIATELY under the
+            settings tiles (the volume slider is itself a setting,
+            and players reach for it in the same "tweak before I
+            start" pass as Quality / FPS lock / Metronome). */}
+        <div
+          className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 sm:col-span-2"
+          data-tooltip="Song playback volume — separate from feedback SFX"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Music volume
+            </span>
+            <span className="font-mono text-[10.5px] text-bone-50/40 tabular-nums">
+              {Math.round(volume * 100)}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => onVolume(parseFloat(e.target.value))}
+            className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
+            aria-label="Music volume"
+          />
+        </div>
       </div>
 
-      <div className="mt-3 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-            Music volume
+      {/* Stats on this track — full-width panel under the settings
+          grid. Replaces the older one-tile "Best on this track"
+          summary. Shows the per-(song, mode) high score broken down
+          into score / accuracy / max-combo, plus the three "history"
+          stats — when the best was set, how many runs you've played
+          on this chart, and when you last played it. Falls back to a
+          single "no runs yet" line when the track has never been
+          finished on this difficulty so the panel doesn't look
+          empty. */}
+      {/* Themed with the brand accent (border + tinted background +
+          accent header) so the achievement panel reads as a
+          distinct, "your record" surface rather than blending into
+          the grey settings tiles above. The accent token is CSS-var
+          driven, so light/dark theme swaps adjust the hue
+          automatically (see tailwind.config.ts). */}
+      <div className="mt-3 flex flex-col gap-2 border-2 border-accent/40 bg-accent/5 px-3 py-2">
+        <div className="flex min-h-[1.05rem] items-center justify-between gap-3">
+          <span className="font-mono text-[10.5px] uppercase tracking-widest text-accent">
+            Stats on this track
           </span>
-          <span className="font-mono text-[10.5px] text-bone-50/40 tabular-nums">
-            {Math.round(volume * 100)}%
-          </span>
+          {best && (
+            <span className="font-mono text-[9.5px] uppercase tracking-widest text-accent/60">
+              {chartMode}
+            </span>
+          )}
         </div>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={volume}
-          onChange={(e) => onVolume(parseFloat(e.target.value))}
-          className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
-          aria-label="Music volume"
-        />
+        {best ? (
+          <TrackStatsGrid best={best} />
+        ) : (
+          <span className="font-mono text-[9.5px] text-bone-50/50">
+            no runs yet — finish a run to start tracking
+          </span>
+        )}
       </div>
 
       {error && (
@@ -2433,8 +2517,6 @@ function HUD({
   onCycleFpsLock,
   quality,
   onCycleQuality,
-  judgmentGlyphs,
-  onToggleGlyphs,
   sfx,
   onToggleSfx,
   songTitle,
@@ -2459,10 +2541,6 @@ function HUD({
    *  match; the renderer reads it on the very next frame. */
   quality: RenderQuality;
   onCycleQuality: () => void;
-  /** Color-blind helper: prepend a glyph (`* + = x`) to judgment
-   *  popups so judgments are distinguishable without color. */
-  judgmentGlyphs: boolean;
-  onToggleGlyphs: () => void;
   /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
@@ -2715,7 +2793,7 @@ function HUD({
             because the parent HUD wrapper is `pointer-events-none`. */}
         <label
           className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Toggle metronome (M)"
+          data-tooltip="Audible click track on every beat (key: M)"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
             Metronome
@@ -2731,7 +2809,7 @@ function HUD({
         </label>
         <label
           className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Toggle feedback (N)"
+          data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
             Feedback
@@ -2760,10 +2838,10 @@ function HUD({
           className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
           data-tooltip={
             fpsLock == null
-              ? "FPS lock off — click to cap at 30 FPS"
-              : `Render frame-rate capped at ${fpsLock} FPS — click to ${
-                  fpsLock === 30 ? "cap at 60" : "uncap"
-                }`
+              ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+              : fpsLock === 30
+                ? "Frame-rate capped at 30 FPS — saves battery on laptops"
+                : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
           }
           aria-label="Cycle render FPS lock"
         >
@@ -2797,8 +2875,8 @@ function HUD({
           className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
           data-tooltip={
             quality === "high"
-              ? "Quality: HIGH — full VFX. Click to switch to PERFORMANCE (drops shadow glows + celebration VFX)."
-              : "Quality: PERFORMANCE — VFX disabled for steady frame rate. Click to switch back to HIGH."
+              ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
+              : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
           }
           aria-label="Cycle render quality preset"
         >
@@ -2817,27 +2895,6 @@ function HUD({
             {quality === "high" ? "HIGH" : "PERF"}
           </span>
         </button>
-        {/* Color-blind glyphs tile — accessibility opt-in. Off by
-            default (the colored popups already read fine for most
-            players); on, judgment popups gain a small ASCII glyph
-            prefix (`* + = x`) so judgments are still
-            distinguishable without color. Same checkbox aesthetic
-            as Metronome / Feedback above. */}
-        <label
-          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 sm:flex"
-          data-tooltip="Add a glyph (* + = x) before each judgment popup so judgments are distinguishable without color."
-        >
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            Glyphs
-          </span>
-          <input
-            type="checkbox"
-            checked={judgmentGlyphs}
-            onChange={onToggleGlyphs}
-            className="h-[14px] w-[14px] cursor-pointer accent-accent"
-            aria-label="Toggle judgment glyphs (color-blind helper)"
-          />
-        </label>
         {/* Volume tile — same border / padding / typography as the
             toggle tiles so it visually belongs to the same row of
             settings. The "VOL" caption + slider + percentage live
@@ -2845,7 +2902,10 @@ function HUD({
             <input type="range"> ships with a UA-imposed intrinsic
             min-width (~120 px) that would otherwise overflow the
             tile on the narrow mobile card. */}
-        <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2">
+        <div
+          className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
+          data-tooltip="Song playback volume — separate from feedback SFX"
+        >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             vol
           </span>

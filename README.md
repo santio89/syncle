@@ -79,8 +79,8 @@ Architecture notes:
   flaky Wi-Fi doesn't kick them out of an in-progress match. An
   empty room itself lingers for 10 min before the server reaps it.
 - **Settings parity**: solo and multi share the same `RenderQuality`,
-  metronome, SFX, FPS-lock, and judgment-glyph toggles
-  (`lib/game/settings.ts`), persisted to `localStorage` per browser.
+  metronome, SFX, and FPS-lock toggles (`lib/game/settings.ts`),
+  persisted to `localStorage` per browser.
 
 The full Socket.IO event vocabulary lives in `lib/multi/protocol.ts`
 (shared types so client + server can't drift). The server's room

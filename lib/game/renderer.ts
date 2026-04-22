@@ -60,14 +60,6 @@ export interface RenderOptions {
    * takes effect on the next frame.
    */
   quality: RenderQualityMode;
-  /**
-   * If true, judgment popups prepend a small symbolic glyph (★ ◆ ▲ ✕)
-   * so PERFECT / GREAT / GOOD / MISS are differentiated by SHAPE in
-   * addition to color — useful for color-vision differences. Off by
-   * default; the existing color-only popup is preserved for everyone
-   * who doesn't need the redundancy.
-   */
-  judgmentGlyphs: boolean;
 }
 
 /**
@@ -572,8 +564,12 @@ export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
   bpm: 161,
   offset: 0.18,
   theme: "dark",
-  quality: "high",
-  judgmentGlyphs: false,
+  // Default to PERFORMANCE so the very first frame (before the React
+  // effect mirrors the persisted setting in) doesn't briefly render
+  // the heavy VFX path on machines that can't afford it. Players who
+  // chose HIGH still see HIGH from frame 1 because the load happens
+  // synchronously in the React state initialiser.
+  quality: "performance",
 };
 
 /**
@@ -853,7 +849,7 @@ export function drawFrame(
   }
 
   drawCanvasCombo(ctx, rs, cache, palette, perf);
-  drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache, opts.judgmentGlyphs, perf);
+  drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache, perf);
   drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette, cache, perf);
   if (!perf) {
     drawMilestoneVignette(ctx, rs, W, H, cache);
@@ -1515,8 +1511,16 @@ function drawHoldTrail(
     ctx.fillStyle = palette.noteInner;
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 12;
+    // Tail-cap glow: visible flourish but not gameplay-critical (the
+    // outlined rect already reads as a release marker). Performance
+    // mode skips the shadow pass entirely — on a long sustain this
+    // would otherwise repaint ~60 blurred rectangles/sec, which is
+    // the single most expensive thing a hold trail does on
+    // integrated GPUs.
+    if (!perf) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 12;
+    }
     const capH = Math.max(4, wTail * 0.35);
     ctx.beginPath();
     ctx.rect(xTail - wTail / 2, yTail - capH / 2, wTail, capH);
@@ -1654,7 +1658,13 @@ function drawLaneGate(
     y + ARROW_DY,
     ARROW_SIZE,
     laneRgba(lane, arrowAlpha),
-    shine,
+    // Pass shine=0 in perf mode so drawArrow takes the no-shadow
+    // fast path. Without this gate the chevron would re-arm a
+    // 8 * shine blur on every key-press / sustain frame even though
+    // the rest of the gate already dropped its glows. The arrow
+    // strokes themselves are unaffected (stroke alpha is derived
+    // from `arrowAlpha` above, not `shine`).
+    perf ? 0 : shine,
   );
   ctx.restore();
 }
@@ -1748,16 +1758,6 @@ const JUDGE_LABELS_HOLD: Record<JudgmentEvent["judgment"], string> = {
   miss:    "MISS·HOLD",
 };
 
-// Color-blind glyphs: prepended to the label when `judgmentGlyphs` is on
-// so judgments are distinguishable by shape, not just hue. ASCII-only so
-// any monospace fallback renders identically.
-const JUDGE_GLYPH: Record<JudgmentEvent["judgment"], string> = {
-  perfect: "* ",
-  great:   "+ ",
-  good:    "= ",
-  miss:    "x ",
-};
-
 // 32-bucket font cache: popup font size animates over a ~0.6s window so
 // we get away with 32 buckets between 15.5px ("just spawned, scaled to
 // 0.86") and 22px ("full punchy bump") without any visible step. One
@@ -1787,7 +1787,6 @@ function drawJudgmentPopups(
   songTime: number,
   y: number,
   cache: RenderCache,
-  glyphs: boolean,
   perf: boolean,
 ) {
   ctx.save();
@@ -1816,10 +1815,7 @@ function drawJudgmentPopups(
       : 1;
     ctx.font = popupFont(18 * scale);
     const tableLabels = ev.tail ? JUDGE_LABELS_HOLD : JUDGE_LABELS;
-    const baseLabel = tableLabels[ev.judgment];
-    // Glyph prefix uses small static strings — pre-built so we don't
-    // template-literal them per-popup.
-    const label = glyphs ? JUDGE_GLYPH[ev.judgment] + baseLabel : baseLabel;
+    const label = tableLabels[ev.judgment];
     const palette = JUDGE_PALETTE[ev.judgment];
     const x = cache.laneX[ev.lane] ?? cache.cx;
     ctx.fillStyle = rgbaFromLut(palette.rgba, alpha);
@@ -1842,6 +1838,40 @@ function drawJudgmentPopups(
  * Sized to swell on milestones, fade slightly on the off-beat. Cheap: a
  * single fillText call per frame.
  */
+// Per-integer-pixel font caches for the canvas combo. `size` ranges
+// roughly 56..98 (combo) and 13..22 (label sub-text) so we round to int
+// pixels and key into a tiny LUT instead of building a fresh
+// `"800 NNpx ..."` string every frame the combo is on screen. Display
+// + mono have separate caches because they reference different CSS
+// variables.
+const COMBO_FONT_DISPLAY: Record<number, string> = {};
+const COMBO_FONT_MONO: Record<number, string> = {};
+function comboFontDisplay(px: number): string {
+  const k = px | 0;
+  let s = COMBO_FONT_DISPLAY[k];
+  if (!s) {
+    s = `800 ${k}px var(--font-display), system-ui, sans-serif`;
+    COMBO_FONT_DISPLAY[k] = s;
+  }
+  return s;
+}
+function comboFontMono(px: number): string {
+  const k = px | 0;
+  let s = COMBO_FONT_MONO[k];
+  if (!s) {
+    s = `800 ${k}px var(--font-mono), ui-monospace, monospace`;
+    COMBO_FONT_MONO[k] = s;
+  }
+  return s;
+}
+
+// Cache the most recently rendered combo digit string so we don't
+// allocate `String(combo)` every frame the combo number is steady.
+// (A combo can hold for tens of seconds during a perfect run; without
+// this we'd burn ~60 small string allocations / sec for nothing.)
+let comboDigitsCache = -1;
+let comboDigitsStr = "";
+
 function drawCanvasCombo(
   ctx: CanvasRenderingContext2D,
   rs: RenderState,
@@ -1858,18 +1888,22 @@ function drawCanvasCombo(
   const size = 56 + tier * 28 + ms * 14;
   const alpha = clamp(0.28 + tier * 0.32 + ms * 0.45, 0, 0.95);
   const y = cache.judgeY - 130;
+  if (rs.combo !== comboDigitsCache) {
+    comboDigitsCache = rs.combo;
+    comboDigitsStr = String(rs.combo);
+  }
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
-  ctx.font = `800 ${size.toFixed(0)}px var(--font-display), system-ui, sans-serif`;
+  ctx.font = comboFontDisplay(size);
   ctx.fillStyle = rgbaFromLut(cache.accentRgba, alpha);
   if (!perf) {
     ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.6);
     ctx.shadowBlur = 18 + ms * 28;
   }
-  ctx.fillText(`${rs.combo}`, cache.cx, y);
+  ctx.fillText(comboDigitsStr, cache.cx, y);
   ctx.shadowBlur = 0;
-  ctx.font = `800 ${(size * 0.22).toFixed(0)}px var(--font-mono), ui-monospace, monospace`;
+  ctx.font = comboFontMono(size * 0.22);
   ctx.fillStyle = rgbaFromLut(cache.accentRgba, clamp(alpha * 0.85, 0, 1));
   ctx.fillText("COMBO", cache.cx, y + 14);
   ctx.restore();

@@ -64,8 +64,6 @@ import {
   loadRenderQuality,
   saveRenderQuality,
   nextRenderQuality,
-  loadJudgmentGlyphs,
-  saveJudgmentGlyphs,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
@@ -240,8 +238,17 @@ function CanvasPane({
    * notes), keeping the 50-player room's ingress tiny on idle stretches.
    * We compare a small (score, combo, miss) tuple — those are the only
    * fields the sidebar visibly cares about between ticks.
+   *
+   * Stored as three plain numbers (not a packed string) to avoid the
+   * `${...}|${...}|${...}` template-literal allocation every score
+   * tick (~5 Hz). On a typical 3-minute song that's ~900 strings the
+   * GC no longer has to chase, and the three-number compare is a
+   * straight-up integer triple-equality — faster than the string cmp
+   * the old version did.
    */
-  const lastScoreSentSigRef = useRef<string>("");
+  const lastScoreSentScoreRef = useRef<number>(-1);
+  const lastScoreSentComboRef = useRef<number>(-1);
+  const lastScoreSentMissRef = useRef<number>(-1);
   const finishedRef = useRef<boolean>(false);
   /** Combo on the previous frame — see Game.tsx for the rationale. */
   const prevComboRef = useRef<number>(0);
@@ -335,12 +342,11 @@ function CanvasPane({
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
-  // Render quality preset + judgment glyphs — same persistence keys as
-  // single-player so the player's choice transfers between modes.
-  // Both are mirrored into `renderOptsRef` below so toggling takes
-  // effect on the very next rAF tick (no remount, no stutter).
+  // Render quality preset — same persistence key as single-player so the
+  // player's choice transfers between modes. Mirrored into
+  // `renderOptsRef` below so toggling takes effect on the very next
+  // rAF tick (no remount, no stutter).
   const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
-  const [judgmentGlyphs, setJudgmentGlyphs] = useState<boolean>(loadJudgmentGlyphs);
   // Sticky banner shown the first time storage refuses a write — same
   // pattern as solo. The user can dismiss with one click.
   const [storageBlocked, setStorageBlocked] = useState<boolean>(false);
@@ -353,17 +359,13 @@ function CanvasPane({
   // still matters for the reconnect case (where a player drops in
   // mid-game and we re-decode after the fact).
 
-  // Mirror quality + glyphs into the renderer-options ref + persist on
-  // change. Same pattern as solo (Game.tsx) so a toggle picks up on
-  // the very next frame.
+  // Mirror quality into the renderer-options ref + persist on change.
+  // Same pattern as solo (Game.tsx) so a toggle picks up on the very
+  // next frame.
   useEffect(() => {
     renderOptsRef.current.quality = quality;
     saveRenderQuality(quality);
   }, [quality]);
-  useEffect(() => {
-    renderOptsRef.current.judgmentGlyphs = judgmentGlyphs;
-    saveJudgmentGlyphs(judgmentGlyphs);
-  }, [judgmentGlyphs]);
 
   const { theme } = useTheme();
   useEffect(() => {
@@ -471,7 +473,9 @@ function CanvasPane({
     lastScheduledBeatRef.current = -1;
     finishedRef.current = false;
     prevComboRef.current = 0;
-    lastScoreSentSigRef.current = "";
+    lastScoreSentScoreRef.current = -1;
+    lastScoreSentComboRef.current = -1;
+    lastScoreSentMissRef.current = -1;
     const rs = renderStateRef.current;
     rs.particles.length = 0;
     rs.shockwaves.length = 0;
@@ -961,9 +965,17 @@ function CanvasPane({
         // so an idle stretch doesn't burn bandwidth in a 50-player room.
         if (now - lastScoreSentRef.current >= SCORE_TICK_MS) {
           lastScoreSentRef.current = now;
-          const sig = `${state.stats.score}|${state.stats.combo}|${state.stats.hits.miss}`;
-          if (sig !== lastScoreSentSigRef.current) {
-            lastScoreSentSigRef.current = sig;
+          const sScore = state.stats.score;
+          const sCombo = state.stats.combo;
+          const sMiss = state.stats.hits.miss;
+          if (
+            sScore !== lastScoreSentScoreRef.current ||
+            sCombo !== lastScoreSentComboRef.current ||
+            sMiss !== lastScoreSentMissRef.current
+          ) {
+            lastScoreSentScoreRef.current = sScore;
+            lastScoreSentComboRef.current = sCombo;
+            lastScoreSentMissRef.current = sMiss;
             actions.sendScore(snapshotLive(state.stats, false));
           }
         }
@@ -1270,8 +1282,6 @@ function CanvasPane({
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               quality={quality}
               onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
-              judgmentGlyphs={judgmentGlyphs}
-              onToggleGlyphs={() => setJudgmentGlyphs((g) => !g)}
               songTitle={loaded?.meta.title ?? snapshot.selectedSong?.title ?? null}
               songArtist={loaded?.meta.artist ?? snapshot.selectedSong?.artist ?? null}
               songDuration={loaded?.meta.duration ?? null}
@@ -1337,8 +1347,33 @@ function CanvasPane({
                 {countdownOverlay.number}
               </p>
             )}
-            <p className="mt-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
-              {touchOnly ? "tap the lanes" : "D F J K · or ← ↓ ↑ →"}
+            {/* Keyboard hint footer. The four arrow keys are rendered
+                with the brutalist <ArrowIcon> SVG (same family used in
+                the lobby + entry screens) instead of the unicode
+                `←↓↑→` glyphs — those render as thin strokes in most
+                monospace fonts and clash with the chunky D F J K
+                letters. Icons inherit `currentColor` so the
+                bone-50/60 paragraph color carries through. */}
+            <p className="mt-2 inline-flex items-center justify-center gap-1.5 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
+              {touchOnly ? (
+                "tap the lanes"
+              ) : (
+                <>
+                  <span>D F J K</span>
+                  <span aria-hidden>·</span>
+                  <span>or</span>
+                  <span aria-hidden>·</span>
+                  <span
+                    className="inline-flex items-center gap-1"
+                    aria-label="left, down, up, right arrow keys"
+                  >
+                    <ArrowIcon direction="left" strokeWidth={2.75} />
+                    <ArrowIcon direction="down" strokeWidth={2.75} />
+                    <ArrowIcon direction="up" strokeWidth={2.75} />
+                    <ArrowIcon direction="right" strokeWidth={2.75} />
+                  </span>
+                </>
+              )}
             </p>
           </div>
         </Overlay>
@@ -1694,8 +1729,6 @@ function HealthPanel({
   onCycleFpsLock,
   quality,
   onCycleQuality,
-  judgmentGlyphs,
-  onToggleGlyphs,
   songTitle,
   songArtist,
   songDuration,
@@ -1717,9 +1750,6 @@ function HealthPanel({
    *  modes. */
   quality: RenderQuality;
   onCycleQuality: () => void;
-  /** Color-blind helper toggle — adds glyphs to judgment popups. */
-  judgmentGlyphs: boolean;
-  onToggleGlyphs: () => void;
   songTitle: string | null;
   songArtist: string | null;
   /** Track duration in seconds, or null until the chart is loaded. */
@@ -1810,7 +1840,7 @@ function HealthPanel({
           scaled down for HUD density. */}
       <label
         className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Toggle metronome (M)"
+        data-tooltip="Audible click track on every beat (key: M)"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
           Metronome
@@ -1826,7 +1856,7 @@ function HealthPanel({
       </label>
       <label
         className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Toggle feedback (N)"
+        data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
           Feedback
@@ -1853,10 +1883,10 @@ function HealthPanel({
         className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
         data-tooltip={
           fpsLock == null
-            ? "FPS lock off — click to cap at 30 FPS"
-            : `Render frame-rate capped at ${fpsLock} FPS — click to ${
-                fpsLock === 30 ? "cap at 60" : "uncap"
-              }`
+            ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+            : fpsLock === 30
+              ? "Frame-rate capped at 30 FPS — saves battery on laptops"
+              : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
         }
         aria-label="Cycle render FPS lock"
       >
@@ -1891,8 +1921,8 @@ function HealthPanel({
         className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
         data-tooltip={
           quality === "high"
-            ? "Quality: HIGH — full visual effects. Click to switch to PERFORMANCE if you see frame-drops."
-            : "Quality: PERFORMANCE — visual effects disabled for steady frame rate. Click to switch back to HIGH."
+            ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
+            : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
         }
         aria-label="Cycle render quality preset"
       >
@@ -1911,27 +1941,10 @@ function HealthPanel({
           {quality === "high" ? "HIGH" : "PERF"}
         </span>
       </button>
-      {/* Color-blind glyphs tile — accessibility opt-in. Off by
-          default; on, judgment popups gain a small ASCII glyph
-          prefix (`* + = x`) so judgments are still
-          distinguishable for players who can't lean on the
-          blue/green/yellow/red color cue. */}
-      <label
-        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 sm:flex"
-        data-tooltip="Add a glyph (* + = x) before each judgment popup so judgments are distinguishable without color."
+      <div
+        className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
+        data-tooltip="Song playback volume — separate from feedback SFX"
       >
-        <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-          Glyphs
-        </span>
-        <input
-          type="checkbox"
-          checked={judgmentGlyphs}
-          onChange={onToggleGlyphs}
-          className="h-[14px] w-[14px] cursor-pointer accent-accent"
-          aria-label="Toggle judgment glyphs (color-blind helper)"
-        />
-      </label>
-      <div className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2">
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           vol
         </span>
@@ -2081,10 +2094,11 @@ function MatchMenuOverlay({
             )}
             <button
               onClick={onLeave}
-              className="brut-btn px-3 py-3"
+              className="brut-btn inline-flex items-center justify-center gap-1.5 px-3 py-3"
               data-tooltip="Leave this match and watch from the lobby — the rest of the room keeps playing"
             >
-              ← Leave
+              <ArrowIcon direction="left" strokeWidth={2.75} />
+              Leave
             </button>
           </div>
         )}
@@ -2202,6 +2216,3 @@ function snapshotLive(stats: PlayerStats, finished: boolean): LiveScore {
   };
 }
 
-// Suppress unused-import warning for ArrowIcon — kept here for future icons
-// (back-to-lobby on results / etc) without re-importing.
-void ArrowIcon;

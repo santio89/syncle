@@ -213,9 +213,9 @@ export default function MultiEntryClient() {
               ░ Waking the multiplayer server
             </p>
             <p>
-              The realtime server sleeps when idle and takes around{" "}
-              <strong className="text-bone-50">30 seconds</strong> to spin
-              back up on the first connection.
+              The server sleeps when idle and takes around{" "}
+              <strong className="text-bone-50">30 seconds</strong> to wake
+              up on the first connection.
             </p>
           </div>
         </div>

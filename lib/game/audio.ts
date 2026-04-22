@@ -810,15 +810,22 @@ export class AudioEngine {
    * Body frequency tracks the same envelope (140 → ~143 Hz at
    * perfect) so the body and noise stay phase-coherent.
    *
-   * Volume ladder (multiplier on empty's noiseVol/bodyVol):
-   *   empty    → 1.000  (0.566 noise, 0.212 body — reference)
-   *   good     → 1.015  (+1.5 %)
-   *   great    → 1.030  (+3 %)
-   *   perfect  → 1.050  (+5 %)
-   * That's roughly +0.13 dB / +0.26 dB / +0.42 dB perceived — the
-   * SMALLEST step that's still audible against an actively-playing
-   * song. Below ~+1.5 % the difference disappears under any music
-   * bed; above ~+5 % the family stops reading as "the same sound"
+   * Volume ladder:
+   *   empty    →  base  (0.634 noise, 0.237 body — empty-press
+   *                      reference, see playEmptyPress)
+   *   hit-base →  base * 1.01  (0.640 noise, 0.239 body — the hit
+   *                      family is now lifted +1 % above empty so
+   *                      a successful connect reads a hair more
+   *                      present than a dry tap on a lane with
+   *                      nothing to hit)
+   *   good     →  hit-base * 1.015  (+1.5 % on top of hit-base)
+   *   great    →  hit-base * 1.030  (+3 % on top of hit-base)
+   *   perfect  →  hit-base * 1.050  (+5 % on top of hit-base)
+   * That's roughly +0.22 dB / +0.34 dB / +0.51 dB hit-vs-empty at
+   * good/great/perfect — the SMALLEST step that's still audible
+   * against an actively-playing song. Below ~+1.5 % the per-
+   * judgment difference disappears under any music bed; above
+   * ~+5 % the family stops reading as "the same drum as empty"
    * and starts reading as a louder hit drum on top of the empty
    * drum, which the user explicitly wanted to avoid.
    *
@@ -853,10 +860,22 @@ export class AudioEngine {
       filterType: "lowpass",
       filterHz: 800 + cutoffBumpHz + laneOffset,
       filterQ: 0.7,
-      noiseVol: 0.566 * volMul,
+      // 0.640 / 0.239 = empty's 0.634 / 0.237 base * 1.01 — the hit
+      // family is now lifted +1 % above empty so a successful
+      // connect reads a hair more present than a dry tap on a lane
+      // with nothing to hit. The per-judgment ladder (volMul =
+      // 1.015 / 1.030 / 1.050 for good / great / perfect) stacks on
+      // top of this hit-base.
+      //
+      // Empty's full compound history vs the pre-tuning reference is
+      // documented at playEmptyPress; the hit family rides that base
+      // plus this +1 % uplift (so total hit-vs-pre-tuning compound =
+      // +13.14 %, +14.82 %, +16.62 %, +18.62 % at empty / good /
+      // great / perfect respectively).
+      noiseVol: 0.640 * volMul,
       dur: 0.09,
       bodyHz: 140 + bodyBumpHz,
-      bodyVol: 0.212 * volMul,
+      bodyVol: 0.239 * volMul,
       bodyDur: 0.08,
     });
   }
@@ -868,9 +887,14 @@ export class AudioEngine {
    * `playComboBreak` for the streak-loss cue), so this is the only
    * audio feedback for a routine miss. Three light cues stacked:
    *
-   *   - 45 % volume dip (vs the old 64 % per-miss dip — was tuned
+   *   - 47.18 % volume dip (vs the old 64 % per-miss dip — was tuned
    *     to pair with a loud descending-sawtooth SFX that no longer
-   *     exists; without that SFX a deeper dip felt aggressive)
+   *     exists; without that SFX a deeper dip felt aggressive). Step
+   *     history: 0.55 → 0.5445 (+1 % deeper) → 0.5282 (+3 % deeper,
+   *     compound 0.99 * 0.97 = 0.9603 on the dip target vs the
+   *     pre-tuning 0.55 reference). Each bump made a routine miss
+   *     read a hair more present against louder masters without
+   *     crossing into combo-break territory (which sits at 0.25).
    *   - ~650 Hz lowpass roll-off (muffles the song's high band for
    *     a beat — reads as "the song just wobbled")
    *   - 30-cent pitch wobble (≈ 1/3 of a semitone — audibly off,
@@ -886,7 +910,11 @@ export class AudioEngine {
    */
   playMissDistort(): void {
     if (!this.sfxOn) return;
-    this.duckSong(0.55, 220, 30);
+    // 0.5282 = 0.55 * 0.99 * 0.97 — original 0.55 baseline (45 %
+    // dip), then a +1 % deepening pass (× 0.99 → 0.5445), then a
+    // final +3 % deepening pass (× 0.97 → 0.5282 = 47.18 % dip).
+    // See the JSDoc above for the full step history.
+    this.duckSong(0.5282, 220, 30);
   }
 
   /**
@@ -910,10 +938,19 @@ export class AudioEngine {
       filterType: "lowpass",
       filterHz: 800,
       filterQ: 0.7,
-      noiseVol: 0.566,
+      // 0.634 / 0.237 = 0.566 / 0.212 * 1.01 * 1.015 * 1.01 * 1.05 *
+      // 1.02 * 1.01 — original +1 % global SFX bump, +1.5 % on the
+      // input-feedback + metronome layer, +1 % on the input-feedback
+      // layer, +5 % on the input-feedback layer, +2 % on the input-
+      // feedback layer, and a final +1 % on the input-feedback layer
+      // alone. Kept identical to the reference numbers in
+      // playInputFeedback so empty stays the floor of the volume
+      // ladder; hits read as the same drum +1.5/3/5 % depending on
+      // judgment.
+      noiseVol: 0.634,
       dur: 0.09,
       bodyHz: 140,
-      bodyVol: 0.212,
+      bodyVol: 0.237,
       bodyDur: 0.08,
     });
   }
@@ -948,14 +985,14 @@ export class AudioEngine {
     const ctx = this.ctx;
     const t = ctx.currentTime;
 
-    // Layer 1 — sub-thump.
+    // Layer 1 — sub-thump. 0.4242 = 0.42 * 1.01 (global +1 % SFX bump).
     {
       const osc = ctx.createOscillator();
       osc.type = "sine";
       osc.frequency.setValueAtTime(80, t);
       const env = ctx.createGain();
       env.gain.setValueAtTime(0, t);
-      env.gain.linearRampToValueAtTime(0.42, t + 0.005);
+      env.gain.linearRampToValueAtTime(0.4242, t + 0.005);
       env.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
       osc.connect(env).connect(this.sfxGain);
       osc.start(t);
@@ -977,7 +1014,8 @@ export class AudioEngine {
       filt.Q.value = 0.7;
       const env = ctx.createGain();
       env.gain.setValueAtTime(0, t);
-      env.gain.linearRampToValueAtTime(0.55, t + 0.003);
+      // 0.5555 = 0.55 * 1.01 (global +1 % SFX bump).
+      env.gain.linearRampToValueAtTime(0.5555, t + 0.003);
       env.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
       src.connect(filt).connect(env).connect(this.sfxGain);
       src.start(t);
@@ -997,7 +1035,8 @@ export class AudioEngine {
       filt.frequency.value = 800;
       const env = ctx.createGain();
       env.gain.setValueAtTime(0, t);
-      env.gain.linearRampToValueAtTime(0.50, t + 0.005);
+      // 0.505 = 0.50 * 1.01 (global +1 % SFX bump).
+      env.gain.linearRampToValueAtTime(0.505, t + 0.005);
       env.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
       osc.connect(filt).connect(env).connect(this.sfxGain);
       osc.start(t);
@@ -1075,15 +1114,18 @@ export class AudioEngine {
     const root = 523.25;
     const intensity = Math.min(1, milestone / 500); // 25 → 0.05, 500+ → 1
     // baseVol sized to sit at the same perceptual loudness as the
-    // hit drums (0.44 combined peak) so the milestone arpeggio reads
+    // hit drums (~0.44 combined peak) so the milestone arpeggio reads
     // as "celebration on top of hit feedback" instead of getting
-    // buried under the song. Spread between low (0.328) and high
-    // (0.558) keeps the 25-combo cue tasteful while letting the
+    // buried under the song. Spread between low (0.331) and high
+    // (0.563) keeps the 25-combo cue tasteful while letting the
     // 500+ chime feel earned. Intentionally tonal (unlike the atonal
     // input-feedback drums) because milestones are REWARDS, not
     // input acknowledgements — a melodic flourish reads as
     // "achievement" the way a percussive tap reads as "input".
-    const baseVol = 0.328 + intensity * 0.23;
+    //
+    // Both constants below carry the global +1 % SFX bump:
+    //   0.331 = 0.328 * 1.01,  0.232 = 0.23 * 1.01.
+    const baseVol = 0.331 + intensity * 0.232;
     this.pluck(t,         root,        0.32, baseVol,        "triangle");
     this.pluck(t + 0.06,  root * 1.5,  0.30, baseVol * 0.85, "triangle");
     this.pluck(t + 0.12,  root * 2,    0.36, baseVol * 0.95, "sine");
@@ -1096,7 +1138,7 @@ export class AudioEngine {
   /**
    * Schedule a metronome click at a given AudioContext time.
    *
-   * Click peaks (downbeat 0.41 / upbeat 0.227) sit at roughly the same
+   * Click peaks (downbeat 0.4334 / upbeat 0.2400) sit at roughly the same
    * perceptual loudness as the bright top end of a hit drum so a
    * player who relies on the metronome to follow rhythm hears it at
    * a similar level to their own hit feedback — a coherent
@@ -1116,11 +1158,16 @@ export class AudioEngine {
    * clash with any song's harmonic content the way the old
    * lane-pitched plucks could.
    *
-   * History (was 0.18/0.09, then 0.30/0.16, now 0.41/0.227): each
-   * bump was driven by reports of the metronome being inaudible
-   * during normally-mastered songs even at slider 1.0. With
-   * BASE_SFX_LEVEL now at 1.0 (no bus-level attenuation), this is
-   * the level that actually clears the music's RMS noise floor at
+   * History (was 0.18/0.09, then 0.30/0.16, then 0.41/0.227, then
+   * 0.4141/0.2293 after the global +1 % SFX bump, then 0.4203/0.2327
+   * after a +1.5 % bump on the input-feedback + metronome layer,
+   * then 0.4207/0.2329 after a +0.1 % nudge on the metronome alone,
+   * then 0.4291/0.2376 after a +2 % bump on the metronome alone,
+   * now 0.4334/0.2400 after a final +1 % bump on the metronome
+   * alone): each bump was driven by reports of the metronome being
+   * inaudible during normally-mastered songs even at slider 1.0.
+   * With BASE_SFX_LEVEL now at 1.0 (no bus-level attenuation), this
+   * is the level that actually clears the music's RMS noise floor at
    * every master volume the player is realistically going to use.
    */
   scheduleClick(when: number, downbeat: boolean): void {
@@ -1130,7 +1177,14 @@ export class AudioEngine {
     osc.frequency.value = downbeat ? 1500 : 1000;
 
     const env = this.ctx.createGain();
-    const peak = downbeat ? 0.41 : 0.227;
+    // 0.4334 = 0.41 * 1.01 * 1.015 * 1.001 * 1.02 * 1.01,
+    // 0.2400 = 0.227 * 1.01 * 1.015 * 1.001 * 1.02 * 1.01 — original
+    // +1 % global SFX bump, then +1.5 % on the input-feedback +
+    // metronome layer, then +0.1 % nudge on the metronome alone,
+    // then +2 % on the metronome alone, then a final +1 % bump on
+    // the metronome alone (compound = +5.73 % vs the pre-tuning
+    // 0.41 / 0.227 reference).
+    const peak = downbeat ? 0.4334 : 0.2400;
     env.gain.setValueAtTime(0, when);
     env.gain.linearRampToValueAtTime(peak, when + 0.002);
     env.gain.exponentialRampToValueAtTime(0.0001, when + 0.06);

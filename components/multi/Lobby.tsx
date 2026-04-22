@@ -13,15 +13,20 @@
  *      - Live chat for everyone in the room. Reusable component, also
  *        used during the loading + results phases.
  *
- *   3. Settings + host/guest pane (right column, wider)
- *      - Per-player settings card on top (volume / metronome / FPS /
- *        feedback) so it lands above the room-level controls.
- *      - Below it: Host pane (song picker, difficulty buttons, start
- *        button), Guest pane ("waiting on host" + selected-song
- *        preview), or Match-in-progress pane (live scoreboard +
- *        playing song + progress) depending on `phase` + `isHost`.
+ *   3. Host / guest / match-in-progress pane (right column, wider)
+ *      - Host pane (song picker, difficulty buttons, start button),
+ *        Guest pane ("waiting on host" + selected-song preview), or
+ *        Match-in-progress pane (live scoreboard + playing song +
+ *        progress) depending on `phase` + `isHost`.
  *      - Wider column because the song catalog table is the largest
- *        single piece of content in the lobby.
+ *        single piece of content in the lobby — gets the full column
+ *        height so 12+ rows are visible at 1080p without scrolling.
+ *      - Per-player settings (volume / metronome / SFX / FPS lock /
+ *        quality) are reachable via the "settings" text-button in
+ *        the roster card (modal overlay) — used to live as an
+ *        always-visible card pinned above the pane on this column,
+ *        but at common 1080p layouts that card was crowding both
+ *        the catalog scroller and the roster.
  *
  * Start contract:
  *   - The host always clicks "Start match" themselves — there is no
@@ -50,7 +55,6 @@ import {
 } from "@/lib/game/chart";
 import {
   loadFpsLock,
-  loadJudgmentGlyphs,
   loadMetronome,
   loadRenderQuality,
   loadSfx,
@@ -58,7 +62,6 @@ import {
   nextFpsLock,
   nextRenderQuality,
   saveFpsLock,
-  saveJudgmentGlyphs,
   saveMetronome,
   saveRenderQuality,
   saveSfx,
@@ -115,12 +118,90 @@ export function Lobby({
   chat: ChatMessage[];
   actions: RoomActions;
 }) {
-  const me = snapshot.players.find((p) => p.id === meId);
+  // ─── Roster density harness (dev-only) ──────────────────────────────
+  // Local visual-test hook for eyeballing the roster at high player
+  // counts without needing to actually fill a room. Bumps the live
+  // `snapshot.players` array with synthetic entries at render time so
+  // the scroller, density, "muted" / "ready" pills, online-dim style,
+  // etc. can be exercised against realistic data shapes.
+  //
+  // Disabled by default — `MOCK_ROSTER_SIZE = 0` short-circuits the
+  // useMemo to an empty array and `displaySnapshot` aliases straight
+  // to `snapshot` (zero allocation, zero behavior change).
+  //
+  // To re-enable for testing, change MOCK_ROSTER_SIZE to a target
+  // count (e.g. 50 to test a near-full room, 12 to test "just past
+  // the chat-cohabit threshold", etc). The mock players:
+  //   • are NEVER sent over the wire — this is a pure render-time
+  //     prepend on `snapshot.players`, scoped to this component
+  //     instance, invisible to the server and to other clients.
+  //   • have synthetic ids prefixed `mock-` so host actions
+  //     (`actions.kick(id)` / `actions.mute(id)`) emit to the
+  //     server but the server ignores them — see the user-facing
+  //     note in `RosterRow`'s host-action buttons.
+  //   • randomize ready / muted / in-match / online flags via cheap
+  //     modulo arithmetic so the roster shows visual variety
+  //     (some "muted" pills, some "ready" pills, ~1-in-9 offline
+  //     entries dimmed) instead of a wall of identical rows.
+  const MOCK_ROSTER_SIZE = 0;
+  const mockPlayers = useMemo<PlayerSnapshot[]>(() => {
+    if (MOCK_ROSTER_SIZE <= 0) return [];
+    const realCount = snapshot.players.length;
+    const need = Math.max(0, MOCK_ROSTER_SIZE - realCount);
+    const adjectives = [
+      "swift", "calm", "neon", "lone", "drift", "echo", "vivid", "still",
+      "rapid", "void", "lush", "blunt", "sharp", "spark", "gloom", "radiant",
+    ];
+    const nouns = [
+      "wolf", "moth", "ember", "tide", "comet", "pine", "ash", "fox",
+      "river", "owl", "loop", "byte", "mote", "halo", "rune", "pulse",
+    ];
+    return Array.from({ length: need }, (_, i): PlayerSnapshot => {
+      const a = adjectives[i % adjectives.length];
+      const n = nouns[(i * 3) % nouns.length];
+      return {
+        id: `mock-${i}`,
+        name: `${a}${n}${i + 1}`,
+        isHost: false,
+        online: i % 9 !== 0,
+        joinedAt: Date.now() - i * 1000,
+        ready: false,
+        lobbyReady: i % 3 === 0,
+        muted: i % 11 === 0,
+        live: {
+          score: 0,
+          combo: 0,
+          maxCombo: 0,
+          accuracy: 100,
+          notesPlayed: 0,
+          totalNotes: 0,
+          hits: { perfect: 0, great: 0, good: 0, miss: 0 },
+          health: 1,
+          finished: false,
+        },
+        final: null,
+        postChoice: null,
+        inMatch: false,
+      };
+    });
+  }, [snapshot.players.length]);
+  // displaySnapshot is what every consumer below reads from. With
+  // MOCK_ROSTER_SIZE = 0 it's strictly identical to `snapshot` (no
+  // spread, no array allocation); with a non-zero size it's a
+  // shallow-copied snapshot whose `players` array carries the mock
+  // entries appended after the real roster.
+  const displaySnapshot: RoomSnapshot =
+    MOCK_ROSTER_SIZE > 0
+      ? { ...snapshot, players: [...snapshot.players, ...mockPlayers] }
+      : snapshot;
+  // ────────────────────────────────────────────────────────────────────
+
+  const me = displaySnapshot.players.find((p) => p.id === meId);
   // Online-or-offline doesn't matter for "is this player ready" (offline
   // players aren't included in the all-ready quorum) but we still want
   // to render them in the roster so the host can see them and decide
   // whether to wait or kick.
-  const onlinePlayers = snapshot.players.filter((p) => p.online);
+  const onlinePlayers = displaySnapshot.players.filter((p) => p.online);
   const allReady =
     onlinePlayers.length > 0 && onlinePlayers.every((p) => p.lobbyReady);
   // Match-in-progress mode: this Lobby is being rendered for a
@@ -129,6 +210,18 @@ export function Lobby({
   // compact "match in progress" panel and decorate the roster with
   // small "in match" badges so the watcher can see who's playing.
   const matchInProgress = snapshot.phase !== "lobby";
+
+  // Per-player settings modal (volume / metronome / SFX / FPS lock /
+  // quality). Used to be an always-visible card pinned above the host
+  // pane on the right column, but at common 1080p layouts that card
+  // ate ~22rem of vertical space and crowded both lists players
+  // actually scan most (the roster and the song catalog). It's now a
+  // centered modal triggered from the "settings" text-button next to
+  // "rename player" in the roster card. State lives here at the Lobby
+  // root so the trigger (deep in the roster) and the modal (rendered
+  // at the Lobby root for clean z-stacking) share it without prop
+  // drilling.
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     // Narrower column on the LEFT (roster + chat — fixed-width
@@ -155,28 +248,38 @@ export function Lobby({
           vertically without pushing anything important out of view. */}
       <div className="flex flex-col gap-4 lg:h-full lg:min-h-0">
         <PlayerRoster
-          snapshot={snapshot}
+          snapshot={displaySnapshot}
           meId={meId}
           iAmHost={isHost}
           actions={actions}
           allReady={allReady}
           matchInProgress={matchInProgress}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
         {/* Chat wrapper:
             - Mobile / tablet (`< lg`): fixed `h-[36rem]` so the
               input doesn't drift off-screen on a long chat — the
               page scrolls to reach it and the inner scroller
               handles message overflow.
-            - Desktop (`lg+`): `flex-1 min-h-0` so chat fills
-              whatever vertical space remains under the roster,
-              with `min-h-[20rem]` as a floor so it never collapses
-              to a sliver. The inner messages area inside ChatPanel
-              auto-scrolls to the bottom on new messages and
-              pauses auto-scroll while you're reading history —
-              so the full server backlog (capped at
-              MAX_CHAT_HISTORY = 100) is always reachable by
-              scrolling inside the panel. */}
-        <div className="h-[36rem] min-h-[20rem] lg:h-auto lg:min-h-0 lg:flex-1">
+            - Desktop (`lg+`): `flex-1` (default `flex-grow:1`)
+              against the roster's `[flex-grow:2]` → chat takes
+              ~1/3 of the column, roster ~2/3. At 1080p that
+              lands ≈ 19.5rem chat, which comfortably shows the
+              header, ~5 messages of body, and the input — fixing
+              the bug where chat input was getting clipped below
+              the fold by an over-eager 30rem roster. We KEEP a
+              `lg:min-h-[14rem]` floor so chat never squeezes
+              below "header + a couple lines + input" on shorter
+              720p-class viewports; if the column is too short to
+              honor both the chat floor AND the roster's natural
+              chrome, the roster's internal scroller absorbs it.
+              The inner messages area inside ChatPanel auto-
+              scrolls to the bottom on new messages and pauses
+              auto-scroll while you're reading history — so the
+              full server backlog (capped at MAX_CHAT_HISTORY =
+              100) is always reachable by scrolling inside the
+              panel. */}
+        <div className="h-[36rem] min-h-[20rem] lg:h-auto lg:min-h-[14rem] lg:flex-1 lg:basis-0">
           <ChatPanel
             chat={chat}
             meId={meId}
@@ -186,58 +289,54 @@ export function Lobby({
         </div>
       </div>
 
-      {/* Right column: your settings on top, then the host / guest /
-          match-in-progress pane underneath. Settings sits at the TOP
-          because:
-          - It's PER-PLAYER (like the rename / ready buttons in the
-            roster card), not room state, so it lands at the
-            natural reading entry point.
-          - First-time players land in a lobby and immediately see
-            volume / metronome / FPS / feedback controls without
-            having to scroll past anything — important since the
-            next thing that happens is a song firing.
-          - The host pane is much TALLER than settings (catalog +
-            picker + start button), so putting settings above keeps
-            it pinned in the viewport instead of getting buried.
+      {/* Right column: host / guest / match-in-progress pane. The
+          per-player settings panel that used to live pinned above
+          this pane was promoted to a modal (PlayerSettingsModal,
+          rendered at the Lobby root below) and triggered from the
+          roster's "settings" text-button — that frees ~22rem of
+          vertical space for the catalog scroller, which was the
+          single biggest content-density win at common 1080p
+          layouts.
 
-          The pane below is a three-way switch between host pane,
-          guest pane, and match-in-progress watcher pane. The
-          watcher pane wins whenever the room is past the lobby —
-          even for the host (who only ends up here in the unusual
-          case of being a late-joiner who got promoted on the
-          original host's disconnect). The host can't restart
-          anything mid-match (server gates `host:start` on
-          `phase === "lobby"`), so a full HostPane during the match
-          would just be a wall of disabled controls. The watcher
-          pane is more useful: it shows what's playing and the
-          live scoreboard so the host knows what they're walking
-          into when the round ends. */}
-      <div className="flex flex-col gap-4 lg:h-full lg:min-h-0">
-        <PlayerSettingsCard />
-        {/* Pane wrapper: takes the rest of the column on `lg+` so
-            the host pane's catalog scroller can grow into the
-            available height instead of being capped at a fixed
-            ~24rem. Each pane root carries `flex h-full flex-col`
-            already, so `lg:flex-1 lg:min-h-0` here is the only
-            extra plumbing needed. */}
-        <div className="lg:flex-1 lg:min-h-0">
-          {matchInProgress ? (
-            <MatchInProgressPane
-              snapshot={snapshot}
-              scoreboard={scoreboard}
-            />
-          ) : isHost ? (
-            <HostPane
-              snapshot={snapshot}
-              actions={actions}
-              code={code}
-              allReady={allReady}
-            />
-          ) : (
-            <GuestPane snapshot={snapshot} />
-          )}
-        </div>
+          The pane is a three-way switch between host pane, guest
+          pane, and match-in-progress watcher pane. The watcher pane
+          wins whenever the room is past the lobby — even for the
+          host (who only ends up here in the unusual case of being
+          a late-joiner who got promoted on the original host's
+          disconnect). The host can't restart anything mid-match
+          (server gates `host:start` on `phase === "lobby"`), so a
+          full HostPane during the match would just be a wall of
+          disabled controls. The watcher pane is more useful: it
+          shows what's playing and the live scoreboard so the host
+          knows what they're walking into when the round ends. */}
+      <div className="lg:h-full lg:min-h-0">
+        {matchInProgress ? (
+          <MatchInProgressPane
+            snapshot={snapshot}
+            scoreboard={scoreboard}
+          />
+        ) : isHost ? (
+          <HostPane
+            snapshot={snapshot}
+            actions={actions}
+            code={code}
+            allReady={allReady}
+          />
+        ) : (
+          <GuestPane snapshot={snapshot} />
+        )}
       </div>
+
+      {/* Per-player settings modal — z-50 overlay, opened via the
+          "settings" text-button in the roster card. Mounted at the
+          Lobby root (rather than inside PlayerRoster) so it stacks
+          cleanly above every column without being constrained by
+          the roster's grid cell. State + open/close handler live in
+          Lobby above. */}
+      <PlayerSettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }
@@ -253,6 +352,7 @@ function PlayerRoster({
   actions,
   allReady,
   matchInProgress,
+  onOpenSettings,
 }: {
   snapshot: RoomSnapshot;
   meId: string;
@@ -260,6 +360,8 @@ function PlayerRoster({
   actions: RoomActions;
   allReady: boolean;
   matchInProgress: boolean;
+  /** Opens the per-player settings modal. State lives in Lobby above. */
+  onOpenSettings: () => void;
 }) {
   const me = snapshot.players.find((p) => p.id === meId);
   const [editing, setEditing] = useState(false);
@@ -277,7 +379,16 @@ function PlayerRoster({
   const onlineCount = snapshot.players.filter((p) => p.online).length;
 
   return (
-    <div className="brut-card flex flex-col p-5 sm:p-6">
+    // Roster card claims a 2x share of the left column on lg+ (chat
+    // takes 1x via its own `lg:flex-1`), so the two cards split
+    // available height roughly 2:1 — at 1080p that yields ≈ 39rem
+    // roster + ≈ 19.5rem chat, which keeps ~10 player rows visible
+    // and a clickable chat with ~5 messages of body. `lg:min-h-0` +
+    // `lg:basis-0` make the flex distribution clean (parent decides
+    // the height; the card's intrinsic content does NOT push it
+    // open). Below lg the card stays auto-height and the page scrolls
+    // naturally.
+    <div className="brut-card flex flex-col p-5 sm:p-6 lg:min-h-0 lg:basis-0 lg:[flex-grow:2]">
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
           ░ Players
@@ -301,16 +412,28 @@ function PlayerRoster({
         />
       )}
 
-      {/* Roster has its own scroller capped at ~22rem (≈ 8-10
-          rows) so a near-full 50-player room doesn't push the
-          rename + Mark Ready strip off-screen. The internal
-          scrollbar lives flush against the card's right edge —
-          that's expected here because the roster is a
-          self-contained "list-with-its-own-scroll" widget,
-          symmetric with the host pane's catalog scroller.
-          `pr-1` keeps the scrollbar thumb from sitting flush
-          against the row borders. */}
-      <ul className="mt-3 max-h-[22rem] space-y-1.5 overflow-y-auto pr-1">
+      {/* Roster has its own scroller. Sizing strategy is
+          breakpoint-split:
+            • Below lg (stacked layout, page scrolls naturally) we
+              cap with `max-h-[30rem]` so a near-full 50-player
+              room doesn't push the rename + Mark Ready strip off-
+              screen on phones / tablets.
+            • On lg+ (no page scroll — page is `overflow-hidden`,
+              each card owns its own scroller) we drop the cap and
+              flex into the card's available height. The CARD itself
+              gets a 2x flex share of the column (see the wrapper
+              comment above), and this ul absorbs the leftover space
+              inside the card after the header / quorum / footer
+              chrome. At 1080p that lands ≈ 26rem of ul → ~10 rows
+              visible, exactly what we want, AND it leaves the chat
+              underneath with enough height to be usable + clickable
+              (the previous fixed 30rem cap was the root cause of
+              the chat input getting clipped below the fold).
+          The internal scrollbar lives flush against the card's
+          right edge — symmetric with the host pane's catalog
+          scroller. `pr-1` keeps the scrollbar thumb from sitting
+          flush against the row borders. */}
+      <ul className="mt-3 max-h-[30rem] space-y-1.5 overflow-y-auto pr-1 lg:max-h-none lg:min-h-0 lg:flex-1">
         {snapshot.players.map((p) => (
           <RosterRow
             key={p.id}
@@ -337,7 +460,7 @@ function PlayerRoster({
           everyone's ready state on `transitionToLobby` anyway. The
           rename row is still useful (watchers can adjust their name
           before joining the next round), so it stays. */}
-      <div className="mt-4 space-y-3 border-t-2 border-bone-50/10 pt-3">
+      <div className="mt-4 space-y-4 border-t-2 border-bone-50/10 pt-5">
         {/* Rename row sits ABOVE Mark Ready — Mark Ready is the
             primary action (big saturated button) and lives at the
             very bottom of the card so it's the last thing the eye
@@ -366,15 +489,32 @@ function PlayerRoster({
             </button>
           </div>
         ) : (
-          <button
-            onClick={() => {
-              setDraft(me?.name ?? "");
-              setEditing(true);
-            }}
-            className="inline-flex items-center gap-2 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/70 hover:text-accent"
-          >
-            <span>rename player</span>
-          </button>
+          // Rename + Settings row: paired text-buttons that share the
+          // same dim-mono-uppercase treatment so they read as the
+          // "secondary actions" strip under the roster, distinct from
+          // the big saturated Mark Ready button below. The dot
+          // separator between them is purely decorative — `aria-hidden`
+          // keeps it out of the screen-reader stream so the two
+          // controls read as independent siblings rather than a single
+          // "rename · settings" phrase.
+          <div className="flex items-center justify-between gap-3 font-mono text-[0.79rem] uppercase tracking-widest">
+            <button
+              onClick={() => {
+                setDraft(me?.name ?? "");
+                setEditing(true);
+              }}
+              className="text-bone-50/70 transition-colors hover:text-accent"
+            >
+              Rename Player
+            </button>
+            <button
+              onClick={onOpenSettings}
+              className="text-bone-50/70 transition-colors hover:text-accent"
+              data-tooltip="Adjust your audio / FPS / quality settings"
+            >
+              Settings
+            </button>
+          </div>
         )}
 
         {me && !matchInProgress && (
@@ -400,18 +540,24 @@ function PlayerRoster({
 }
 
 /* ------------------------------------------------------------------------ */
-/* Per-player settings card                                                 */
+/* Per-player settings modal                                                */
 /* ------------------------------------------------------------------------ */
 
 /**
  * Compact settings panel mirroring the single-player StartCard's
  * settings strip (FPS lock + Metronome + Feedback as a tile row,
- * Music volume slider in its own tile below).
+ * Quality + Music volume in their own tiles below). Rendered as a
+ * centered modal overlay — opened via the "settings" text-button
+ * next to "rename player" in the roster card. Used to live as an
+ * always-on card pinned above the host pane, but the screen real
+ * estate it consumed was choking the catalog scroller and roster
+ * list at common 1080p layouts; moving it into a modal frees that
+ * vertical space for the two lists players actually scan most.
  *
  * Why per-player and self-contained:
  *   - These are LOCAL preferences, not room state. They never get sent
  *     over the wire — every player adjusts their own and they take
- *     effect for them only. So the card has no `actions` prop and no
+ *     effect for them only. So the modal has no `actions` prop and no
  *     callbacks back into the lobby; it just reads / writes the same
  *     `lib/game/settings` localStorage keys the single-player Game.tsx
  *     and the in-game MultiGame.tsx use.
@@ -431,14 +577,22 @@ function PlayerRoster({
  *   - The volume slider is shown live in % (perceptual scale, see
  *     audio.ts perceivedToGain) so the number on screen matches the
  *     mental model the player has from solo play.
+ *   - Closing the modal (ESC, click-outside, ✕ button) does NOT
+ *     revert anything — every change has already been written; the
+ *     close just dismisses the overlay.
  */
-function PlayerSettingsCard() {
+function PlayerSettingsModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
   const [volume, setVolumeState] = useState<number>(loadVolume);
   const [metronome, setMetronomeState] = useState<boolean>(loadMetronome);
   const [sfx, setSfxState] = useState<boolean>(loadSfx);
   const [fpsLock, setFpsLockState] = useState<FpsLock>(loadFpsLock);
   const [quality, setQualityState] = useState<RenderQuality>(loadRenderQuality);
-  const [judgmentGlyphs, setJudgmentGlyphsState] = useState<boolean>(loadJudgmentGlyphs);
 
   // Live-save handlers — persist on every change so closing the lobby
   // tab without a final "save" still keeps the player's choices.
@@ -474,38 +628,154 @@ function PlayerSettingsCard() {
       return next;
     });
   }, []);
-  const onToggleGlyphs = useCallback(() => {
-    setJudgmentGlyphsState((cur) => {
-      const next = !cur;
-      saveJudgmentGlyphs(next);
-      return next;
-    });
-  }, []);
+
+  // ESC closes the modal — capture phase + stopImmediatePropagation
+  // so a page-level ESC handler (e.g. LeaveGuardProvider) doesn't ALSO
+  // fire on the same keypress and trigger an unrelated leave prompt
+  // when the user just wanted to dismiss settings. Wired via effect
+  // (rather than inline `onKeyDown`) because the modal swallows pointer
+  // events but not necessarily focus, so binding to `window` is the
+  // most reliable way to catch the keypress.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKey, { capture: true });
+  }, [open, onClose]);
+
+  // Mount-vs-visible split so the overlay can fade IN on open and
+  // fade OUT on close instead of popping in / out:
+  //   • `mounted` controls DOM presence — true while open OR while a
+  //     close transition is still running. When false the modal is
+  //     completely unmounted (no listeners, no layout cost).
+  //   • `visible` drives the opacity / transform classes. On open we
+  //     mount with the "out" classes (opacity-0 + slight scale-down
+  //     + small translateY), then flip to the "in" classes (opacity-1
+  //     + scale-100 + translate-0) after the browser has had a chance
+  //     to commit the initial paint, so the transition actually
+  //     animates instead of being collapsed. On close we flip back
+  //     to the "out" classes immediately and defer the unmount by
+  //     the transition duration so the fade-out plays through.
+  // Bumped from 150ms → 220ms after user feedback that the transition
+  // wasn't perceptible — at 150ms with a ~1.5% scale change the
+  // browser blinked the modal on/off too quickly to register as
+  // motion. 220ms is still well inside "fast" (under the 250ms
+  // threshold where users start perceiving lag) but long enough that
+  // the eye actually catches the fade + scale lift. Scale range
+  // also widened (0.985 → 0.96) and a 4px upward slide added so the
+  // panel reads as "settling into place" rather than just blinking.
+  // The duration constant (FADE_MS) is the SINGLE source of truth —
+  // it's used in both the Tailwind `duration-[…]` class and the
+  // setTimeout below; keep them in sync if you change it.
+  const FADE_MS = 220;
+  const [mounted, setMounted] = useState<boolean>(open);
+  const [visible, setVisible] = useState<boolean>(false);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      // Double-rAF: first frame commits the initial "out" classes to
+      // the layout, second frame swaps to the "in" classes — this is
+      // the canonical workaround for the case where React batches the
+      // mount + class flip into the same frame and the browser elides
+      // the transition. A single rAF works MOST of the time but
+      // intermittently glitches on slow GPUs / when the tab was
+      // backgrounded; the double-rAF is bulletproof.
+      const raf1 = requestAnimationFrame(() => {
+        const raf2 = requestAnimationFrame(() => setVisible(true));
+        // Stash the inner id on the outer ref so the cleanup can
+        // cancel either pending frame.
+        rafIdRef.current = raf2;
+      });
+      rafIdRef.current = raf1;
+      return () => {
+        if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
+      };
+    }
+    setVisible(false);
+    const id = window.setTimeout(() => setMounted(false), FADE_MS);
+    return () => window.clearTimeout(id);
+  }, [open]);
+  const rafIdRef = useRef<number | null>(null);
+
+  if (!mounted) return null;
 
   return (
-    <div className="brut-card flex flex-col p-5 sm:p-6">
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
-          ░ Settings
-        </p>
-      </div>
+    // Centered modal overlay. Same backdrop + z-index as
+    // PrestartOverlay / LeaveConfirmModal so the three modals share a
+    // consistent feel (z-50 sits above the lobby chrome but below the
+    // leave-guard, which mounts later in the tree). Click outside the
+    // card = close; the inner card stops propagation so a click inside
+    // the card doesn't dismiss it.
+    //
+    // The overlay (backdrop) does a pure opacity fade. The inner card
+    // pairs an opacity fade with a small scale lift (0.96 → 1) AND a
+    // 4px upward slide so the panel reads as deliberately settling
+    // into place — at 220ms the motion is clearly perceptible
+    // without slowing the user down. The `will-change-[opacity,transform]`
+    // hint promotes the card to its own compositor layer for the
+    // duration so the transition is GPU-driven and stays smooth even
+    // when the lobby behind it is doing layout work (snapshot ticks,
+    // roster scrolling, etc).
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-ink-900/75 px-4 backdrop-blur transition-opacity duration-[220ms] ease-out ${
+        visible ? "opacity-100" : "opacity-0"
+      }`}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Player settings"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className={`brut-card flex w-full max-w-md flex-col p-5 sm:p-6 transition-[opacity,transform] duration-[220ms] ease-out will-change-[opacity,transform] ${
+          visible
+            ? "opacity-100 scale-100 translate-y-0"
+            : "opacity-0 scale-[0.96] translate-y-1"
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
+            ░ Settings
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="font-mono text-[12px] leading-none text-bone-50/55 transition-colors hover:text-accent"
+            aria-label="Close settings"
+            data-tooltip="Close (ESC)"
+          >
+            ✕
+          </button>
+        </div>
 
-      {/* Three-tile row: FPS lock + Metronome + Feedback. Same
-          dimensions and dressing as the StartCard tiles so the two
-          panels feel like one product. On narrow widths the grid
-          collapses to a single column — keyboard / touch targets stay
-          a comfortable size all the way down to phone widths. */}
-      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+      {/* 2×2 settings grid: FPS lock + Quality on top, Metronome +
+          Feedback below — same ordering as the single-player
+          StartCard so the two surfaces read as one product. All four
+          tiles share the same width / height and dressing (border,
+          padding, label-row + caption-row) so the grid reads as a
+          uniform block. On narrow widths it collapses to a single
+          column — keyboard / touch targets stay a comfortable size
+          all the way down to phone widths. */}
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <button
           type="button"
           onClick={onCycleFpsLock}
           className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
           data-tooltip={
             fpsLock == null
-              ? "FPS lock off — click to cap at 30 FPS"
-              : `Render frame-rate capped at ${fpsLock} FPS — click to ${
-                  fpsLock === 30 ? "cap at 60" : "uncap"
-                }`
+              ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+              : fpsLock === 30
+                ? "Frame-rate capped at 30 FPS — saves battery on laptops"
+                : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
           }
           aria-label="Cycle render FPS lock"
         >
@@ -527,68 +797,14 @@ function PlayerSettingsCard() {
           </span>
         </button>
 
-        <label
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-          data-tooltip="Toggle the audible click track that plays on every beat"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Metronome
-            </span>
-            <input
-              type="checkbox"
-              checked={metronome}
-              onChange={onToggleMetronome}
-              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
-              aria-label="Toggle metronome"
-              aria-keyshortcuts="M"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press M to toggle in-game
-          </span>
-        </label>
-
-        <label
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-          data-tooltip="Toggle hit / miss / release tones on key press"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Feedback
-            </span>
-            <input
-              type="checkbox"
-              checked={sfx}
-              onChange={onToggleSfx}
-              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
-              aria-label="Toggle input sound effects"
-              aria-keyshortcuts="N"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press N to toggle in-game
-          </span>
-        </label>
-      </div>
-
-      {/* Quality + glyph row — same 3-up grid pattern, but with two
-          tiles. Quality cycles HIGH ↔ PERF (full VFX vs no
-          shadow/particle/shockwave) and is read live by the renderer
-          on the next rAF tick (no remount). Glyphs prepends a small
-          ASCII glyph (`* + = x`) to judgment popups so judgments
-          remain distinguishable for color-blind players. Both
-          settings are persisted across sessions and shared with the
-          single-player HUD. */}
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <button
           type="button"
           onClick={onCycleQuality}
           className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
           data-tooltip={
             quality === "high"
-              ? "Quality: HIGH — full visual effects (shadow glows, particles, shockwaves, milestone vignette). Click to switch to PERFORMANCE if you see frame-drops."
-              : "Quality: PERFORMANCE — visual effects disabled to keep frame rate steady. Click to switch back to HIGH."
+              ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
+              : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
           }
           aria-label="Cycle render quality preset"
         >
@@ -612,22 +828,45 @@ function PlayerSettingsCard() {
 
         <label
           className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-          data-tooltip="Add a glyph (* + = x) before each judgment popup so judgments are distinguishable without color."
+          data-tooltip="Audible click track on every beat (key: M)"
         >
           <div className="flex items-center justify-between gap-3">
             <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Glyphs
+              Metronome
             </span>
             <input
               type="checkbox"
-              checked={judgmentGlyphs}
-              onChange={onToggleGlyphs}
+              checked={metronome}
+              onChange={onToggleMetronome}
               className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
-              aria-label="Toggle judgment glyphs (color-blind helper)"
+              aria-label="Toggle metronome"
+              aria-keyshortcuts="M"
             />
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
-            adds * + = x to judgment popups
+            press M to toggle in-game
+          </span>
+        </label>
+
+        <label
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
+          data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Feedback
+            </span>
+            <input
+              type="checkbox"
+              checked={sfx}
+              onChange={onToggleSfx}
+              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
+              aria-label="Toggle input sound effects"
+              aria-keyshortcuts="N"
+            />
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            press N to toggle in-game
           </span>
         </label>
       </div>
@@ -636,7 +875,10 @@ function PlayerSettingsCard() {
           needs the horizontal real estate to be precise, and pairing
           it with the percentage readout in the header line keeps the
           control compact while still showing the live value. */}
-      <div className="mt-2 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2">
+      <div
+        className="mt-2 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
+        data-tooltip="Song playback volume — separate from feedback SFX"
+      >
         <div className="flex items-center justify-between gap-3">
           <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
             Music volume
@@ -655,6 +897,7 @@ function PlayerSettingsCard() {
           className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
           aria-label="Music volume"
         />
+      </div>
       </div>
     </div>
   );
@@ -1344,10 +1587,11 @@ function HostPane({
               ? searchPage === 0 || searchLoading
               : browsePage === 0 || browseLoading
           }
-          className="brut-btn px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
+          className="brut-btn inline-flex items-center gap-1 px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
           data-tooltip="Previous page"
         >
-          ← Prev
+          <ArrowIcon direction="left" strokeWidth={2.75} />
+          Prev
         </button>
         <span className="tabular-nums">
           Page {(inSearchMode ? searchPage : browsePage) + 1}
@@ -1374,14 +1618,15 @@ function HostPane({
               ? !searchHasMore || searchLoading
               : !browseHasMore || browseLoading
           }
-          className="brut-btn px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
+          className="brut-btn inline-flex items-center gap-1 px-2.5 py-1 text-[0.7rem] disabled:opacity-40"
           data-tooltip={
             (inSearchMode ? searchHasMore : browseHasMore)
               ? "Next page"
               : "End of results"
           }
         >
-          Next →
+          Next
+          <ArrowIcon direction="right" strokeWidth={2.75} />
         </button>
       </div>
 

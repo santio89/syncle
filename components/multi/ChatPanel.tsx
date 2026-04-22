@@ -147,7 +147,17 @@ export function ChatPanel({
       <div
         ref={scrollerRef}
         onScroll={handleScroll}
-        className="mt-3 flex-1 min-h-[8rem] overflow-y-auto pr-1"
+        // `min-h-[8rem]` keeps the messages area at a comfortable
+        // minimum on mobile / tablet (where the chat wrapper is a
+        // fixed `h-[36rem]`), but on lg+ the wrapper itself is
+        // flex-sized and the parent column may be short enough
+        // (e.g. 720p) that 8rem of body PLUS chrome PLUS input
+        // would overflow the allotted slice — which would push the
+        // input below the fold and make it unclickable, the exact
+        // bug we're fixing. `lg:min-h-[3rem]` keeps the area large
+        // enough to show ≥ 1 message comfortably while letting the
+        // chat shrink gracefully when its parent is tight.
+        className="mt-3 flex-1 min-h-[8rem] lg:min-h-[3rem] overflow-y-auto pr-1"
         style={maxHeight ? { maxHeight } : undefined}
       >
         {grouped.length === 0 ? (

@@ -910,8 +910,8 @@ function ConnectingCard({ conn }: { conn: string }) {
       </div>
       {conn !== "connected" && (
         <p className="mt-3 text-[11.5px] leading-snug text-bone-50/55">
-          Free Render servers sleep when idle and take ~30 s to wake on the
-          first connection. Once you&rsquo;re in the room, everything else is
+          Server sleeps when idle and takes ~30 s to wake on the first
+          connection. Once you&rsquo;re in the room, everything else is
           instant.
         </p>
       )}

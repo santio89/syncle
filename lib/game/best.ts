@@ -18,8 +18,18 @@ export interface RunBest {
   score: number;
   accuracy: number;
   maxCombo: number;
-  /** Wall-clock timestamp (ms) the score was saved. */
+  /** Wall-clock timestamp (ms) the BEST score was saved. */
   at: number;
+  /**
+   * Per-track aggregates updated on every finished run (not just on a new
+   * best). Optional so older saved blobs that predate these fields still
+   * load — readers should `?? 0` / `?? at` accordingly.
+   *
+   * `runs`         — total finished runs on this (song, mode) combo.
+   * `lastPlayedAt` — wall-clock timestamp (ms) of the most recent run.
+   */
+  runs?: number;
+  lastPlayedAt?: number;
 }
 
 /** localStorage key for the lifetime best of a given song + mode. */
@@ -49,7 +59,12 @@ export interface SaveResult {
 }
 
 /**
- * Save `candidate` only if it beats the existing best for `key`.
+ * Save `candidate` for `key`. The per-track aggregates (`runs`,
+ * `lastPlayedAt`) are ALWAYS bumped — they reflect "you played this track
+ * again" regardless of whether you topped your high. The score-bearing
+ * fields (`score`, `accuracy`, `maxCombo`, `at`) are only promoted when
+ * the candidate actually beat the previous best.
+ *
  * Returns the resulting best + whether the candidate set a new high.
  */
 export function saveBestIfHigher(
@@ -57,15 +72,26 @@ export function saveBestIfHigher(
   candidate: RunBest,
 ): SaveResult {
   const prev = loadBest(key);
-  if (prev && prev.score >= candidate.score) {
-    return { best: prev, improved: false };
-  }
+  const now = candidate.lastPlayedAt ?? candidate.at ?? Date.now();
+  const runs = (prev?.runs ?? 0) + 1;
+  const improved = !prev || candidate.score > prev.score;
+
+  // Always-fresh fields land on whichever record (prev or candidate) gets
+  // promoted. We carry the score-bearing fields from the *winner*, then
+  // overlay the bumped aggregates.
+  const winner: RunBest = improved ? candidate : prev!;
+  const next: RunBest = {
+    ...winner,
+    runs,
+    lastPlayedAt: now,
+  };
+
   if (typeof window !== "undefined") {
     try {
-      window.localStorage.setItem(key, JSON.stringify(candidate));
+      window.localStorage.setItem(key, JSON.stringify(next));
     } catch {
       /* storage full / disabled — best-effort only */
     }
   }
-  return { best: candidate, improved: true };
+  return { best: next, improved };
 }
