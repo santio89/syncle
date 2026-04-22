@@ -887,34 +887,47 @@ export class AudioEngine {
    * `playComboBreak` for the streak-loss cue), so this is the only
    * audio feedback for a routine miss. Three light cues stacked:
    *
-   *   - 47.18 % volume dip (vs the old 64 % per-miss dip — was tuned
+   *   - 47.81 % volume dip (vs the old 64 % per-miss dip — was tuned
    *     to pair with a loud descending-sawtooth SFX that no longer
    *     exists; without that SFX a deeper dip felt aggressive). Step
-   *     history: 0.55 → 0.5445 (+1 % deeper) → 0.5282 (+3 % deeper,
-   *     compound 0.99 * 0.97 = 0.9603 on the dip target vs the
-   *     pre-tuning 0.55 reference). Each bump made a routine miss
-   *     read a hair more present against louder masters without
-   *     crossing into combo-break territory (which sits at 0.25).
-   *   - ~650 Hz lowpass roll-off (muffles the song's high band for
-   *     a beat — reads as "the song just wobbled")
-   *   - 30-cent pitch wobble (≈ 1/3 of a semitone — audibly off,
-   *     well short of "broken")
+   *     history: 0.55 → 0.5445 (+1 % deeper) → 0.5282 (+3 % deeper)
+   *     → 0.52292 (+1 % deeper, compound 0.99 * 0.97 * 0.99 = 0.9507
+   *     on the dip target vs the pre-tuning 0.55 reference = 47.81 %
+   *     dip). Each bump made a routine miss read a hair more present
+   *     against louder masters without crossing into combo-break
+   *     territory (which sits at ~24.75 %).
+   *   - ~643.5 Hz lowpass roll-off (muffles the song's high band for
+   *     a beat — reads as "the song just wobbled"). Cutoff is owned
+   *     by duckSong itself; the 1 % strength bump applies uniformly
+   *     to per-miss and combo-break callers.
+   *   - 30.3-cent pitch wobble (≈ 1/3 of a semitone — audibly off,
+   *     well short of "broken"). Up from 30 → 30.3 in the same
+   *     +1 % effects bump.
    *
-   * Recovery in 220 ms so consecutive misses don't drag the song
-   * into mud. `duckSong` cancels + re-schedules its ramps each call,
-   * so back-to-back misses just keep extending the dip — which is
-   * the right behaviour: if the player is actively whiffing, the
-   * song staying choked makes semantic sense.
+   * Total recovery in 250 ms (was 220) — broken into a 50 ms ramp
+   * DOWN into the dip and a 200 ms ramp BACK UP. The longer ramp-in
+   * makes the choke read as a deliberate "guitar choke" gesture
+   * rather than a click. `duckSong` cancels + re-schedules its
+   * ramps each call, so back-to-back misses just keep extending
+   * the dip — which is the right behaviour: if the player is
+   * actively whiffing, the song staying choked makes semantic
+   * sense.
    *
    * Gated by `sfxOn` so the Feedback toggle kills it cleanly.
    */
   playMissDistort(): void {
     if (!this.sfxOn) return;
-    // 0.5282 = 0.55 * 0.99 * 0.97 — original 0.55 baseline (45 %
-    // dip), then a +1 % deepening pass (× 0.99 → 0.5445), then a
-    // final +3 % deepening pass (× 0.97 → 0.5282 = 47.18 % dip).
-    // See the JSDoc above for the full step history.
-    this.duckSong(0.5282, 220, 30);
+    // 0.52292 = 0.55 * 0.99 * 0.97 * 0.99 — original 0.55 baseline
+    // (45 % dip), then a +1 % deepening pass (× 0.99 → 0.5445),
+    // then a +3 % deepening pass (× 0.97 → 0.5282), then the latest
+    // +1 % deepening pass (× 0.99 → 0.52292 = 47.81 % dip). See the
+    // JSDoc above for the full step history.
+    //
+    // 250 ms total / 50 ms ramp-in / 30.3 cents pitch wobble all
+    // come from the same +1 % strength tuning pass. The 50 ms
+    // ramp-in is a 25 % stretch from the historical 40 ms snap so
+    // the dip lands as a deliberate gesture instead of a click.
+    this.duckSong(0.52292, 250, 30.3, 50);
   }
 
   /**
@@ -1044,9 +1057,25 @@ export class AudioEngine {
     }
 
     // Aggressive song duck — deeper / longer / more wobble than the
-    // old per-miss duck because this only fires on actual moments,
-    // and the song should momentarily acknowledge the break.
-    this.duckSong(0.25, 380, 90);
+    // per-miss duck because this only fires on actual moments, and
+    // the song should momentarily acknowledge the break.
+    //
+    //   0.2475 = 0.25 baseline × 0.99 — the +1 % deepening pass that
+    //            also lifted per-miss to 0.52292. Keeps combo-break
+    //            and per-miss in lockstep on the strength axis: both
+    //            got 1 % deeper at the same time, so the relative
+    //            gap between routine miss (≈ 47.8 % dip) and broken
+    //            streak (≈ 75.25 % dip) is preserved.
+    //   400 ms = was 380, bumped 20 ms so the longer 50 ms ramp-in
+    //            still leaves a comfortable recovery tail. The
+    //            "moment ended" cue should breathe; a too-short
+    //            recovery would step on the next note's intro.
+    //   90.9   = 90 cents × 1.01 — same +1 % effects bump as the
+    //            per-miss detune (30 → 30.3).
+    //   50 ms ramp-in — matches the per-miss value so the two ducks
+    //            share the same shape; only the depth / duration /
+    //            wobble depth differ.
+    this.duckSong(0.2475, 400, 90.9, 50);
   }
 
   /**
@@ -1060,11 +1089,24 @@ export class AudioEngine {
    *                   ~55 cents sits between a quarter- and half-tone:
    *                   audibly off without sounding broken. Recovers fast
    *                   so consecutive misses don't compound into a mess.
+   *   rampInMs        time to ramp DOWN into the dip before the recovery
+   *                   ramp begins. Default 40 ms keeps back-compat with
+   *                   the historical "snap down fast" behavior; per-miss
+   *                   and combo-break cues use 50 ms so the choke reads
+   *                   as a deliberate "guitar choke" gesture rather than
+   *                   a click. The remainder (durMs − rampInMs) is the
+   *                   recovery ramp back to the running level.
    */
-  duckSong(amountFactor = 0.36, durMs = 260, detuneCents = 55): void {
+  duckSong(
+    amountFactor = 0.36,
+    durMs = 260,
+    detuneCents = 55,
+    rampInMs = 40,
+  ): void {
     if (!this.songGain || !this.songFilter || !this.ctx) return;
     const t = this.ctx.currentTime;
     const dur = durMs / 1000;
+    const rampIn = rampInMs / 1000;
     // `songVol` is the perceived/slider value; the actual gain we want
     // to dip from (and recover back to) is the curved value. Multiplying
     // amountFactor against the curved gain keeps the duck depth a true
@@ -1074,27 +1116,31 @@ export class AudioEngine {
     const g = this.songGain.gain;
     g.cancelScheduledValues(t);
     g.setValueAtTime(g.value, t);
-    g.linearRampToValueAtTime(vol * amountFactor, t + 0.04);
+    g.linearRampToValueAtTime(vol * amountFactor, t + rampIn);
     g.linearRampToValueAtTime(vol, t + dur);
 
     const f = this.songFilter.frequency;
     f.cancelScheduledValues(t);
     f.setValueAtTime(f.value, t);
-    // 650Hz cutoff sits between the original 700 and the harsher 600 —
-    // muffles the song just enough to feel physical without sounding
-    // underwater on consecutive misses.
-    f.linearRampToValueAtTime(650, t + 0.04);
+    // 643.5 Hz cutoff = the original 650 Hz target trimmed by 1 % as
+    // part of the "+1 % distortion strength / effects" tuning pass —
+    // a hair more muffling on the dip without crossing into the
+    // "underwater" zone the harsher 600 Hz value used to land in.
+    // Sits between the historical 700 → 650 → 643.5 progression and
+    // applies uniformly to per-miss and combo-break ducks.
+    f.linearRampToValueAtTime(643.5, t + rampIn);
     f.linearRampToValueAtTime(22000, t + dur);
 
-    // Pitch wobble. Snap down fast (40ms), then ride back to 0 cents over
-    // the rest of the duration — same shape as the volume duck so the ear
-    // hears the three cues as one event, not three.
+    // Pitch wobble. Snap down over `rampInMs`, then ride back to 0
+    // cents over the rest of the duration — same shape as the volume
+    // duck so the ear hears the three cues (volume, filter, pitch)
+    // as one event, not three.
     const src = this.source;
     if (src) {
       const d = src.detune;
       d.cancelScheduledValues(t);
       d.setValueAtTime(d.value, t);
-      d.linearRampToValueAtTime(-detuneCents, t + 0.04);
+      d.linearRampToValueAtTime(-detuneCents, t + rampIn);
       d.linearRampToValueAtTime(0, t + dur);
     }
   }
