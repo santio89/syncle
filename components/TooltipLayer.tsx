@@ -44,7 +44,17 @@ interface TooltipState {
   placement: Placement;
 }
 
-const SHOW_DELAY_MS = 320;
+// Hover dwell time before a tooltip appears. Tuned to feel like
+// the native browser `title` attribute (≈500–700 ms) so casual
+// mouse-overs don't trigger ambient bubbles — the user has to
+// actually pause and "ask" for the affordance. 320 ms (the
+// previous value) was short enough that simply gliding the mouse
+// across a row of buttons would flash multiple tooltips in a
+// row, which felt twitchy. 600 ms is the sweet spot: long enough
+// to ignore drive-by movement, short enough that an intentional
+// pause-to-look still shows the bubble before the user gives up
+// and moves on.
+const SHOW_DELAY_MS = 600;
 const HIDE_DELAY_MS = 80;
 /** Min vertical breathing room between the tooltip nub and the trigger. */
 const ANCHOR_GAP_PX = 8;
@@ -190,9 +200,29 @@ export function TooltipLayer() {
     };
 
     const onFocusIn = (e: FocusEvent) => {
-      // Keyboard focus → show immediately (no hover delay), since the
-      // user is asking for the affordance explicitly via Tab.
-      const found = findTooltipTarget(e.target as Element | null);
+      const target = e.target as Element | null;
+      if (!target) return;
+      // Only show the tooltip on focus when the focus was triggered
+      // by KEYBOARD navigation (Tab / Shift+Tab / arrow keys),
+      // signalled by `:focus-visible` matching. Pointer-induced focus
+      // (a click on a button) intentionally does NOT trigger the
+      // tooltip — every click on a tooltip-bearing control was
+      // otherwise flashing the bubble for the post-pointerdown /
+      // pre-blur window, which felt distracting and "instant" even
+      // though the hover code path has a deliberate 600 ms dwell
+      // delay. Mouse hover still works via `pointerover` (which
+      // honors SHOW_DELAY_MS), and keyboard users still get the
+      // immediate affordance they need to navigate by Tab.
+      try {
+        if (target.matches && !target.matches(":focus-visible")) return;
+      } catch {
+        // `:focus-visible` is well-supported (Chrome 86+, Firefox
+        // 85+, Safari 15.4+) but defensively swallow throws on
+        // older engines — in that case we fall through to the
+        // legacy "show immediately on any focus" behavior, which
+        // is no worse than what we shipped before.
+      }
+      const found = findTooltipTarget(target);
       if (!found) return;
       clearShowTimer();
       clearHideTimer();

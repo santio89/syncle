@@ -1379,23 +1379,29 @@ function HostPane({
         </div>
       </div>
 
-      {/* Selected preview. When a song IS picked the whole tile
-          flips into the accent palette (blue border + faint blue
-          fill + accent label) so the host's eye snaps to "yes, a
-          song is queued" without having to read the text. The
-          empty state stays neutral so it doesn't shout for
-          attention before there's anything to confirm. */}
+      {/* Selected preview. Both states use the accent palette so this
+          tile reads as a themed surface in lockstep with the
+          surrounding lobby boxes (Stats panel, ready quorum bar,
+          accent buttons). The transition from empty → selected is
+          a SATURATION ramp on the same hue rather than a swap from
+          neutral to colored: empty is a quiet outline (≈30 % accent
+          border, ~3 % fill, half-strength label) so the eye still
+          registers it as "host control" without it shouting for
+          attention before there's anything to confirm; selected
+          fills in the same border + tint at full strength so the
+          host's eye snaps to "yes, a song is queued" without
+          having to read the text. */}
       <div
         className={`mt-4 border-2 px-3 py-2 transition-colors ${
           selected
             ? "border-accent/70 bg-accent/[0.06]"
-            : "border-bone-50/20"
+            : "border-accent/30 bg-accent/[0.03]"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
           <p
             className={`font-mono text-[10.5px] uppercase tracking-widest ${
-              selected ? "text-accent" : "text-bone-50/50"
+              selected ? "text-accent" : "text-accent/55"
             }`}
           >
             Selected
@@ -1420,7 +1426,7 @@ function HostPane({
             <span className="font-bold text-accent">{selected.title}</span>
           </p>
         ) : (
-          <p className="mt-0.5 font-mono text-[0.92rem] text-bone-50/40">
+          <p className="mt-0.5 font-mono text-[0.92rem] text-accent/45">
             nothing yet — pick from the catalog below
           </p>
         )}
