@@ -2238,7 +2238,9 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
           <VisibilityBadge visibility={snapshot.visibility} />
         </div>
         <p className="mt-2 max-w-md text-[0.92rem] text-bone-50/65">
-          The host of this room chooses the song and difficulty. Hit{" "}
+          The host of this room chooses the song and difficulty.
+          <br />
+          Hit{" "}
           <span className="font-mono text-bone-50">Mark ready</span> to
           tell the host you&apos;re good to go.
         </p>
