@@ -1577,8 +1577,13 @@ function drawLaneGate(
     // Held / flash glow + a small lift from anticipation so the gate
     // "pulls" as the note approaches — extra anticipatory feel before
     // any keypress.
+    //
+    // `flash * 32` (was 22) so a fresh hit (laneFlash=1) briefly halos
+    // at ~40 px instead of ~30 px — reads as "the ring just popped"
+    // rather than a subtle dim-up. Decays naturally over ~220 ms with
+    // the existing 4.5/s `laneFlash` ramp in Game.tsx / MultiGame.tsx.
     ctx.shadowBlur =
-      held || holding ? 26 : 8 + flash * 22 + anticipation * 12;
+      held || holding ? 26 : 8 + flash * 32 + anticipation * 12;
   }
   ctx.beginPath();
   ctx.arc(x, y, r, 0, TAU);
@@ -1597,6 +1602,32 @@ function drawLaneGate(
   }
 
   ctx.shadowBlur = 0;
+
+  // Outer-ring brightness pop on hit. A second thin white-tinted
+  // stroke layered on top of the lane-colored ring so the outer
+  // circle visibly *brightens* for ~220 ms after a successful hit
+  // (`laneFlash` resets to 1.0 on hit, then decays at 4.5/s — see
+  // Game.tsx / MultiGame.tsx).
+  //
+  // Critically this works identically in BOTH perf and quality
+  // modes:
+  //   - perf:    the colored ring has no shadow at all, so this
+  //              overlay alone delivers the entire brightness pop
+  //              with zero shadow-pass cost.
+  //   - quality: stacks on top of the boosted shadowBlur halo above
+  //              for a layered "lane glow + white core flash" feel.
+  //
+  // Drawn AFTER `shadowBlur = 0` (above) so the overlay itself
+  // doesn't trigger a third shadow pass per lane per frame.
+  // Quantized via `whiteShineRgba` to reuse pre-built rgba strings
+  // and avoid per-frame allocations.
+  if (flash > 0.05) {
+    ctx.strokeStyle = whiteShineRgba(0.55 * flash);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.stroke();
+  }
+
   ctx.fillStyle = palette.gateInner;
   ctx.beginPath();
   ctx.arc(x, y, innerCoreR, 0, TAU);
