@@ -29,12 +29,14 @@ const METRONOME_KEY = "syncle.metronome";
 // `METRONOME_KEY` across sessions.
 const DEFAULT_METRONOME = false;
 const QUALITY_KEY = "syncle.quality";
-// Performance is the default — tuned to ship the steadiest frame rate
-// out of the box across the widest hardware spread (integrated GPUs,
-// laptops on battery, older browsers). Players who want the full VFX
-// reel can flip to HIGH from the StartCard / HUD / Lobby tile; the
-// choice persists across sessions in `QUALITY_KEY`.
-const DEFAULT_QUALITY: RenderQuality = "performance";
+// High (Quality) is the default — the canvas is tuned to look its
+// best with the full VFX reel (particles, shockwaves, glow halos,
+// milestone vignette, lane-gate anticipation), and modern GPUs
+// (including integrated ones on recent laptops) handle it cleanly.
+// Players on low-end hardware, on battery, or who prefer a calmer
+// canvas can flip to PERFORMANCE from the StartCard / HUD / Lobby
+// tile; the choice persists across sessions in `QUALITY_KEY`.
+const DEFAULT_QUALITY: RenderQuality = "high";
 
 /* -----------------------------------------------------------------------
  * Storage-health signal — fires the first time a settings / resume /
