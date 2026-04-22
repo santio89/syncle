@@ -323,7 +323,7 @@ export function Lobby({
             allReady={allReady}
           />
         ) : (
-          <GuestPane snapshot={snapshot} />
+          <GuestPane snapshot={snapshot} code={code} />
         )}
       </div>
 
@@ -2223,27 +2223,57 @@ function PhasePill({
   );
 }
 
-function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
+function GuestPane({
+  snapshot,
+  code,
+}: {
+  snapshot: RoomSnapshot;
+  code: string;
+}) {
   const selected = snapshot.selectedSong;
+  // Same copy-to-clipboard surface the HostPane uses. Guests need the
+  // affordance just as much as (arguably MORE than) hosts: they're the
+  // ones most likely to want to share the code with the next friend
+  // joining the session, and digging through the URL bar to find it
+  // is friction we already solved on the host side.
+  const { copy, copied } = useCopyToClipboard();
   return (
-    <div className="brut-card flex h-full flex-col items-start gap-4 p-5 sm:p-6">
-      <div>
-        <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
-          ░ Waiting for host
-        </p>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <h3 className="font-display text-[1.31rem] font-bold">
-            {snapshot.name || "Room"}
-          </h3>
-          <VisibilityBadge visibility={snapshot.visibility} />
+    <div className="brut-card flex h-full flex-col p-5 sm:p-6">
+      {/* Header row mirrors the HostPane layout: identity on the left
+          (kicker + room name + visibility badge), copy-code button on
+          the right. Keeping the shape identical means a player who
+          gets promoted to host (or demoted) doesn't see the room
+          identity pop around when the pane swaps. */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
+            ░ Waiting for host
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h3 className="font-display text-[1.31rem] font-bold">
+              {snapshot.name || "Room"}
+            </h3>
+            <VisibilityBadge visibility={snapshot.visibility} />
+          </div>
+          <p className="mt-2 max-w-md text-[0.92rem] text-bone-50/65">
+            Hit{" "}
+            <span className="font-mono text-bone-50">Mark ready</span> to
+            tell the host you&apos;re good to go.
+          </p>
         </div>
-        <p className="mt-2 max-w-md text-[0.92rem] text-bone-50/65">
-          The host of this room chooses the song and difficulty.
-          <br />
-          Hit{" "}
-          <span className="font-mono text-bone-50">Mark ready</span> to
-          tell the host you&apos;re good to go.
-        </p>
+        <div className="relative">
+          <CopyToast visible={copied} />
+          <button
+            onClick={() => copy(code)}
+            className="brut-btn inline-flex items-center gap-2 px-3 py-2 font-mono text-[0.86rem] uppercase tracking-wider"
+            data-tooltip="Copy room code"
+          >
+            <span>{code}</span>
+            <span aria-hidden className="text-[0.92rem] leading-none">
+              ⧉
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Mirrors the host pane's "Selected" box theming so guests get
@@ -2253,9 +2283,12 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
           Populated: full-strength accent border + accent-tinted artist
           / em-dash / title typography (title bold to match the host
           variant). The leading right-arrow stays as a visual cue that
-          this is the song the host has locked in. */}
+          this is the song the host has locked in.
+          mt-4 instead of a parent `gap-4` so the spacing matches
+          HostPane (which also walks the layout with explicit
+          margins) — keeps the two panes visually in lockstep. */}
       <div
-        className={`w-full border-2 px-3 py-2 transition-colors ${
+        className={`mt-4 w-full border-2 px-3 py-2 transition-colors ${
           selected
             ? "border-accent/70 bg-accent/[0.06]"
             : "border-accent/30 bg-accent/[0.03]"
