@@ -2244,13 +2244,31 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
         </p>
       </div>
 
-      <div className="w-full border-2 border-bone-50/20 px-3 py-2">
-        <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
+      {/* Mirrors the host pane's "Selected" box theming so guests get
+          the same accent treatment in both empty and populated states.
+          Empty: muted accent border / label / body so the box still
+          reads as "themed" rather than a neutral grey card.
+          Populated: full-strength accent border + accent-tinted artist
+          / em-dash / title typography (title bold to match the host
+          variant). The leading right-arrow stays as a visual cue that
+          this is the song the host has locked in. */}
+      <div
+        className={`w-full border-2 px-3 py-2 transition-colors ${
+          selected
+            ? "border-accent/70 bg-accent/[0.06]"
+            : "border-accent/30 bg-accent/[0.03]"
+        }`}
+      >
+        <p
+          className={`font-mono text-[10.5px] uppercase tracking-widest ${
+            selected ? "text-accent" : "text-accent/55"
+          }`}
+        >
           Currently selected
         </p>
         {selected ? (
           <p
-            className="mt-0.5 truncate font-mono text-[0.92rem] text-bone-50/90"
+            className="mt-0.5 truncate font-mono text-[0.92rem]"
             data-tooltip={`${selected.artist} — ${selected.title}`}
           >
             <ArrowIcon
@@ -2259,11 +2277,12 @@ function GuestPane({ snapshot }: { snapshot: RoomSnapshot }) {
               strokeWidth={2.75}
               className="mr-1 inline align-middle text-accent"
             />
-            <span className="text-bone-50/60">{selected.artist}</span> —{" "}
-            <span className="text-bone-50">{selected.title}</span>
+            <span className="text-accent/65">{selected.artist}</span>{" "}
+            <span className="text-accent/40">—</span>{" "}
+            <span className="font-bold text-accent">{selected.title}</span>
           </p>
         ) : (
-          <p className="mt-0.5 font-mono text-[0.92rem] text-bone-50/40">
+          <p className="mt-0.5 font-mono text-[0.92rem] text-accent/45">
             nothing yet
           </p>
         )}
