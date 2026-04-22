@@ -860,22 +860,23 @@ export class AudioEngine {
       filterType: "lowpass",
       filterHz: 800 + cutoffBumpHz + laneOffset,
       filterQ: 0.7,
-      // 0.640 / 0.239 = empty's 0.634 / 0.237 base * 1.01 — the hit
-      // family is now lifted +1 % above empty so a successful
-      // connect reads a hair more present than a dry tap on a lane
-      // with nothing to hit. The per-judgment ladder (volMul =
-      // 1.015 / 1.030 / 1.050 for good / great / perfect) stacks on
-      // top of this hit-base.
+      // 0.6464 / 0.2414 = empty's 0.6403 / 0.2394 base * 1.01 — the
+      // hit family is lifted +1 % above empty so a successful connect
+      // reads a hair more present than a dry tap on a lane with
+      // nothing to hit. The per-judgment ladder (volMul = 1.015 /
+      // 1.030 / 1.050 for good / great / perfect) stacks on top of
+      // this hit-base.
       //
       // Empty's full compound history vs the pre-tuning reference is
       // documented at playEmptyPress; the hit family rides that base
       // plus this +1 % uplift (so total hit-vs-pre-tuning compound =
-      // +13.14 %, +14.82 %, +16.62 %, +18.62 % at empty / good /
-      // great / perfect respectively).
-      noiseVol: 0.640 * volMul,
+      // +14.21 %, +15.93 %, +17.64 %, +19.92 % at empty / good /
+      // great / perfect respectively, after the latest +1 % bump on
+      // both empty and hit layers).
+      noiseVol: 0.6464 * volMul,
       dur: 0.09,
       bodyHz: 140 + bodyBumpHz,
-      bodyVol: 0.239 * volMul,
+      bodyVol: 0.2414 * volMul,
       bodyDur: 0.08,
     });
   }
@@ -951,19 +952,19 @@ export class AudioEngine {
       filterType: "lowpass",
       filterHz: 800,
       filterQ: 0.7,
-      // 0.634 / 0.237 = 0.566 / 0.212 * 1.01 * 1.015 * 1.01 * 1.05 *
-      // 1.02 * 1.01 — original +1 % global SFX bump, +1.5 % on the
-      // input-feedback + metronome layer, +1 % on the input-feedback
-      // layer, +5 % on the input-feedback layer, +2 % on the input-
-      // feedback layer, and a final +1 % on the input-feedback layer
-      // alone. Kept identical to the reference numbers in
-      // playInputFeedback so empty stays the floor of the volume
-      // ladder; hits read as the same drum +1.5/3/5 % depending on
-      // judgment.
-      noiseVol: 0.634,
+      // 0.6403 / 0.2394 = 0.566 / 0.212 * 1.01 * 1.015 * 1.01 * 1.05
+      // * 1.02 * 1.01 * 1.01 — original +1 % global SFX bump, +1.5 %
+      // on the input-feedback + metronome layer, +1 % on the input-
+      // feedback layer, +5 % on the input-feedback layer, +2 % on
+      // the input-feedback layer, +1 % on the input-feedback layer,
+      // and the latest +1 % bump on both empty + hit layers. Kept
+      // in lockstep with the reference numbers in playInputFeedback
+      // so empty stays the floor of the volume ladder; hits ride
+      // this base +1 % then +1.5/3/5 % depending on judgment.
+      noiseVol: 0.6403,
       dur: 0.09,
       bodyHz: 140,
-      bodyVol: 0.237,
+      bodyVol: 0.2394,
       bodyDur: 0.08,
     });
   }
