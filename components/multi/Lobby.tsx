@@ -321,9 +321,15 @@ export function Lobby({
             actions={actions}
             code={code}
             allReady={allReady}
+            meId={meId}
           />
         ) : (
-          <GuestPane snapshot={snapshot} code={code} />
+          <GuestPane
+            snapshot={snapshot}
+            code={code}
+            meId={meId}
+            actions={actions}
+          />
         )}
       </div>
 
@@ -446,28 +452,19 @@ function PlayerRoster({
         ))}
       </ul>
 
-      {/* "You" controls strip: ready toggle + rename. The ready button
-          is the BIG ACTION here — uppercase, accent-filled when on,
-          and a DIMMED version of the same look when off. Sharing the
-          shape across both states (solid accent border + accent
-          shadow, just attenuated) keeps the hover/click feedback feel
-          consistent and makes the on/off toggle read as "saturate /
-          desaturate the same control" rather than "swap between two
-          totally different buttons".
+      {/* "You" controls strip: rename + settings. Mark Ready USED to
+          live here too as the strip's primary action, but it now
+          lives in the right-hand controls box — co-located with the
+          host's Start Match CTA on the host side, and as the guest's
+          sole CTA on the guest side. That swap keeps the LEFT column
+          purely about "who's in the room" (roster + my identity)
+          and the RIGHT column purely about "what we're about to do"
+          (selected song / difficulty / readiness / start), which
+          mirrors the eye-flow most lobby UIs converge on.
 
-          Hidden entirely while a match is in progress — there's no
-          round to be "ready for", and the next round will reset
-          everyone's ready state on `transitionToLobby` anyway. The
-          rename row is still useful (watchers can adjust their name
-          before joining the next round), so it stays. */}
+          The strip stays mounted regardless of match phase because
+          rename is still useful for watchers between rounds. */}
       <div className="mt-4 space-y-4 border-t-2 border-bone-50/10 pt-5">
-        {/* Rename row sits ABOVE Mark Ready — Mark Ready is the
-            primary action (big saturated button) and lives at the
-            very bottom of the card so it's the last thing the eye
-            lands on after scanning the roster top-to-bottom. The
-            quieter rename text-button slots in just under the
-            roster divider where it's easy to find but doesn't
-            compete with the call-to-action. */}
         {editing ? (
           <div className="flex gap-2">
             <input
@@ -489,14 +486,9 @@ function PlayerRoster({
             </button>
           </div>
         ) : (
-          // Rename + Settings row: paired text-buttons that share the
+          // Rename + Settings row: paired text-buttons sharing the
           // same dim-mono-uppercase treatment so they read as the
-          // "secondary actions" strip under the roster, distinct from
-          // the big saturated Mark Ready button below. The dot
-          // separator between them is purely decorative — `aria-hidden`
-          // keeps it out of the screen-reader stream so the two
-          // controls read as independent siblings rather than a single
-          // "rename · settings" phrase.
+          // "secondary actions" strip under the roster.
           <div className="flex items-center justify-between gap-3 font-mono text-[0.79rem] uppercase tracking-widest">
             <button
               onClick={() => {
@@ -516,26 +508,74 @@ function PlayerRoster({
             </button>
           </div>
         )}
-
-        {me && !matchInProgress && (
-          <button
-            onClick={() => actions.setReady(!me.lobbyReady)}
-            className={`w-full border-2 px-4 py-3 font-mono text-[0.86rem] uppercase tracking-[0.3em] transition-colors ${
-              me.lobbyReady
-                ? "border-accent bg-accent text-ink-900 shadow-[6px_6px_0_rgb(var(--shadow-accent))]"
-                : "border-accent/40 bg-accent/5 text-accent/75 shadow-[6px_6px_0_rgb(var(--shadow-accent)/0.35)] hover:border-accent hover:bg-accent/10 hover:text-accent"
-            }`}
-            data-tooltip={
-              me.lobbyReady
-                ? "Click to un-ready"
-                : "Mark yourself ready so the host knows you're set"
-            }
-          >
-            {me.lobbyReady ? "✓ Ready" : "Mark ready"}
-          </button>
-        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Personal "I'm ready" toggle, factored out of PlayerRoster so it can
+ * be reused by HostPane and GuestPane (both render it inside the
+ * right-hand controls box now — see PlayerRoster's strip comment for
+ * the rationale).
+ *
+ * Two visual variants:
+ *   - "primary" (GuestPane): saturated accent button with a 6px
+ *     drop-shadow. This is the GUEST'S ONLY action in the lobby —
+ *     they don't pick songs, don't start the match, can't mute or
+ *     kick — so the button screams. Ready state = filled accent;
+ *     unready = same shape with attenuated opacity (the "saturate
+ *     vs desaturate the same control" pattern reads as a toggle, not
+ *     a swap between two different buttons).
+ *   - "compact" (HostPane): the same shape but smaller padding +
+ *     smaller text + reduced shadow. The host's PRIMARY action is
+ *     Start Match (which lives directly below); a full-strength
+ *     Mark Ready right above it would create two competing CTAs.
+ *     The compact variant still tracks readiness (which feeds the
+ *     `allReady` quorum the start button announces) but visually
+ *     defers to the start CTA underneath it.
+ *
+ * Tooltip copy adapts to the current state — either "click to
+ * un-ready" or "mark yourself ready so the host knows you're set" —
+ * because the same control swings between two opposite intents and
+ * a single static tooltip would feel misleading on the toggled-on
+ * state.
+ */
+function MarkReadyButton({
+  me,
+  onToggle,
+  variant = "primary",
+}: {
+  me: PlayerSnapshot;
+  onToggle: (next: boolean) => void;
+  variant?: "primary" | "compact";
+}) {
+  const compact = variant === "compact";
+  const padding = compact ? "px-3 py-2" : "px-4 py-3";
+  const fontSize = compact ? "text-[0.79rem]" : "text-[0.86rem]";
+  const tracking = compact ? "tracking-[0.25em]" : "tracking-[0.3em]";
+  const onShadow = compact
+    ? "shadow-[4px_4px_0_rgb(var(--shadow-accent))]"
+    : "shadow-[6px_6px_0_rgb(var(--shadow-accent))]";
+  const offShadow = compact
+    ? "shadow-[4px_4px_0_rgb(var(--shadow-accent)/0.35)]"
+    : "shadow-[6px_6px_0_rgb(var(--shadow-accent)/0.35)]";
+  return (
+    <button
+      onClick={() => onToggle(!me.lobbyReady)}
+      className={`w-full border-2 ${padding} font-mono ${fontSize} uppercase ${tracking} transition-colors ${
+        me.lobbyReady
+          ? `border-accent bg-accent text-ink-900 ${onShadow}`
+          : `border-accent/40 bg-accent/5 text-accent/75 ${offShadow} hover:border-accent hover:bg-accent/10 hover:text-accent`
+      }`}
+      data-tooltip={
+        me.lobbyReady
+          ? "Click to un-ready"
+          : "Mark yourself ready so the host knows you're set"
+      }
+    >
+      {me.lobbyReady ? "✓ Ready" : "Mark ready"}
+    </button>
   );
 }
 
@@ -1127,12 +1167,23 @@ function HostPane({
   actions,
   code,
   allReady,
+  meId,
 }: {
   snapshot: RoomSnapshot;
   actions: RoomActions;
   code: string;
   allReady: boolean;
+  /** Local player id — needed so we can render the host's own
+   *  Mark Ready toggle inline with the start CTA below. */
+  meId: string;
 }) {
+  // The host can mark themselves ready just like any other player.
+  // Their ready state feeds the `allReady` quorum that the Start
+  // Match button surfaces ("EVERYONE IS READY" vs "WAITING FOR
+  // PLAYERS, START ANYWAY"), so leaving the toggle out would mean
+  // the start button could never reach its all-ready copy unless
+  // the host happened to be the only one in the room.
+  const me = snapshot.players.find((p) => p.id === meId);
   const [mode, setMode] = useState<ChartMode>("easy");
   // Search input. Drives upstream catalog search when non-empty; when
   // empty the lobby falls back to paginated browse (newest ranked
@@ -1666,6 +1717,24 @@ function HostPane({
         <p className="mt-2 font-mono text-[10.5px] uppercase tracking-widest text-rose-400">
           {probeError}
         </p>
+      )}
+
+      {/* Host's own Mark Ready toggle, rendered as the COMPACT variant
+          (smaller padding / shadow) so it visually defers to the
+          Start Match CTA directly underneath. Two stacked CTAs would
+          fight; the compact treatment makes this read as a "personal
+          state" affordance under the difficulty picker, with Start
+          Match as the actual call to action. Hidden if for some
+          reason `me` isn't in the snapshot yet (very brief hydration
+          race on first connect). */}
+      {me && (
+        <div className="mt-3">
+          <MarkReadyButton
+            me={me}
+            onToggle={(next) => actions.setReady(next)}
+            variant="compact"
+          />
+        </div>
       )}
 
       <button
@@ -2226,11 +2295,22 @@ function PhasePill({
 function GuestPane({
   snapshot,
   code,
+  meId,
+  actions,
 }: {
   snapshot: RoomSnapshot;
   code: string;
+  /** Local player id — needed to render the guest's Mark Ready
+   *  toggle as the bottom CTA of the controls box. */
+  meId: string;
+  /** Same RoomActions surface the host pane uses. The guest only
+   *  reaches for `setReady`, but passing the whole bag keeps the
+   *  prop signature stable if more guest actions land later
+   *  (request-difficulty, request-song, etc.). */
+  actions: RoomActions;
 }) {
   const selected = snapshot.selectedSong;
+  const me = snapshot.players.find((p) => p.id === meId);
   // Same copy-to-clipboard surface the HostPane uses. Guests need the
   // affordance just as much as (arguably MORE than) hosts: they're the
   // ones most likely to want to share the code with the next friend
@@ -2322,6 +2402,25 @@ function GuestPane({
           </p>
         )}
       </div>
+
+      {/* Mark Ready CTA — sole action available to a guest in the
+          lobby (they can't pick songs, change difficulty, or start
+          the match), so it gets the FULL "primary" treatment:
+          saturated accent button + 6px shadow, rendered at the
+          bottom of the card. `mt-auto` pushes it down so the empty
+          space between the "Currently selected" tile and this
+          button stretches with the card's height — symmetric with
+          how HostPane stacks chrome above its Start Match CTA at
+          the bottom. */}
+      {me && (
+        <div className="mt-auto pt-4">
+          <MarkReadyButton
+            me={me}
+            onToggle={(next) => actions.setReady(next)}
+            variant="primary"
+          />
+        </div>
+      )}
     </div>
   );
 }
