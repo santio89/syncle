@@ -552,8 +552,16 @@ html::-webkit-scrollbar-thumb:hover {
   border: 2px solid rgb(var(--accent));
   /* Accent-tinted shadow — see --shadow-accent. Keeps the play/start
    * buttons reading as a single blue color block rather than blue-on-
-   * white (dark mode) or blue-on-black (light mode). */
-  box-shadow: 5px 5px 0 0 rgb(var(--shadow-accent));
+   * white (dark mode) or blue-on-black (light mode).
+   *
+   * Base shadow is 4px (vs `.brut-btn`'s 5px) — the saturated accent
+   * fill has higher contrast against the page than the secondary
+   * button's bone/ink fill, so it visually "weighs more" already.
+   * Trimming a pixel off the shadow keeps the overall mass
+   * comparable and prevents accent buttons from dominating layouts
+   * where they sit alongside small inputs (e.g. the rename row's
+   * `save` button next to a text field). */
+  box-shadow: 4px 4px 0 0 rgb(var(--shadow-accent));
   /* Same press / lift transition timings as `.brut-btn` so the two
    * button variants feel identical on interaction. Without these the
    * accent button was a static rectangle while the secondary button
@@ -563,7 +571,8 @@ html::-webkit-scrollbar-thumb:hover {
 }
 .brut-btn-accent:hover {
   transform: translate(-1px, -1px);
-  box-shadow: 6px 6px 0 0 rgb(var(--shadow-accent));
+  /* Hover lift = base + 1px, mirroring `.brut-btn`'s 5→6 ramp. */
+  box-shadow: 5px 5px 0 0 rgb(var(--shadow-accent));
 }
 .brut-btn-accent:active {
   transform: translate(3px, 3px);
