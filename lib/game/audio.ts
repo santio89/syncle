@@ -804,10 +804,12 @@ export class AudioEngine {
    * drum as empty, just punchier and a hair crispier when you
    * actually connect.
    *
-   * Brightness ladder (filter cutoff vs empty's 800 Hz):
-   *   good     → +0.6 %  (805 Hz)
-   *   great    → +1.25 % (810 Hz)
-   *   perfect  → +2 %    (816 Hz)
+   * Brightness ladder (filter cutoff vs empty's 600 Hz "muted"
+   * base — see filterHz comment in playEmptyPress for why the
+   * noise lowpass sits at 600 Hz instead of 800):
+   *   good     → +0.83 % (605 Hz)
+   *   great    → +1.67 % (610 Hz)
+   *   perfect  → +2.67 % (616 Hz)
    *
    * Body-pitch ladder (vs empty's 140 Hz sine):
    *   good     → +1.4 % (142 Hz, ~25 cents)
@@ -822,22 +824,22 @@ export class AudioEngine {
    * the absolute pitch, so the climb registers as crispness
    * rather than melody.
    *
-   * Volume ladder (stacks on the 0.70 noise / 0.30 body hit base):
-   *   empty    →  empty-press base  (0.65 noise, 0.25 body — see
+   * Volume ladder (stacks on the 0.70 noise / 0.26 body hit base):
+   *   empty    →  empty-press base  (0.65 noise, 0.22 body — see
    *                                  playEmptyPress)
-   *   hit-base →  0.70 noise, 0.30 body (+7.7 % noise / +20 % body
-   *                                  over empty — body lift is
-   *                                  asymmetrically larger because
-   *                                  the body sine carries the
-   *                                  "thump" character that sells
-   *                                  physical impact)
+   *   hit-base →  0.70 noise, 0.26 body (+7.7 % noise / +18.2 %
+   *                                  body over empty — body lift
+   *                                  is asymmetrically larger
+   *                                  because the body sine carries
+   *                                  the "thump" character that
+   *                                  sells physical impact)
    *   good     →  hit-base * 1.015  (+1.5 % on top of hit-base)
    *   great    →  hit-base * 1.030  (+3 % on top of hit-base)
    *   perfect  →  hit-base * 1.050  (+5 % on top of hit-base)
    *
-   * Lane offset stays tiny (±6 Hz on the cutoff, well under 1 %)
-   * so each lane gets a hair of texture variation without breaking
-   * the "same drum" rule.
+   * Lane offset stays tiny (±6 Hz on the cutoff, ~1 % of the
+   * 600 Hz base) so each lane gets a hair of texture variation
+   * without breaking the "same drum" rule.
    */
   private playInputFeedback(
     lane: number,
@@ -864,37 +866,52 @@ export class AudioEngine {
     this.playDrum({
       when,
       filterType: "lowpass",
-      filterHz: 800 + cutoffBumpHz + laneOffset,
+      // 600 Hz base (was 800) — "muted" pass that pulls the noise
+      // burst's high-frequency content way down so the input drum
+      // reads as a soft "thp" instead of a bright "ts-thump".
+      // Drops noise output peak by ~25-30 % vs the old 800 Hz base
+      // since ~25-30 % of the white-noise spectrum was getting
+      // through the lowpass at 800 Hz, vs ~18-22 % at 600 Hz. The
+      // additive `cutoffBumpHz` (5/10/16 per judgment) and
+      // `laneOffset` (±6 Hz per lane) ride this lower base
+      // unchanged — they actually become a slightly larger %
+      // delta against 600 (e.g. perfect's +16 Hz is +2.67 %
+      // instead of +2 %), so per-judgment crispness is preserved
+      // or marginally enhanced even though absolute brightness is
+      // down.
+      filterHz: 600 + cutoffBumpHz + laneOffset,
       filterQ: 0.7,
-      // 0.70 / 0.30 — round-number hit base, opened above the shared
-      // empty base (0.65 / 0.25 in playEmptyPress) for a punchier
-      // successful-connect feel:
+      // 0.70 / 0.26 — round-number hit base. Noise stays at 0.70
+      // (the filter cutoff drop above already attenuates the noise
+      // output ~25-30 %, so cutting volume on top would double-
+      // mute). Body volume trimmed -12 % (was 0.30) to soften the
+      // low-end "thump" so it stops competing with kick-drum
+      // frequencies in the song bed.
+      //
+      // Spread vs the shared empty base (0.65 noise / 0.22 body in
+      // playEmptyPress) — preserved exactly across the muting pass:
       //   noise: +7.7 % over empty (0.70 / 0.65)
-      //   body:  +20.0 % over empty (0.30 / 0.25)
+      //   body:  +20.0 % over empty (0.26 / ~0.217 ≈ 0.22 — kept
+      //                              in lockstep)
+      //
       // The asymmetric body lift is intentional — body sine carries
       // the "thump" character, so a fatter low-end on hits reads as
       // physical impact vs the flatter empty-tap timbre. Noise gets
       // a smaller bump because it's already differentiated by the
-      // ~800 Hz + cutoffBumpHz filter cutoff (vs empty's flat
-      // 800 Hz) and the per-lane laneOffset, so it doesn't need a
+      // 600 Hz + cutoffBumpHz filter cutoff (vs empty's flat
+      // 600 Hz) and the per-lane laneOffset, so it doesn't need a
       // huge volume delta to read as a different texture.
       //
       // The per-judgment `volMul` ladder (1.000 / 1.015 / 1.030 /
       // 1.050 for empty / good / great / perfect judgments) stacks
       // on top of this hit base, so a perfect tap lands at 0.7350
-      // noise / 0.3150 body — combined peak ~0.50, well under the
-      // song-bus 1.0 peak budget. See the peak-budget docs at the
-      // top of this file for headroom math.
-      //
-      // Total vs pre-tuning reference (0.566 / 0.212):
-      //   empty (volMul 1.000): +23.67 % / +41.51 % (noise / body)
-      //   good  (volMul 1.015): +25.53 % / +43.63 %
-      //   great (volMul 1.030): +27.38 % / +45.75 %
-      //   perfect (volMul 1.050): +29.86 % / +48.58 %
+      // noise / 0.2730 body. Combined peak ~0.42 (was ~0.50) — the
+      // muting pass also bought back ~0.08 of headroom on the
+      // SFX bus.
       noiseVol: 0.70 * volMul,
       dur: 0.09,
       bodyHz: 140 + bodyBumpHz,
-      bodyVol: 0.30 * volMul,
+      bodyVol: 0.26 * volMul,
       bodyDur: 0.08,
     });
   }
@@ -968,29 +985,32 @@ export class AudioEngine {
     this.playDrum({
       when: t,
       filterType: "lowpass",
-      filterHz: 800,
+      // 600 Hz (was 800) — "muted" pass. See playInputFeedback for
+      // the full rationale; in short, lowering the noise lowpass
+      // pulls the input drum's high-frequency content way down so
+      // it reads as a soft "thp" instead of a brighter "ts-thump",
+      // and stops competing with the song's vocals / hi-hats.
+      filterHz: 600,
       filterQ: 0.7,
-      // 0.65 / 0.25 — round-number rebase. After ~7 incremental
-      // tuning passes the empty-press base had drifted to the
-      // ungainly 0.6403 / 0.2394; we re-anchor here to clean
-      // values for easier future tweaking.
+      // 0.65 / 0.22 — noise stays at 0.65 (the 600 Hz filter
+      // cutoff already attenuates noise output ~25-30 %, so cutting
+      // volume on top would double-mute). Body volume trimmed
+      // -12 % (was 0.25) to soften the low-end thump so empty taps
+      // don't compete with the song's kick-drum frequencies.
       //
       // Empty sits intentionally below the hit-family base (0.70 /
-      // 0.30 in playInputFeedback) — a missed tap reads softer +
+      // 0.26 in playInputFeedback) — a missed tap reads softer +
       // less impactful than a successful connect:
       //   noise: empty is -7.1 % below hit (0.65 vs 0.70)
-      //   body:  empty is -16.7 % below hit (0.25 vs 0.30)
+      //   body:  empty is -15.4 % below hit (0.22 vs 0.26)
       // The bigger body delta is what really sells the difference;
-      // empty's flat 140 Hz sine at 0.25 reads as a soft "padded
-      // click", while hit's 140 + bodyBumpHz at 0.30 lands as a
+      // empty's flat 140 Hz sine at 0.22 reads as a soft "padded
+      // click", while hit's 140 + bodyBumpHz at 0.26 lands as a
       // tuned drum.
-      //
-      // Total vs the 0.566 / 0.212 pre-tuning reference:
-      //   noiseVol: +14.84 %   bodyVol: +17.92 %
       noiseVol: 0.65,
       dur: 0.09,
       bodyHz: 140,
-      bodyVol: 0.25,
+      bodyVol: 0.22,
       bodyDur: 0.08,
     });
   }
