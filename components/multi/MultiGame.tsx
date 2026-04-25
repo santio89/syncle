@@ -424,7 +424,15 @@ function CanvasPane({
       canvas.height = Math.floor(rect.height * dpr);
       canvasSizeRef.current.w = rect.width;
       canvasSizeRef.current.h = rect.height;
-      const ctx = canvas.getContext("2d");
+      // `desynchronized: true` lets the browser present canvas frames
+      // without round-tripping through the page compositor — saves
+      // ~1 frame of input-to-photon latency on most browsers (Chromium
+      // and Firefox honor it; Safari ignores the hint, no penalty).
+      // Free win, applies on every device. We do NOT pass `alpha:
+      // false` — the canvas is intentionally transparent so the body
+      // background can crossfade during the theme transition (see the
+      // `drawFrame` clearRect rationale in lib/game/renderer.ts).
+      const ctx = canvas.getContext("2d", { desynchronized: true });
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
       renderStateRef.current.cache = undefined;
@@ -690,21 +698,59 @@ function CanvasPane({
     phaseRef.current = snapshot.phase;
   }, [snapshot.phase]);
 
+  // Lane-input gate. We accept presses both during the `playing`
+  // phase AND during the SILENT LEAD-IN window of `countdown`
+  // (i.e. after the "3/2/1" overlay disappears, while the highway
+  // is scrolling but the song hasn't started yet). The lead-in
+  // window is identified by `audioStartedRef === true` (the
+  // schedule effect has anchored `audio.start()`'s clock so
+  // `songTime()` returns trustworthy negative values) AND
+  // `songTime >= -MATCH_LEAD_IN_SECONDS` (we're past the cutover
+  // from the "3/2/1" overlay into the silent runway).
+  //
+  // This mirrors single-player exactly. SP doesn't have a separate
+  // server-driven countdown phase — its `playing` state encompasses
+  // both the silent lead-in AND the audio playback, so SP's
+  // `if (p !== "playing") return` gate lets pre-audio taps fire
+  // empty-press feedback by default. Multiplayer's split server
+  // phases (`countdown` covers the full 8 s pre-roll, only flipping
+  // to `playing` when audio actually starts) used to drop those
+  // pre-audio taps silently — same hands-on-the-keys window, no
+  // feedback. Now both modes feel identical.
+  //
+  // Inside the lead-in: `state.hit()` will simply return null for
+  // any tap that has no chart note in its hit window (the chart
+  // hasn't begun yet), so the press routes to `playEmptyPress`.
+  // If a player taps very early on a note at `songTime ≈ 0` they
+  // can still earn a real hit via the engine's normal early-hit
+  // window — also matches SP.
+  const inputAllowed = (): boolean => {
+    if (phaseRef.current === "results") return false;
+    if (pausedRef.current) return false;
+    if (phaseRef.current === "playing") return true;
+    if (phaseRef.current !== "countdown") return false;
+    if (!audioStartedRef.current) return false;
+    const audio = audioRef.current;
+    if (!audio) return false;
+    return audio.songTime() >= -MATCH_LEAD_IN_SECONDS;
+  };
+
   // `eventTimestamp` is the `performance.now()` moment from the
-  // KeyboardEvent / PointerEvent that caused the press — passed through
-  // to `audio.inputSongTime()` so judgments use the audio clock at the
-  // actual key-down moment, not "audio clock when the React handler
-  // happened to run". See audio.ts and Game.tsx for the full rationale.
+  // KeyboardEvent / PointerEvent that caused the press — passed
+  // through to `audio.inputSongTime()` so judgments use the audio
+  // clock at the actual key-down moment, not "audio clock when the
+  // React handler happened to run". See audio.ts and Game.tsx for
+  // the full rationale.
   const pressLane = useCallback((lane: number, eventTimestamp?: number) => {
     if (phaseRef.current === "results") return;
     heldRef.current[lane] = true;
-    if (phaseRef.current !== "playing") return;
-    // Drop lane input while the room is paused. The audio clock is
-    // frozen on every client, so even an honest mash would miss
-    // judge against a stale `songTime` (and a hostile client could
-    // register pre-positioned hits). Held-state stays accurate
-    // because we still flip `heldRef[lane] = true` above.
-    if (pausedRef.current) return;
+    // Drop lane input while paused or before the lead-in opens. The
+    // audio clock is frozen during pause so even an honest mash
+    // would miss-judge against a stale `songTime` (and a hostile
+    // client could register pre-positioned hits). Held-state stays
+    // accurate because we already flipped `heldRef[lane] = true`
+    // above.
+    if (!inputAllowed()) return;
     const audio = audioRef.current;
     const state = stateRef.current;
     if (!audio || !state) return;
@@ -723,12 +769,13 @@ function CanvasPane({
   const releaseLane = useCallback((lane: number, eventTimestamp?: number) => {
     if (phaseRef.current === "results") return;
     heldRef.current[lane] = false;
-    if (phaseRef.current !== "playing") return;
-    // Mirror `pressLane`: while paused we still clear the held state
-    // (so the player doesn't auto-fire on resume), but we don't run
-    // the engine's tail-judgment — the audio clock is frozen so the
-    // judgment would land at a stale time.
-    if (pausedRef.current) return;
+    // Mirror `pressLane`: outside the input-allowed window we still
+    // clear the held state (so the player doesn't auto-fire on
+    // resume / song start), but we don't run the engine's tail-
+    // judgment — the audio clock is either frozen or hasn't reached
+    // a meaningful chart position yet, so the judgment would land
+    // at a stale time.
+    if (!inputAllowed()) return;
     const audio = audioRef.current;
     const state = stateRef.current;
     if (!audio || !state) return;
@@ -777,6 +824,22 @@ function CanvasPane({
         if (pausedRef.current) return;
         e.preventDefault();
         setMatchMenuOpen((open) => !open);
+        return;
+      }
+      // Block the keys that open the browser/OS menu bar on Windows,
+      // because every one of them blurs the page and silently strands
+      // any held lane keys until the player retaps. The big offender
+      // is `ContextMenu` — the dedicated right-click key between
+      // RightAlt and RightCtrl, which palm-hits constantly during
+      // fast play. `F10` traditionally activates the menu bar for
+      // the same effect. Multi-player especially needs this because
+      // we can't auto-pause on focus loss (the song keeps playing
+      // for everyone else), so suppressing the menu BEFORE it opens
+      // is the only way to keep input flowing. The follow-up
+      // `contextmenu` listener catches right-click and touch long-
+      // press through the same code path.
+      if (e.code === "ContextMenu" || e.code === "F10") {
+        e.preventDefault();
         return;
       }
       // M = metronome, N = feedback SFX. Both are local-only
@@ -839,6 +902,34 @@ function CanvasPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Block the OS / browser context menu while the match is live.
+  // Right-click, the keyboard ContextMenu key, AND touch long-press
+  // all funnel through `contextmenu` — preventDefault here keeps the
+  // menu from opening (and stealing focus, which silently strands
+  // any held lane keys until the player retaps).
+  //
+  // Especially load-bearing in multi: we can't auto-pause on focus
+  // loss the way single-player does (pause is server-coordinated
+  // and unilateral local pause would just put the player further
+  // behind while the song keeps playing for everyone else), so
+  // suppressing the menu BEFORE it opens is the only mitigation
+  // that keeps a palm-hit ContextMenu key from costing the player
+  // a section of the chart.
+  //
+  // Gated on the active match phases so the lobby / results screen
+  // still allow right-click for normal browser actions (copy room
+  // code, inspect, save image, etc.).
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const phase = phaseRef.current;
+      if (phase === "playing" || phase === "countdown") {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
   // Auto-close the in-match menu when we leave the playing phase
   // (host clicked "Cancel match" → room flips to lobby; the safety
   // timer transitioned to results; non-host's `room:leaveMatch`
@@ -871,7 +962,11 @@ function CanvasPane({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    // Same `desynchronized: true` hint as the resize-effect ctx call.
+    // Browsers memoize the context object per canvas, so the option
+    // only takes effect on the first call; passing it on both keeps
+    // future refactors safe.
+    const ctx = canvas.getContext("2d", { desynchronized: true });
     if (!ctx) return;
 
     let last = performance.now();

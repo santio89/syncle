@@ -1,4 +1,5 @@
 import { GameState, JudgmentEvent, isHold } from "./engine";
+import { drawRadialGlow, drawRingGlow } from "./glowSprites";
 import {
   Judgment,
   LANE_COLORS,
@@ -838,9 +839,23 @@ export function drawFrame(
   }
   decayMilestone(rs, dt);
 
+  // Per-frame ambient breath modulation for tap-note halos (quality
+  // mode only). Computed ONCE here and threaded into drawHighway →
+  // drawTapNote so the per-note loop doesn't recompute the same
+  // sin() ~20× per frame on dense charts. In performance mode the
+  // breath is unused (no glow path runs) — pass 1 so the math stays
+  // a no-op for callers that don't gate on `perf`.
+  //
+  // 0.7 ± 0.3 sweeps the halo's globalAlpha between 0.4 and 1.0
+  // (was 0.8-1.0) — clearly perceptible as "the dots are breathing"
+  // without crossing into "the dots are pulsing distractingly".
+  // ω = 1.3 rad/s → ~4.8 s full cycle (was ~7 s) so the breath
+  // reads as a slow ambient rhythm rather than dragging.
+  const breath = perf ? 1 : 0.7 + 0.3 * Math.sin(songTime * 1.3);
+
   drawHighway(
     ctx, state, songTime, opts, rs,
-    firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette, perf,
+    firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette, perf, breath,
   );
 
   if (!perf) {
@@ -1101,6 +1116,7 @@ function drawHighway(
   cache: RenderCache,
   palette: ThemePalette,
   perf: boolean,
+  breath: number,
 ) {
   // Trapezoid floor — drawn at the EXTENDED visual extent so the
   // baked highway gradient can fade alpha to 0 at top and bottom. The
@@ -1152,17 +1168,23 @@ function drawHighway(
   // resolve it here even though the rails no longer need it.
   const ms = rs.milestone?.strength ?? 0;
 
-  // Lane separators — endpoints baked once in `ensureCache` so this is
-  // just N strokes per frame, no `lerp()` per separator.
+  // Lane separators — endpoints baked once in `ensureCache`, AND all N
+  // separators batched into a single path + single stroke. Each
+  // separator shares strokeStyle + lineWidth so there's no need to
+  // break them into individual stroke calls. Drops MAIN_LANE_COUNT-1
+  // (= 3) stroke ops/frame to exactly 1; canvas drivers do less work
+  // on a single multi-subpath stroke than on N independent strokes
+  // because stroke setup (cap/join state, pixel-grid alignment) is
+  // amortized across all subpaths.
   ctx.strokeStyle = palette.laneSeparator;
   ctx.lineWidth = 1;
   const sepBotY = cache.judgeY + 50;
+  ctx.beginPath();
   for (let i = 0; i < cache.separatorTopX.length; i++) {
-    ctx.beginPath();
     ctx.moveTo(cache.separatorTopX[i], cache.topY);
     ctx.lineTo(cache.separatorBotX[i], sepBotY);
-    ctx.stroke();
   }
+  ctx.stroke();
 
   for (let b = 0; b < beatsToDraw; b++) {
     const t = firstBeat + b * beatLen;
@@ -1294,7 +1316,7 @@ function drawHighway(
       const v = a * a;
       if (v > rs.laneAnticipation[n.lane]) rs.laneAnticipation[n.lane] = v;
     }
-    drawTapNote(ctx, n, lookahead, opts, palette, alpha, cache, perf);
+    drawTapNote(ctx, n, lookahead, opts, palette, alpha, cache, perf, breath);
   }
 
   // Judgment line — subtle pulse on the beat AND on combo milestones.
@@ -1370,6 +1392,7 @@ function drawTapNote(
   alpha: number,
   cache: RenderCache,
   perf: boolean,
+  breath: number,
 ) {
   const progress = lookahead / opts.leadTime;
   const y = cache.topY + (cache.judgeY - cache.topY) * (1 - progress);
@@ -1384,31 +1407,47 @@ function drawTapNote(
   const radius = lerp(11.5, 27.5, 1 - progress);
   const color = LANE_COLORS[n.lane];
 
-  ctx.save();
-  // Compositing the whole note via globalAlpha keeps the layered fills
-  // (ring + inner + core) fading together rather than each one having to
-  // bake the alpha into its own color string.
+  // Manual globalAlpha save/restore. Was `ctx.save()/ctx.restore()` —
+  // dropped because we only mutate globalAlpha + fillStyle here, and
+  // every downstream draw path (next note, lane gate, judgment text,
+  // etc.) overwrites fillStyle on entry. Avoiding the canvas state
+  // stack push/pop saves ~2 ops per visible note per frame; on a
+  // dense chart with ~25 notes on screen that's ~50 ops/frame
+  // eliminated. Also drops the dead `ctx.shadowBlur = 0;` calls that
+  // used to live here — neither branch sets shadowBlur (the perf
+  // path is unshadowed fill, the quality path is a drawImage blit
+  // which doesn't honor shadowBlur), so the resets were no-ops.
+  const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = alpha;
-  // Glow only on notes near the judge line. Far-up notes are tiny and
-  // their shadow blur contributes almost nothing visually but costs an
-  // entire offscreen pass per shape — on dense charts (40+ visible notes)
-  // skipping the upper-half blurs trims meaningful frame time on
-  // mid-range GPUs without changing the look in the player's focal area.
-  // We always glow once a note starts fading (alpha < 1), since that's
-  // the moment it sits at/near the line and visual punch matters most.
-  // In `performance` mode we drop the glow entirely — the colored ring
-  // + inner core still read clearly and we save ~1 offscreen pass per
-  // visible note per frame on integrated GPUs.
-  const closeToLine = !perf && (progress < 0.55 || alpha < 1);
-  if (closeToLine) {
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 18 * alpha;
+  // Glow rendering path:
+  //   - quality mode → pre-rasterized `drawRadialGlow` blit. Cheap
+  //     enough (a single drawImage) that we can run it on every
+  //     visible note from the top of the highway down to the judge
+  //     line; there's no longer a `closeToLine` gate. That keeps the
+  //     entire incoming column reading as a single coherent stream
+  //     of glowing dots instead of a hard "glow turns on at 55 %"
+  //     band that visibly popped each note as it crossed mid-screen.
+  //   - performance mode → unshadowed fill (same as before). The
+  //     colored ring + inner core still read clearly and we keep the
+  //     zero-shadow-pass cost for integrated GPUs.
+  //
+  // Breath modulation:
+  //   The glow's intensity breathes via globalAlpha — a slow sine
+  //   sweep computed ONCE per frame in `drawFrame` and threaded down
+  //   to every visible note, so all dots breathe in unison (reads as
+  //   a coherent ambient pulse of the highway, not random per-note
+  //   strobing). Modulates ONLY the halo's intensity, not the inner
+  //   core — the core stays stable so the rhythm-critical center
+  //   point of every note never wavers. Hoisting kills N-1 sin()
+  //   calls per frame on dense charts at ~zero cost.
+  if (perf) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, TAU);
+    ctx.fill();
+  } else {
+    drawRadialGlow(ctx, color, x, y, radius, 18, breath);
   }
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, TAU);
-  ctx.fill();
-  ctx.shadowBlur = 0;
   ctx.fillStyle = palette.noteInner;
   ctx.beginPath();
   ctx.arc(x, y, radius * 0.6, 0, TAU);
@@ -1417,7 +1456,7 @@ function drawTapNote(
   ctx.beginPath();
   ctx.arc(x, y, radius * 0.28, 0, TAU);
   ctx.fill();
-  ctx.restore();
+  ctx.globalAlpha = prevAlpha;
 }
 
 /**
@@ -1475,7 +1514,13 @@ function drawHoldTrail(
   const consumed = n.holding === true;
   const alpha = consumed ? 0.85 : n.tailJudged === "miss" ? 0.18 : 0.55;
 
-  ctx.save();
+  // Manual globalAlpha save/restore. Previously `ctx.save()/restore()`,
+  // dropped because the only state we leak on the way out is fillStyle/
+  // strokeStyle/lineWidth — every downstream path overwrites all three
+  // on entry. shadowBlur is explicitly reset to 0 below before exit
+  // so subsequent paths aren't accidentally shadowed. Saves 2 canvas
+  // state-stack ops per visible hold per frame.
+  const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = alphaMul;
   ctx.fillStyle = laneRgba(n.lane, alpha);
   // Same "near the line" gating as drawTapNote — a hold trail's shadow
@@ -1503,7 +1548,7 @@ function drawHoldTrail(
   ctx.strokeStyle = laneRgba(n.lane, consumed ? 1 : 0.7);
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  ctx.restore();
+  ctx.globalAlpha = prevAlpha;
 
   // Tail cap (so the player can clearly see when to release).
   if (visTail > 0 && visTail < 1) {
@@ -1572,8 +1617,11 @@ function drawLaneGate(
   ctx.save();
   ctx.lineWidth = 4;
   ctx.strokeStyle = color;
-  if (!perf) {
-    ctx.shadowColor = color;
+  if (perf) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.stroke();
+  } else {
     // Held / flash glow + a small lift from anticipation so the gate
     // "pulls" as the note approaches — extra anticipatory feel before
     // any keypress.
@@ -1582,12 +1630,16 @@ function drawLaneGate(
     // at ~40 px instead of ~30 px — reads as "the ring just popped"
     // rather than a subtle dim-up. Decays naturally over ~220 ms with
     // the existing 4.5/s `laneFlash` ramp in Game.tsx / MultiGame.tsx.
-    ctx.shadowBlur =
-      held || holding ? 26 : 8 + flash * 32 + anticipation * 12;
+    //
+    // Routed through `drawRingGlow` so the stroke + shadow combo
+    // becomes a pre-rasterized sprite blit (one drawImage call)
+    // instead of `arc + stroke + shadowBlur` per lane per frame.
+    // Both stroke and shadow are the OPAQUE lane color in this
+    // path, so the sprite captures the visual exactly — same look,
+    // ~10-30x cheaper on integrated GPUs / software fallbacks.
+    const blur = held || holding ? 26 : 8 + flash * 32 + anticipation * 12;
+    drawRingGlow(ctx, color, x, y, r, 4, blur, 1);
   }
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, TAU);
-  ctx.stroke();
 
   // Held / flash fill — extra strong while sustaining a hold.
   const fillAlpha = Math.max(

@@ -56,6 +56,7 @@ import { useLeaveGuard } from "@/components/LeaveGuardProvider";
 import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
 import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
+import { RefreshSongButton } from "@/components/RefreshSongButton";
 import ScrollStrip from "@/components/ScrollStrip";
 import TouchLanes from "@/components/TouchLanes";
 
@@ -331,6 +332,16 @@ export default function Game() {
    * matters.
    */
   const [loadNonce, setLoadNonce] = useState(0);
+  /**
+   * Set by the StartCard's "↻ new" refresh action. The load effect
+   * reads + clears this on the next pass and threads `force: true`
+   * into `loadSong`, which drops chart.ts's session cache and rolls
+   * a brand-new random song instead of reusing the one already
+   * primed for this session. Held in a ref (not state) so the same
+   * mode-toggle effect can consume it without forcing an extra
+   * re-render or pulling it into the dep array.
+   */
+  const forceRefreshRef = useRef(false);
 
   // ---- Live theme → canvas wiring ---------------------------------------
   // The renderer reads `theme` off renderOptsRef every frame to look up its
@@ -397,11 +408,19 @@ export default function Game() {
     // forced song; we clear the ref once the session cache is populated
     // so subsequent toggles use the cached random-pool slot like normal.
     const forcedId = forceBeatmapsetIdRef.current;
+    // Consume + clear the refresh flag immediately so a stray
+    // re-render mid-fetch doesn't double-roll the random pool. Only
+    // the very first pass after the StartCard's ↻ click should pass
+    // `force: true`; subsequent re-runs (mode toggles, theme flips,
+    // etc.) reuse the freshly cached session like normal.
+    const force = forceRefreshRef.current;
+    forceRefreshRef.current = false;
     loadSong(chartMode, {
       onProgress: (msg) => {
         if (!cancelled) setProgressMsg(msg);
       },
       forceBeatmapsetId: forcedId ?? undefined,
+      force,
     })
       .then((loaded) => {
         if (cancelled) return;
@@ -610,7 +629,13 @@ export default function Game() {
       canvas.height = Math.floor(rect.height * dpr);
       canvasSizeRef.current.w = rect.width;
       canvasSizeRef.current.h = rect.height;
-      const ctx = canvas.getContext("2d");
+      // Same `desynchronized: true` hint as the render-loop ctx — see
+      // the matching getContext below for the full rationale. Both
+      // calls return the SAME context object (browsers memoize per
+      // canvas), so the option only takes effect on the first call;
+      // we pass it on both anyway so deletes/refactors don't break
+      // the flag silently.
+      const ctx = canvas.getContext("2d", { desynchronized: true });
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
       renderStateRef.current.cache = undefined;
@@ -820,6 +845,22 @@ export default function Game() {
     setLoadNonce((n) => n + 1);
   }, [pendingResume]);
 
+  /**
+   * StartCard "↻ new" handler — roll a fresh random song without a
+   * full page reload. Mirrors the home page's refresh button: drops
+   * chart.ts's session cache (via the ref consumed in the load
+   * effect) and bumps the load nonce so the effect actually re-runs
+   * even if `chartMode` doesn't change between calls. Safe to spam:
+   * the effect's `cancelled` flag and the `force` consumption make
+   * sure only the freshest pass overwrites state. No-op once a run
+   * has started (button only renders inside the StartCard, which is
+   * gated to `idle` / `loading` phases).
+   */
+  const refreshSong = useCallback(() => {
+    forceRefreshRef.current = true;
+    setLoadNonce((n) => n + 1);
+  }, []);
+
   /** Player tapped "dismiss" on the resume banner — clear it. */
   const onDismissResume = useCallback(() => {
     clearSoloResume();
@@ -848,16 +889,42 @@ export default function Game() {
     setPhase("idle");
   }, []);
 
-  // Auto-pause when the tab is hidden — otherwise the audio clock keeps
-  // running while requestAnimationFrame is throttled to 1Hz, and the
-  // game catches up with a giant burst of misses on tab refocus.
+  // Auto-pause when the tab is hidden OR the window loses focus —
+  // otherwise the audio clock keeps running while requestAnimationFrame
+  // is throttled to 1Hz, and the game catches up with a giant burst of
+  // misses on refocus.
+  //
+  // Two complementary signals:
+  //   - `visibilitychange` fires when the tab is backgrounded
+  //     (switched, browser minimized) — covers the obvious "I alt-
+  //     tabbed" case.
+  //   - `window.blur` fires when *focus* leaves the window without
+  //     hiding the tab — covers OS notifications stealing focus,
+  //     another window getting clicked, the OS context menu opening
+  //     (palm-hits the ContextMenu key, right-click on a trackpad),
+  //     etc. Without this signal the player comes back to a burst of
+  //     unfair misses for keys they were holding when focus left.
+  //
+  // Multi-player intentionally omits the blur path: pause is a
+  // server-coordinated action and a unilateral local pause just makes
+  // the player fall further behind while the song keeps playing for
+  // everyone else. There the `useGameFocusGuard` contextmenu-block is
+  // the only mitigation, plus the existing visibilitychange isn't
+  // ours to add (server drives match phase).
   useEffect(() => {
     if (phase !== "playing") return;
     const onVis = () => {
       if (document.hidden) void pause();
     };
+    const onBlur = () => {
+      void pause();
+    };
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("blur", onBlur);
+    };
   }, [phase, pause]);
 
   // ---- Input handling ---------------------------------------------------
@@ -988,6 +1055,21 @@ export default function Game() {
         else if (phase === "paused") void resumeRef.current();
         return;
       }
+      // Block the keys that open the browser/OS menu bar on Windows,
+      // because every one of them blurs the page and silently strands
+      // any held lane keys until the player retaps. The big offender
+      // is `ContextMenu` — the dedicated right-click key between
+      // RightAlt and RightCtrl, which palm-hits constantly during
+      // fast play. `F10` traditionally activates the menu bar for
+      // the same effect. The follow-up `contextmenu` event listener
+      // (installed below) catches right-click and touch long-press
+      // by the same path; we block at keydown ALSO because some
+      // browsers fire the menu-open default before contextmenu, and
+      // catching it one event earlier means no observable hitch.
+      if (e.code === "ContextMenu" || e.code === "F10") {
+        e.preventDefault();
+        return;
+      }
       if (phase === "paused") return;
       if (e.code === "KeyM") {
         setMetronome((m) => !m);
@@ -1057,11 +1139,49 @@ export default function Game() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Block the OS / browser context menu while gameplay is active.
+  // Right-click, the keyboard ContextMenu key, AND touch long-press
+  // all funnel through the `contextmenu` event — preventDefault here
+  // keeps the menu from opening (and stealing focus, which silently
+  // strands any held lane keys until the player retaps). The keydown
+  // handler above blocks ContextMenu / F10 one event earlier on
+  // browsers that fire the menu-open default before contextmenu;
+  // this listener is the universal catch-all that also handles
+  // mouse and touch sources.
+  //
+  // Gated on the active gameplay phases so the lobby / pause menu /
+  // results screen still allow right-click for normal browser actions
+  // (copy room code, inspect, save image, etc.). Idle/results pages
+  // are not "the game" to a power user, just regular web pages, and
+  // suppressing context menu globally would feel hostile.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const phase = phaseRef.current;
+      if (
+        phase === "playing" ||
+        phase === "countdown" ||
+        phase === "paused"
+      ) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
   // ---- Render loop ------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    // `desynchronized: true` lets the browser present canvas frames
+    // without round-tripping through the page compositor — saves
+    // ~1 frame of input-to-photon latency on most browsers (verified
+    // on Chromium and Firefox; Safari ignores the hint, no penalty).
+    // Free win, applies on every device. We do NOT pass `alpha:
+    // false` because the canvas is intentionally transparent so the
+    // body background can crossfade during the theme transition
+    // (see `drawFrame`'s `clearRect` rationale).
+    const ctx = canvas.getContext("2d", { desynchronized: true });
     if (!ctx) return;
 
     let last = performance.now();
@@ -1453,6 +1573,7 @@ export default function Game() {
             <StartCard
               meta={displayMeta}
               onStart={start}
+              onRefresh={refreshSong}
               loading={phase === "loading"}
               error={error ?? previewError}
               metronome={metronome}
@@ -1807,6 +1928,7 @@ function StatCell({ label, value }: { label: string; value: string }) {
 function StartCard({
   meta,
   onStart,
+  onRefresh,
   loading,
   error,
   metronome,
@@ -1833,6 +1955,11 @@ function StartCard({
 }: {
   meta: SongMeta | null;
   onStart: () => void;
+  /** Roll a brand-new random song without leaving the play page —
+   *  same affordance the home page exposes on its now-playing card,
+   *  surfaced here so the player doesn't have to bounce back to /
+   *  just to skip a song they don't feel like playing. */
+  onRefresh: () => void;
   loading: boolean;
   error: string | null;
   metronome: boolean;
@@ -1902,7 +2029,16 @@ function StartCard({
           : undefined
       }
     >
-      <div className="flex items-baseline justify-between gap-3">
+      {/* Top metadata strip. Parent flips from `items-baseline` to
+          `items-center` because the right cluster now mixes a small
+          source-tag pill (text) with the bordered ↻ refresh button
+          (taller). With baseline alignment the button would visually
+          "drop" below the caption baseline; centering keeps the row
+          balanced regardless of which children are present (source
+          tag only renders once `ready && songSource`, refresh button
+          renders unconditionally so the player can always roll a new
+          song). */}
+      <div className="flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-2">
           <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             {mirror ? "Random pick" : "Now playing"}
@@ -1916,18 +2052,32 @@ function StartCard({
             />
           )}
         </div>
-        {ready && songSource && (
-          <span
-            className="font-mono text-[9.5px] uppercase tracking-widest text-accent/70"
-            data-tooltip={
-              mirror
-                ? `Pulled from ${mirror} at runtime`
-                : "Loaded from a real osu!mania 4K beatmap"
-            }
-          >
-            {mirror ? `via ${mirror}` : "osu! 4K chart"}
-          </span>
-        )}
+        {/* Right cluster: source tag (when ready) + ↻ refresh button.
+            Refresh sits on the far right so it's always pinned to the
+            same pixel slot — the player learns "↻ on the right of the
+            now-playing strip" between the home page and StartCard
+            without the affordance dancing around. `loading` is OR'd
+            with `!ready` so the button shows its spin state during
+            both the initial chart fetch (meta still null) AND any
+            subsequent re-roll triggered by the user themselves. */}
+        <div className="flex shrink-0 items-center gap-2">
+          {ready && songSource && (
+            <span
+              className="font-mono text-[9.5px] uppercase tracking-widest text-accent/70"
+              data-tooltip={
+                mirror
+                  ? `Pulled from ${mirror} at runtime`
+                  : "Loaded from a real osu!mania 4K beatmap"
+              }
+            >
+              {mirror ? `via ${mirror}` : "osu! 4K chart"}
+            </span>
+          )}
+          <RefreshSongButton
+            onClick={onRefresh}
+            loading={!ready || loading}
+          />
+        </div>
       </div>
 
       {ready ? (

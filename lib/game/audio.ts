@@ -866,54 +866,54 @@ export class AudioEngine {
     this.playDrum({
       when,
       filterType: "lowpass",
-      // 594 Hz base (was 800 → 600 → 594) — "muted" pass that pulls
-      // the noise burst's high-frequency content way down so the
-      // input drum reads as a soft "thp" instead of a bright
-      // "ts-thump". The original 800 → 600 cut dropped noise output
-      // peak by ~25-30 %; the latest 600 → 594 trim (compound -1 %
-      // alongside the volume trim below) shaves another sliver off
-      // the noise bandwidth so a stream of taps sits a hair further
-      // back in the mix without losing the "drum" character. The
-      // additive `cutoffBumpHz` (5/10/16 per judgment) and
-      // `laneOffset` (±6 Hz per lane) ride this lower base
-      // unchanged — they become a marginally larger % delta against
-      // 594 vs 600, so per-judgment crispness is preserved.
-      filterHz: 594 + cutoffBumpHz + laneOffset,
+      // 582.1794 Hz base (was 800 → 600 → 594 → 588.06 → 582.1794) —
+      // successive "muted" passes that pull the noise burst's high-
+      // frequency content way down so the input drum reads as a soft
+      // "thp" instead of a bright "ts-thump". The original 800 → 600
+      // cut dropped noise output peak by ~25-30 %; subsequent -1 %
+      // trims (600 → 594 → 588.06 → 582.1794, compound 0.99³ =
+      // 0.970299 of the 600 reference) shave further slivers off the
+      // noise bandwidth so a stream of taps sits a hair further back
+      // in the mix without losing the "drum" character. The additive
+      // `cutoffBumpHz` (5/10/16 per judgment) and `laneOffset`
+      // (±6 Hz per lane) ride this lower base unchanged — they
+      // become a marginally larger % delta against 582 vs 600, so
+      // per-judgment crispness is preserved.
+      filterHz: 582.1794 + cutoffBumpHz + laneOffset,
       filterQ: 0.7,
-      // 0.693 / 0.2574 — round-number hit base (0.70 / 0.26)
-      // trimmed -1 % in the same smoothing pass as the empty-press
-      // values below and the filterHz cut above. The original 0.70
-      // landed after a body volume trim of -12 % (was 0.30) to
-      // soften the low-end "thump" so it stops competing with
-      // kick-drum frequencies in the song bed; the latest -1 %
-      // pulls hit feedback back another notch so it never feels
+      // 0.679209 / 0.252278 — round-number hit base (0.70 / 0.26)
+      // trimmed -1 % three times (compound × 0.970299) in successive
+      // smoothing passes alongside the empty-press values below
+      // and the filterHz cuts above. The original 0.70 landed
+      // after a body volume trim of -12 % (was 0.30) to soften the
+      // low-end "thump" so it stops competing with kick-drum
+      // frequencies in the song bed; each -1 % pull keeps hit
+      // feedback another notch quieter so it never feels
       // disproportionately punchy at high master.
       //
-      // Spread vs the shared empty base (0.6435 noise / 0.2178 body
-      // in playEmptyPress) — preserved exactly across both the
-      // muting pass and the latest -1 % trim, since both layers
-      // dropped together:
-      //   noise: +7.7 % over empty (0.693 / 0.6435)
-      //   body:  +18.2 % over empty (0.2574 / 0.2178 — kept in
-      //                              lockstep)
+      // Spread vs the shared empty base (0.630694 noise / 0.213466
+      // body in playEmptyPress) — preserved exactly across every
+      // pass since both layers drop in lockstep:
+      //   noise: +7.7 % over empty (0.679209 / 0.630694)
+      //   body:  +18.2 % over empty (0.252278 / 0.213466)
       //
       // The asymmetric body lift is intentional — body sine carries
       // the "thump" character, so a fatter low-end on hits reads as
       // physical impact vs the flatter empty-tap timbre. Noise gets
       // a smaller bump because it's already differentiated by the
-      // 594 Hz + cutoffBumpHz filter cutoff (vs empty's flat
-      // 594 Hz) and the per-lane laneOffset, so it doesn't need a
-      // huge volume delta to read as a different texture.
+      // 582.1794 Hz + cutoffBumpHz filter cutoff (vs empty's flat
+      // 582.1794 Hz) and the per-lane laneOffset, so it doesn't need
+      // a huge volume delta to read as a different texture.
       //
       // The per-judgment `volMul` ladder (1.000 / 1.015 / 1.030 /
       // 1.050 for empty / good / great / perfect judgments) stacks
       // on top of this hit base, so a perfect tap now lands at
-      // 0.7277 noise / 0.2703 body (was 0.7350 / 0.2730). Combined
-      // peak ~0.42, essentially unchanged.
-      noiseVol: 0.693 * volMul,
+      // ~0.7132 noise / ~0.2649 body. Combined peak ~0.41,
+      // essentially unchanged.
+      noiseVol: 0.679209 * volMul,
       dur: 0.09,
       bodyHz: 140 + bodyBumpHz,
-      bodyVol: 0.2574 * volMul,
+      bodyVol: 0.252278 * volMul,
       bodyDur: 0.08,
     });
   }
@@ -987,43 +987,45 @@ export class AudioEngine {
     this.playDrum({
       when: t,
       filterType: "lowpass",
-      // 594 Hz (was 800 → 600 → 594) — "muted" pass. See
-      // playInputFeedback for the full rationale; in short, lowering
-      // the noise lowpass pulls the input drum's high-frequency
-      // content way down so it reads as a soft "thp" instead of a
-      // brighter "ts-thump", and stops competing with the song's
-      // vocals / hi-hats. The latest 600 → 594 trim (-1 %) lands in
-      // lockstep with the same -1 % cut on the hit-family cutoff so
-      // the empty / hit timbral relationship is preserved.
-      filterHz: 594,
+      // 582.1794 Hz (was 800 → 600 → 594 → 588.06 → 582.1794) —
+      // successive "muted" passes. See playInputFeedback for the full
+      // rationale; in short, lowering the noise lowpass pulls the
+      // input drum's high-frequency content way down so it reads as a
+      // soft "thp" instead of a brighter "ts-thump", and stops
+      // competing with the song's vocals / hi-hats. Each -1 % trim
+      // (594 → 588.06 → 582.1794) lands in lockstep with the same
+      // -1 % cut on the hit-family cutoff so the empty / hit timbral
+      // relationship is preserved.
+      filterHz: 582.1794,
       filterQ: 0.7,
-      // 0.6435 / 0.2178 — base 0.65 / 0.22 trimmed -1 % in the same
-      // smoothing pass that nudged the hit-family base down by -1 %
-      // (0.70 → 0.693, 0.26 → 0.2574). Noise stays in proportion to
-      // the cutoff: the 594 Hz filter already attenuates noise
-      // output ~25-30 %, so cutting volume on top would double-mute,
-      // and the -1 % trim is small enough to feel like a hair more
+      // 0.630694 / 0.213466 — base 0.65 / 0.22 trimmed -1 % three
+      // times (compound × 0.970299) in successive smoothing passes
+      // that nudged the hit-family base down in lockstep (0.70 →
+      // 0.679209, 0.26 → 0.252278). Noise stays in proportion to the
+      // cutoff: the 582 Hz filter already attenuates noise output
+      // ~25-30 %, so cutting volume on top would double-mute, and
+      // each -1 % trim is small enough to feel like a hair more
       // restraint without re-entering "inaudible" territory. Body
       // volume was previously trimmed -12 % (was 0.25) to soften the
       // low-end thump so empty taps don't compete with the song's
       // kick-drum frequencies; the latest -1 % keeps it in lockstep
       // with the hit body cut.
       //
-      // Empty sits intentionally below the hit-family base (0.693 /
-      // 0.2574 in playInputFeedback) — a missed tap reads softer +
-      // less impactful than a successful connect, and the spread is
-      // preserved across the -1 % trim because both layers dropped
-      // together:
-      //   noise: empty is -7.1 % below hit (0.6435 vs 0.693)
-      //   body:  empty is -15.4 % below hit (0.2178 vs 0.2574)
+      // Empty sits intentionally below the hit-family base (0.679209
+      // noise / 0.252278 body in playInputFeedback) — a missed tap
+      // reads softer + less impactful than a successful connect, and
+      // the spread is preserved across every -1 % trim because both
+      // layers drop together:
+      //   noise: empty is -7.1 % below hit (0.630694 vs 0.679209)
+      //   body:  empty is -15.4 % below hit (0.213466 vs 0.252278)
       // The bigger body delta is what really sells the difference;
-      // empty's flat 140 Hz sine at 0.2178 reads as a soft "padded
-      // click", while hit's 140 + bodyBumpHz at 0.2574 lands as a
+      // empty's flat 140 Hz sine at 0.213466 reads as a soft "padded
+      // click", while hit's 140 + bodyBumpHz at 0.252278 lands as a
       // tuned drum.
-      noiseVol: 0.6435,
+      noiseVol: 0.630694,
       dur: 0.09,
       bodyHz: 140,
-      bodyVol: 0.2178,
+      bodyVol: 0.213466,
       bodyDur: 0.08,
     });
   }

@@ -219,6 +219,129 @@ export const SEARCH_MAX_PAGES = 20;
 export const BROWSE_MAX_PAGES = 100;
 
 /**
+ * How many consecutive upstream pages we walk per LOGICAL page when a
+ * bucket filter is active.
+ *
+ * Why this exists:
+ *   Without filtering, one upstream page (50 sets) ≈ one logical
+ *   page — the host clicks Next, we ask the mirror for the next 50,
+ *   show them. Done.
+ *
+ *   With filtering (e.g. only "easy"), only a fraction of those 50
+ *   sets ship the requested tier — typically 15-40 %, sometimes
+ *   single digits for rarer tiers like Expert. So a naive 1:1 mapping
+ *   leaves the host staring at half-empty lists (5-10 rows where
+ *   they expect ~50) and clicking Next over and over to see more
+ *   matches that exist a couple of upstream pages further in.
+ *
+ *   Walking a BLOCK of upstream pages per logical page is the
+ *   simplest fix that keeps the client API stable (still page-N →
+ *   page-N+1 increments, no cursor state). With BLOCK=4 we examine
+ *   200 candidates per logical page, so even a 10 %-survival filter
+ *   yields ~20 matches per page instead of 5.
+ *
+ * Why deterministic block math (page * BLOCK) instead of an
+ * adaptive "walk until full":
+ *   - Adaptive walking can early-stop, which means the next logical
+ *     page would have to start at a non-block-aligned upstream offset
+ *     to avoid skipping rows. That requires a server-tracked cursor
+ *     (or a client-stored cursor stack for Prev), both of which add
+ *     state and complicate caching.
+ *   - Block math: logical page N always maps to upstream pages
+ *     [N*BLOCK, N*BLOCK+BLOCK-1]. Cache key (page, bucket) stays
+ *     stable, Prev/Next math stays trivial, and no rows are ever
+ *     skipped between blocks.
+ *
+ * Cost: when filtering is active, each Next click triggers up to
+ * BLOCK upstream fetches instead of 1. With the existing 5-minute
+ * per-room cache and mirror responses in the 100-300 ms range, the
+ * first visit to a filtered page takes ~1 second (acceptable behind
+ * the existing "Searching…" affordance), subsequent navigation hits
+ * cache.
+ */
+const BUCKET_FILTER_PAGE_BLOCK = 4;
+
+/**
+ * Walk `BUCKET_FILTER_PAGE_BLOCK` consecutive upstream pages on a
+ * single mirror, normalize + bucket-filter every result, dedupe by
+ * `beatmapsetId`, and return the union.
+ *
+ * Mirror-locking: takes a SINGLE source for the whole walk so prev/
+ * next pagination stays consistent (page-N+1 must show "the next
+ * slice of what page-N showed", which only holds within a single
+ * mirror's view of the world). Caller is responsible for picking
+ * the source — typically by trying the source list in order and
+ * locking to the first one that returns a successful first
+ * sub-page.
+ *
+ * Returns:
+ *   - `items`: union of items across all walked sub-pages, deduped
+ *   - `hasMore`: true iff the LAST walked sub-page returned a full
+ *     upstream slice (`sets.length >= pageSize`). That's the same
+ *     "is there probably more" heuristic we use unfiltered, just
+ *     applied to the last sub-page in the block — if it was full,
+ *     the next block likely has more rows; if it was partial, we've
+ *     hit the end of the mirror's view for this query.
+ *
+ * Re-throws iff the FIRST sub-page errors — that means this mirror
+ * gave us nothing usable, so the caller should fall through to the
+ * next mirror. A mid-walk error (sub-page 2+) is swallowed: we keep
+ * whatever rows the earlier sub-pages already produced and mark
+ * `hasMore: false` since we can't honestly know what comes next.
+ */
+async function walkBucketFilteredBlock(opts: {
+  startPage: number;
+  pageSize: number;
+  bucket: ChartMode;
+  fetchPage: (pageIndex: number) => Promise<unknown[]>;
+  sourceName: string;
+}): Promise<{ items: CatalogItem[]; hasMore: boolean }> {
+  const { startPage, pageSize, bucket, fetchPage, sourceName } = opts;
+  const seen = new Set<number>();
+  const items: CatalogItem[] = [];
+  let lastSubPageWasFull = false;
+
+  for (let i = 0; i < BUCKET_FILTER_PAGE_BLOCK; i++) {
+    const upstreamPage = startPage + i;
+    let sets: unknown[];
+    try {
+      sets = await fetchPage(upstreamPage);
+    } catch (err: any) {
+      if (i === 0) throw err;
+      // Mid-walk failure: keep what we have, mark "no more" since
+      // we can't honestly know what comes next without the rest of
+      // the block.
+      lastSubPageWasFull = false;
+      break;
+    }
+
+    if (sets.length === 0) {
+      // Empty upstream sub-page = end of this mirror's results for
+      // the current query. Don't walk further.
+      lastSubPageWasFull = false;
+      break;
+    }
+
+    for (const raw of sets) {
+      const item = normalize(raw, sourceName);
+      if (!item || seen.has(item.beatmapsetId)) continue;
+      if (!item.availableBuckets?.includes(bucket)) continue;
+      seen.add(item.beatmapsetId);
+      items.push(item);
+    }
+
+    lastSubPageWasFull = sets.length >= pageSize;
+    if (!lastSubPageWasFull) {
+      // Partial upstream sub-page = mirror has nothing past this
+      // offset. No point walking the rest of the block.
+      break;
+    }
+  }
+
+  return { items, hasMore: lastSubPageWasFull };
+}
+
+/**
  * Sort orders we expose for the no-query browse view. The mirror
  * implementations differ in detail (some accept `sort=ranked_desc`,
  * others infer ordering from `s=ranked` alone) but every value here
@@ -317,10 +440,18 @@ export async function searchCatalogPage(opts: {
   /**
    * Optional Syncle bucket filter — when set, the returned `items` are
    * restricted to sets whose `availableBuckets` includes this tier.
-   * Filtering happens AFTER `normalize`, so `hasMore` still reflects
-   * the upstream's view of "is this page full?" (the post-filter slice
-   * may be smaller than the upstream slice; the host paginates further
-   * to find more matches, same as a typical client-side filter).
+   *
+   * When this is set, we walk a BLOCK of `BUCKET_FILTER_PAGE_BLOCK`
+   * consecutive upstream pages per logical page (instead of 1:1) so
+   * the post-filter slice is large enough to actually fill the host's
+   * list. See `BUCKET_FILTER_PAGE_BLOCK` for the why.
+   *
+   * Logical-page math under filter:
+   *   logical page N → upstream pages [N*BLOCK, N*BLOCK+BLOCK-1]
+   *
+   * `hasMore` under filter reflects "is there a next BLOCK", not "is
+   * the current upstream sub-page full" — i.e. it's true iff the LAST
+   * sub-page we walked came back full at the upstream level.
    */
   bucket?: ChartMode;
 }): Promise<SearchCatalogResult> {
@@ -328,36 +459,65 @@ export async function searchCatalogPage(opts: {
   if (!query) {
     throw new Error("searchCatalogPage requires a non-empty query");
   }
-  const page = Math.max(0, Math.min(SEARCH_MAX_PAGES - 1, Math.floor(opts.page)));
   const pageSize = Math.max(
     1,
     Math.min(SEARCH_PAGE_SIZE, Math.floor(opts.pageSize ?? SEARCH_PAGE_SIZE)),
   );
+  // Clamp the LOGICAL page so `page * BLOCK` (when filtering) can't
+  // walk past SEARCH_MAX_PAGES on the upstream. Without filter, BLOCK
+  // is effectively 1 so the existing bound applies.
+  const maxLogicalPage = opts.bucket
+    ? Math.max(0, Math.floor(SEARCH_MAX_PAGES / BUCKET_FILTER_PAGE_BLOCK) - 1)
+    : SEARCH_MAX_PAGES - 1;
+  const page = Math.max(0, Math.min(maxLogicalPage, Math.floor(opts.page)));
 
   const errors: string[] = [];
   for (const src of QUERY_SOURCES) {
-    const url = src.url(query, page, pageSize);
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        headers: { accept: "application/json" },
-        signal: ac.signal,
-      });
-      if (!res.ok) {
-        errors.push(`${src.name} q="${query}" p${page}: HTTP ${res.status}`);
-        continue;
+    const fetchPage = async (upstreamPage: number): Promise<unknown[]> => {
+      const url = src.url(query, upstreamPage, pageSize);
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(url, {
+          headers: { accept: "application/json" },
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const json = await res.json();
+        return src.extract(json);
+      } finally {
+        clearTimeout(timer);
       }
-      const json = await res.json();
-      const sets = src.extract(json);
+    };
+
+    try {
+      if (opts.bucket) {
+        const startPage = page * BUCKET_FILTER_PAGE_BLOCK;
+        const { items, hasMore } = await walkBucketFilteredBlock({
+          startPage,
+          pageSize,
+          bucket: opts.bucket,
+          fetchPage,
+          sourceName: src.name,
+        });
+        return {
+          items,
+          hasMore,
+          page,
+          pageSize,
+          source: src.name,
+        };
+      }
+
+      // Unfiltered: 1 upstream page = 1 logical page (unchanged).
+      const sets = await fetchPage(page);
       const seen = new Set<number>();
       const items: CatalogItem[] = [];
       for (const raw of sets) {
         const item = normalize(raw, src.name);
         if (!item || seen.has(item.beatmapsetId)) continue;
-        if (opts.bucket && !item.availableBuckets?.includes(opts.bucket)) {
-          continue;
-        }
         seen.add(item.beatmapsetId);
         items.push(item);
       }
@@ -378,8 +538,6 @@ export async function searchCatalogPage(opts: {
       const msg =
         err?.name === "AbortError" ? "timeout" : err?.message ?? String(err);
       errors.push(`${src.name} q="${query}" p${page}: ${msg}`);
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -405,17 +563,20 @@ export async function browseCatalogPage(opts: {
   sort?: BrowseSort;
   /**
    * Optional Syncle bucket filter — same semantics as
-   * `searchCatalogPage.bucket`. Applied AFTER `normalize`, so
-   * `hasMore` still reflects the upstream's view of "is this page
-   * full?".
+   * `searchCatalogPage.bucket`. When set, walks a BLOCK of upstream
+   * pages per logical page so the post-filter slice is large enough
+   * to actually fill the host's list.
    */
   bucket?: ChartMode;
 }): Promise<SearchCatalogResult> {
-  const page = Math.max(0, Math.min(BROWSE_MAX_PAGES - 1, Math.floor(opts.page)));
   const pageSize = Math.max(
     1,
     Math.min(SEARCH_PAGE_SIZE, Math.floor(opts.pageSize ?? SEARCH_PAGE_SIZE)),
   );
+  const maxLogicalPage = opts.bucket
+    ? Math.max(0, Math.floor(BROWSE_MAX_PAGES / BUCKET_FILTER_PAGE_BLOCK) - 1)
+    : BROWSE_MAX_PAGES - 1;
+  const page = Math.max(0, Math.min(maxLogicalPage, Math.floor(opts.page)));
   // Validate the sort enum BEFORE building a URL so a mirror never
   // sees a bogus param (some mirrors 400 on unknown sort values
   // instead of ignoring them).
@@ -426,28 +587,50 @@ export async function browseCatalogPage(opts: {
 
   const errors: string[] = [];
   for (const src of BROWSE_SOURCES) {
-    const url = src.url(page, pageSize, sort);
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        headers: { accept: "application/json" },
-        signal: ac.signal,
-      });
-      if (!res.ok) {
-        errors.push(`${src.name} browse(${sort}) p${page}: HTTP ${res.status}`);
-        continue;
+    const fetchPage = async (upstreamPage: number): Promise<unknown[]> => {
+      const url = src.url(upstreamPage, pageSize, sort);
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(url, {
+          headers: { accept: "application/json" },
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const json = await res.json();
+        return src.extract(json);
+      } finally {
+        clearTimeout(timer);
       }
-      const json = await res.json();
-      const sets = src.extract(json);
+    };
+
+    try {
+      if (opts.bucket) {
+        const startPage = page * BUCKET_FILTER_PAGE_BLOCK;
+        const { items, hasMore } = await walkBucketFilteredBlock({
+          startPage,
+          pageSize,
+          bucket: opts.bucket,
+          fetchPage,
+          sourceName: src.name,
+        });
+        return {
+          items,
+          hasMore,
+          page,
+          pageSize,
+          source: src.name,
+        };
+      }
+
+      const sets = await fetchPage(page);
       const seen = new Set<number>();
       const items: CatalogItem[] = [];
       for (const raw of sets) {
         const item = normalize(raw, src.name);
         if (!item || seen.has(item.beatmapsetId)) continue;
-        if (opts.bucket && !item.availableBuckets?.includes(opts.bucket)) {
-          continue;
-        }
         seen.add(item.beatmapsetId);
         items.push(item);
       }
@@ -464,8 +647,6 @@ export async function browseCatalogPage(opts: {
       const msg =
         err?.name === "AbortError" ? "timeout" : err?.message ?? String(err);
       errors.push(`${src.name} browse(${sort}) p${page}: ${msg}`);
-    } finally {
-      clearTimeout(timer);
     }
   }
 

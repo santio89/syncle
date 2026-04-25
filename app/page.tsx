@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
 import { MultiButton, MultiIcon } from "@/components/MultiButton";
 import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
+import { RefreshSongButton } from "@/components/RefreshSongButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import {
@@ -601,65 +602,3 @@ function Stat({
   );
 }
 
-/**
- * Compact "roll a new random track" button used in the home page's
- * now-playing card. Sits beside the duration chip and lets the
- * player swap to a fresh random song without a full-page reload —
- * which would also discard any prefetched audio in other tabs and
- * blank the canvas, the gradient, etc.
- *
- * Visually borrows the brutalist chip recipe (`border-2`, square
- * corners, monospace caps inside) so it reads as a sibling of the
- * duration chip rather than competing with the PLAY CTA above.
- * Spins the icon while the new song is fetching so the player has
- * an honest indicator that something's happening — clicking again
- * mid-fetch is harmless (the page-level handler cancels the older
- * in-flight signal so only the freshest response wins).
- */
-function RefreshSongButton({
-  onClick,
-  loading,
-}: {
-  onClick: () => void;
-  loading: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={loading}
-      // Padding is explicit (`px-2 py-1`) rather than the
-      // duration-chip recipe (`px-2 py-0.5`) for two reasons:
-      //   1. This is a button that mixes a glyph (↻) with text;
-      //      the glyph rides at a larger font size than the
-      //      label, so symmetric box-padding plus `leading-none`
-      //      is what makes the content actually center optically
-      //      (not just geometrically).
-      //   2. Stops it from matching the bordered-pill
-      //      padding-block override in globals.css that's tuned
-      //      for text-only chips and would otherwise stretch the
-      //      bottom edge below the icon.
-      className="group inline-flex items-center gap-1.5 border-2 border-accent bg-transparent px-2 py-1 font-mono text-[10.5px] font-bold leading-none uppercase tracking-widest text-accent transition-colors hover:bg-accent/10 disabled:cursor-wait disabled:opacity-60"
-      data-tooltip="Roll a new random track"
-      aria-label="Roll a new random track"
-      aria-busy={loading}
-    >
-      {/* Unicode ↻ glyph instead of an SVG so this button matches
-          the browser-lobby's "↻ refresh" affordance one-for-one
-          — two surfaces, same icon, no inconsistency. The glyph
-          still spins / counter-rotates via transform classes, so
-          the loading / hover affordances are unchanged. */}
-      <span
-        aria-hidden
-        className={`inline-block text-[1.05rem] leading-none ${
-          loading
-            ? "animate-spin"
-            : "transition-transform duration-300 group-hover:-rotate-180"
-        }`}
-      >
-        ↻
-      </span>
-      <span>new</span>
-    </button>
-  );
-}

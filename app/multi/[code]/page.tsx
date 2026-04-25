@@ -19,7 +19,7 @@
  */
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HomeButton } from "@/components/HomeButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -132,43 +132,98 @@ export default function MultiRoomPage() {
   // back button (popstate sentinel), and in-page Back / Home /
   // anchor clicks (intercepted via `attemptLeave`).
   //
-  // `defaultLeave` is what fires for the BROWSER back button. We
-  // branch on whether the player is currently IN A MATCH (not just
-  // sitting in the lobby): leaving from inside a match should drop
-  // them back into the lobby of the same room — same end-state as
-  // the in-game match menu's "Leave" — instead of yanking them all
-  // the way back to the entry page. Leaving from the lobby itself
-  // still tears down the room session and routes to /multi (no
-  // partial state worth preserving there).
+  // We branch on whether the player is currently IN A MATCH (not
+  // just sitting in the lobby): leaving from inside a match drops
+  // them back into the lobby of the SAME room — same end-state as
+  // the in-game match menu's "Leave" / "Cancel match" — instead of
+  // yanking them all the way back to /multi. The intuition is that
+  // "Back" mid-round means "abandon this round", not "abandon the
+  // whole party". Only Back from the lobby itself fully exits the
+  // room (router.replace to /multi).
+  //
+  // Phases covered as "in match":
+  //   - loading   → mid-download. Back drops to lobby (the round is
+  //                 effectively never started for this client).
+  //   - countdown → mid 3-2-1. Back drops to lobby.
+  //   - playing   → mid-song. Back drops to lobby.
+  //   - results   → NOT covered. The match is over; the results
+  //                 screen has its own "Back to lobby" CTA, and
+  //                 leaveMatch / cancelMatch both no-op server-side
+  //                 in this phase. Back from results behaves like
+  //                 Back from lobby (full leave).
+  //
+  // Host vs non-host:
+  //   - Non-host fires `room:leaveMatch`, which flips just THIS
+  //     player's `inMatch` to false on the server and re-renders
+  //     them into the lobby UI on the next snapshot. Other players
+  //     keep playing.
+  //   - Host fires `host:cancelMatch`, which transitions the WHOLE
+  //     room back to lobby. The host has no equivalent of
+  //     "drop-out-but-keep-the-round-running" — they own the round.
+  //     This mirrors the in-match menu where the host's only
+  //     escape is the "Cancel match" button.
+  //
+  // `defaultLeave` (browser back button) and the in-page Back
+  // button both call `handleConfirmedLeave` so the two paths are
+  // guaranteed identical — no risk of one diverging from the other
+  // (which is what the previous Back-button impl had: it always
+  // ran the full-leave path regardless of phase, contradicting the
+  // browser-back guard right next to it).
   const attemptLeave = useAttemptLeave();
   const guardActive = me !== null && !kicked;
   const inActiveMatch = !!(
     me?.inMatch &&
-    (snapshot?.phase === "countdown" || snapshot?.phase === "playing")
+    (snapshot?.phase === "loading" ||
+      snapshot?.phase === "countdown" ||
+      snapshot?.phase === "playing")
   );
-  useLeaveGuard({
-    enabled: guardActive,
-    message: inActiveMatch
-      ? "There's a match in progress — leaving will drop you out of this round."
-      : "You'll leave the room and lose your seat at the table.",
-    defaultLeave: () => {
-      if (inActiveMatch) {
+  const isHost = !!me?.isHost;
+  const handleConfirmedLeave = useCallback(() => {
+    if (inActiveMatch) {
+      if (isHost) {
+        // Host's "drop me back to lobby" = cancel for everyone.
+        // Server's transitionToLobby flips inMatch false for all
+        // players and the next snapshot routes them to the Lobby UI.
+        actions.cancelMatch();
+      } else {
         // Server flips `me.inMatch` to false on receipt; the next
         // snapshot tick routes this client to the lobby UI (see
-        // RoomBody's per-player phase routing). No URL change.
+        // RoomBody's per-player phase routing). No URL change —
+        // the rest of the room keeps playing.
         actions.leaveMatch();
-        return;
       }
-      actions.leave();
-      // router.replace (not push) so the LeaveGuardProvider can
-      // collapse the guarded /multi/[code] entry out of history
-      // — see its sentinel-pop logic. Pressing browser back from
-      // /multi after this lands the user at whatever they were
-      // doing BEFORE joining the room. (Even if it didn't, the
-      // cold-hit redirect on /multi/[code] would now bounce the
-      // user back to /multi instead of resurrecting a stale form.)
-      router.replace("/multi");
-    },
+      return;
+    }
+    // Lobby (or results — see phase notes above): full room leave.
+    actions.leave();
+    // router.replace (not push) so the LeaveGuardProvider can
+    // collapse the guarded /multi/[code] entry out of history
+    // — see its sentinel-pop logic. Pressing browser back from
+    // /multi after this lands the user at whatever they were
+    // doing BEFORE joining the room. (Even if it didn't, the
+    // cold-hit redirect on /multi/[code] would now bounce the
+    // user back to /multi instead of resurrecting a stale form.)
+    router.replace("/multi");
+  }, [inActiveMatch, isHost, actions, router]);
+  useLeaveGuard({
+    enabled: guardActive,
+    // Messages are intentionally destination-agnostic ("leaving
+    // will…", not "going back to the lobby will…") because this
+    // SAME guard fires for both:
+    //   - Back / browser-back → drops to the room's own lobby
+    //     (handled by `handleConfirmedLeave`)
+    //   - HomeButton in the same header → fully exits the room
+    //     and navigates home
+    // Promising a specific destination in the modal would be
+    // wrong half the time. The user always knows which trigger
+    // they clicked, so "leaving will <consequence>" is enough
+    // context.
+    message: inActiveMatch
+      ? isHost
+        ? "There's a match in progress — leaving will cancel it for everyone."
+        : "There's a match in progress — leaving will drop you out of this round."
+      : "You'll leave the room and lose your seat at the table.",
+    defaultLeave: handleConfirmedLeave,
   });
 
   // ---- chart loading (triggered by phase:loading) -----------------------
@@ -494,20 +549,27 @@ export default function MultiRoomPage() {
         <button
           onClick={() => {
             // Routed through the global leave-guard so an active
-            // seat surfaces the confirm prompt before the leave +
-            // navigate runs. Pass-through when no guard is active
-            // (joining / connecting screens).
-            attemptLeave(() => {
-              actions.leave();
-              // router.replace (not push) so the LeaveGuardProvider
-              // can collapse the guarded /multi/[code] entry out of
-              // history. With router.push the room URL would still
-              // be one back-press behind /multi — pressing browser
-              // back would re-mount /multi/[code] with no session,
-              // which the cold-hit redirect would then immediately
-              // bounce back to /multi (a pointless extra round-trip).
-              router.replace("/multi");
-            });
+            // seat surfaces the confirm prompt before the action
+            // runs. Pass-through when no guard is active (joining
+            // / connecting screens).
+            //
+            // The proceed callback is `handleConfirmedLeave` — the
+            // same function the browser-back guard uses — so Back-
+            // button clicks and browser-back presses produce the
+            // SAME behavior:
+            //   - mid-loading / mid-countdown / mid-playing →
+            //     drop this client (or for host, the whole room)
+            //     back to the room's own lobby. We do NOT exit
+            //     the room.
+            //   - lobby / results → full leave + redirect to
+            //     /multi.
+            // Previously this onClick always called the full-leave
+            // path regardless of phase, which contradicted the
+            // browser-back guard right next to it (popstate would
+            // drop you to the lobby; clicking the Back button
+            // would yank you out of the room entirely). Routing
+            // both through one callback keeps the two in lockstep.
+            attemptLeave(handleConfirmedLeave);
           }}
           className="group inline-flex items-center gap-2 font-mono text-[11.5px] uppercase tracking-widest text-bone-50/70 hover:text-accent transition-colors"
         >
