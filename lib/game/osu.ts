@@ -16,7 +16,7 @@
 // On any unrecoverable issue (wrong mode, no notes, etc.) returns null so
 // the caller can fall back to the hand-built chart.
 //
-// SAFE on plain text inputs only — no eval, no DOM, no Node APIs.
+// SAFE on plain text inputs only - no eval, no DOM, no Node APIs.
 
 import { MAIN_LANE_COUNT, Note } from "./types";
 
@@ -29,13 +29,13 @@ export interface ParsedOsu {
   creator: string;
   /** From [Metadata] Version (the difficulty name, e.g. "Easy"). */
   version: string;
-  /** From [General] AudioFilename — relative to the .osu file's folder. */
+  /** From [General] AudioFilename - relative to the .osu file's folder. */
   audioFilename: string;
   /** Beats per minute, derived from the first uninherited timing point. */
   bpm: number;
-  /** Seconds — start time of the first uninherited timing point (= song t=0 grid). */
+  /** Seconds - start time of the first uninherited timing point (= song t=0 grid). */
   offset: number;
-  /** Seconds — time of the last note + a small tail. Best-effort song length. */
+  /** Seconds - time of the last note + a small tail. Best-effort song length. */
   duration: number;
   /** Notes, sorted by time, lane in 0..3. */
   notes: Note[];
@@ -221,7 +221,7 @@ function parseHitObject(line: string): HitObjectLine | null {
   const isHold = (type & HOLD_BIT) !== 0;
   let endTimeMs: number | undefined;
   if (isHold && parts.length >= 6) {
-    // parts[5] looks like "169107:0:0:0:0:" — first segment is the end time.
+    // parts[5] looks like "169107:0:0:0:0:" - first segment is the end time.
     const head = parts[5].split(":")[0];
     const v = Number(head);
     if (Number.isFinite(v) && v > timeMs) endTimeMs = v;

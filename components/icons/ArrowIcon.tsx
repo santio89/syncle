@@ -1,5 +1,5 @@
 // Brutalist arrow glyph rendered as a single SVG path. Square line caps,
-// miter joins, no curves — matches the chunky geometric look of the rest of
+// miter joins, no curves - matches the chunky geometric look of the rest of
 // the UI. Color is inherited via `currentColor` so it adapts to the theme
 // or to whatever `color`/`text-…` class wraps it.
 

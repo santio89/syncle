@@ -17,7 +17,7 @@
  *      button then pops the sentinel, leaving the URL unchanged but
  *      firing `popstate`; we re-push the sentinel (so the URL stays put)
  *      and surface our own confirm modal. If the user accepts the leave,
- *      we run their registered `defaultLeave` action — same one the
+ *      we run their registered `defaultLeave` action - same one the
  *      in-app "Back" button would have called.
  *
  *   3. In-page navigation (header Back arrow, HomeButton, anchor links)
@@ -98,7 +98,7 @@ export function LeaveGuardProvider({
 }) {
   const guardsRef = useRef<Map<string, RegisteredGuard>>(new Map());
   // The window-level effect (beforeunload + popstate sentinel) only
-  // depends on whether ANY guard is enabled — NOT on the message
+  // depends on whether ANY guard is enabled - NOT on the message
   // string or the defaultLeave callback. If we re-ran that effect
   // on every message change (e.g. multi-room snapshot phase flips
   // between "lobby" and "match in progress"), we'd push a fresh
@@ -115,7 +115,7 @@ export function LeaveGuardProvider({
    * side won't, but the synchronous `history.back()` we run BEFORE
    * proceed to clean up the sentinel definitely will). The popstate
    * handler below treats sentinel pops as "user pressed browser
-   * back" and would helpfully re-prompt — opening a SECOND modal
+   * back" and would helpfully re-prompt - opening a SECOND modal
    * that traps them in a loop.
    *
    * This ref is the cross-handler escape hatch: anyone about to
@@ -130,7 +130,7 @@ export function LeaveGuardProvider({
    * replaces the ORIGINAL guarded URL (via the proceed callback's
    * `router.replace`) instead of stacking on top of it. Without
    * this, browser back after leaving lands the user back on the
-   * guarded URL — which re-mounts the page in its "no session"
+   * guarded URL - which re-mounts the page in its "no session"
    * fallback (e.g. the JoinForm on `/multi/[code]`) and creates a
    * loop with the destination URL on either side.
    */
@@ -174,26 +174,26 @@ export function LeaveGuardProvider({
    * then runs the page-local cleanup callback (`proceed`).
    *
    * Why proceed must wait for the sentinel pop:
-   *   `history.back()` is async — it queues the navigation as a
+   *   `history.back()` is async - it queues the navigation as a
    *   browser task and dispatches `popstate` later. If we ran
    *   `proceed()` synchronously right after queuing the back, any
    *   `router.replace(dest)` inside it would call
    *   `history.replaceState` immediately and rewrite the SENTINEL
    *   slot (not the original guarded slot). The queued back would
    *   then fire AFTER the replace and pop us BACK to the guarded
-   *   URL — leaving the user one click short of the destination.
+   *   URL - leaving the user one click short of the destination.
    *   That's the "I have to click back twice to leave" bug.
    *
    * The fix: install a one-shot popstate listener that fires
    * `proceed()` once the back has actually happened. By then the
    * URL is the original guarded entry (sentinel popped) and any
-   * router.replace inside proceed overwrites THAT entry — clean
+   * router.replace inside proceed overwrites THAT entry - clean
    * one-click leave.
    *
    * Sequence:
    *   1. If no sentinel is on top (e.g. attemptLeave from an
    *      in-page button that was clicked before any browser back
-   *      ever pushed one), run proceed synchronously — there's
+   *      ever pushed one), run proceed synchronously - there's
    *      nothing to clean up first.
    *   2. Otherwise: arm the popstate bypass (the provider's main
    *      handler ignores the next popstate so it doesn't re-prompt),
@@ -231,7 +231,7 @@ export function LeaveGuardProvider({
       // The provider's main popstate handler fires first (registered
       // earlier in the listener queue) and consumes the bypass flag.
       // We just need to know the back has actually happened so the
-      // URL is back at the original guarded entry — at which point
+      // URL is back at the original guarded entry - at which point
       // proceed's `router.replace(dest)` overwrites that entry
       // cleanly instead of the (now-popped) sentinel slot.
       finish();
@@ -243,7 +243,7 @@ export function LeaveGuardProvider({
     try {
       window.history.back();
     } catch {
-      // pushState/back unsupported — bail to the synchronous path.
+      // pushState/back unsupported - bail to the synchronous path.
       finish();
     }
   }, []);
@@ -252,7 +252,7 @@ export function LeaveGuardProvider({
     (proceed) => {
       const g = getActiveGuard();
       if (!g) {
-        // No guard active — pass-through. No sentinel to pop, no
+        // No guard active - pass-through. No sentinel to pop, no
         // history rewrite needed; the caller's router.push /
         // router.replace runs as-is.
         proceed();
@@ -272,14 +272,14 @@ export function LeaveGuardProvider({
   // when the LAST guard unregisters. We deliberately key this off
   // the boolean `hasActiveGuard` (NOT the guard object identity) so
   // that swapping the message string / defaultLeave callback
-  // mid-session — e.g. multi-room snapshot phase flipping the
-  // copy from "lose your seat" to "drop out of the round" — does
+  // mid-session - e.g. multi-room snapshot phase flipping the
+  // copy from "lose your seat" to "drop out of the round" - does
   // NOT re-run this effect and stack a fresh popstate sentinel into
   // history.
   useEffect(() => {
     if (!hasActiveGuard) return;
 
-    // (1) beforeunload — tab close, refresh, address-bar URL change.
+    // (1) beforeunload - tab close, refresh, address-bar URL change.
     // Spec quirk: we MUST both `preventDefault()` and assign a
     // string to `returnValue` to get the dialog in all browsers.
     // The custom string is ignored by every modern browser (a
@@ -292,7 +292,7 @@ export function LeaveGuardProvider({
     };
     window.addEventListener("beforeunload", onBeforeUnload);
 
-    // (2) popstate — SPA back / forward buttons. We push a sentinel
+    // (2) popstate - SPA back / forward buttons. We push a sentinel
     // history entry that pins the user to the current URL; when the
     // browser back button pops it, popstate fires WITHOUT changing
     // the URL, and we surface the confirm modal. Re-pushing on each
@@ -325,7 +325,7 @@ export function LeaveGuardProvider({
       }
       // If the user navigated to a DIFFERENT pathname despite the
       // sentinel (could happen on rapid double-back, or extension
-      // interference), don't trap them — they're already off the
+      // interference), don't trap them - they're already off the
       // guarded page. Cleanup will tear the handler down on the
       // next render cycle.
       if (window.location.pathname !== guardedPathname) {
@@ -344,7 +344,7 @@ export function LeaveGuardProvider({
         /* ignore */
       }
       // Read the current active guard at fire-time (NOT mount-time)
-      // so message + defaultLeave reflect the latest snapshot — e.g.
+      // so message + defaultLeave reflect the latest snapshot - e.g.
       // a multi-room phase change between sentinel push and back
       // press should still yield the right copy + leave action.
       const current = getActiveGuard();
@@ -354,7 +354,7 @@ export function LeaveGuardProvider({
         proceed: () =>
           performGuardedLeave(() => {
             // defaultLeave is the page's "what would the in-page
-            // Back button have done?" — same contract, same
+            // Back button have done?" - same contract, same
             // expected use of router.replace inside.
             if (current.defaultLeave) {
               current.defaultLeave();
@@ -406,7 +406,7 @@ export function LeaveGuardProvider({
             try {
               fn();
             } catch (err) {
-              // Surface in dev but never crash the modal — we'd
+              // Surface in dev but never crash the modal - we'd
               // strand the user on the dim backdrop.
               if (
                 typeof window !== "undefined" &&
@@ -432,7 +432,7 @@ export function LeaveGuardProvider({
  *
  * `message` is shown in the confirm modal. The browser-native
  * `beforeunload` dialog will use a generic message regardless of
- * what we pass — that's a security restriction.
+ * what we pass - that's a security restriction.
  *
  * `defaultLeave` is invoked when the user confirms a leave triggered
  * by the browser back button. Should run the same cleanup the
@@ -451,7 +451,7 @@ export function useLeaveGuard({
   const id = useId();
   // Stash the latest defaultLeave in a ref so callers can pass an
   // inline arrow without retriggering registration on every render.
-  // Same pattern as the message — only the boolean `enabled` and the
+  // Same pattern as the message - only the boolean `enabled` and the
   // ref-stable identifiers are dep-checked below.
   const leaveRef = useRef<typeof defaultLeave>(defaultLeave);
   useEffect(() => {
@@ -481,9 +481,9 @@ export function useAttemptLeave(): (proceed: () => void) => void {
 
 /**
  * Read whether ANY leave guard is currently active. Components like
- * `HomeButton` use this to choose `router.replace` (when guarded —
+ * `HomeButton` use this to choose `router.replace` (when guarded -
  * collapse the guarded URL out of history) vs `router.push` (when
- * unguarded — preserve the regular link semantic so back returns to
+ * unguarded - preserve the regular link semantic so back returns to
  * the prior page).
  */
 export function useHasActiveLeaveGuard(): boolean {

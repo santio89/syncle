@@ -9,7 +9,7 @@
  *     called `client:ready`, OR (b) the loading deadline elapses with
  *     at least one player ready (the rest late-join). All clients aim
  *     to start their `AudioEngine` at exactly `startsAt` via the
- *     engine's `delay` arg — for late-joiners whose mount happens
+ *     engine's `delay` arg - for late-joiners whose mount happens
  *     AFTER `startsAt` the schedule effect calls `audio.start(0.05,
  *     vol, offset)` with `offset = (now - startsAt) / 1000` so they
  *     slot into the song timeline at the right point.
@@ -20,7 +20,7 @@
  *     lead-in.
  *   - Once `phase` flips to `playing`, the overlay drops and gameplay
  *     is identical to single-player from a feel standpoint. We never
- *     re-sync mid-song — too disruptive — but the wall-clock starting
+ *     re-sync mid-song - too disruptive - but the wall-clock starting
  *     point keeps everyone within ~50ms of each other for the whole
  *     run. The `audioStartedRef` guard on the schedule effect prevents
  *     a second `audio.start()` on the countdown→playing dependency
@@ -191,14 +191,14 @@ function CanvasPane({
   // the menu differ by role:
   //
   //   - HOST sees [Resume, Pause, Cancel match]. Opening the menu
-  //     does NOT auto-pause for everyone — the host has to click
+  //     does NOT auto-pause for everyone - the host has to click
   //     "Pause" explicitly. That way an accidental ESC tap doesn't
   //     grief 49 other players.
   //   - NON-HOST sees [Resume, Leave]. "Resume" closes the menu;
   //     "Leave" calls `room:leaveMatch` which flips their server-
   //     side `inMatch` to false and routes them back to the Lobby
   //     (where they see a "match in progress" indicator). Leaving
-  //     is THIS player only — the rest of the room keeps playing.
+  //     is THIS player only - the rest of the room keeps playing.
   //
   // Forced open whenever the room is paused so every client always
   // has a path to "Resume" (or "Leave", for non-hosts).
@@ -206,7 +206,7 @@ function CanvasPane({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   /**
    * Most-recently observed CSS pixel size of the canvas. Mirrors the
-   * SP `canvasSizeRef` — fed to `drawFrame` so the renderer doesn't
+   * SP `canvasSizeRef` - fed to `drawFrame` so the renderer doesn't
    * have to call `clientWidth` / `clientHeight` (those getters can
    * trigger layout flushes mid-rAF). Updated by the resize effect
    * below; (0, 0) until first observation, in which case `drawFrame`
@@ -216,7 +216,7 @@ function CanvasPane({
   // Mirror the engine prop into a ref so the existing `audioRef.current?.X`
   // call sites (settings effects, schedule effect, render loop) keep
   // working unchanged. The engine itself was created back at the page
-  // level during the `loading` phase — we just point a local ref at it
+  // level during the `loading` phase - we just point a local ref at it
   // here and keep that ref in sync if it ever changes (e.g. a future
   // round in the same room re-uses the same instance, but nothing
   // stops the page from swapping it out).
@@ -236,27 +236,27 @@ function CanvasPane({
    * Last score we actually sent to the server. Lets us skip the wire
    * payload entirely on ticks where nothing changed (player isn't hitting
    * notes), keeping the 50-player room's ingress tiny on idle stretches.
-   * We compare a small (score, combo, miss) tuple — those are the only
+   * We compare a small (score, combo, miss) tuple - those are the only
    * fields the sidebar visibly cares about between ticks.
    *
    * Stored as three plain numbers (not a packed string) to avoid the
    * `${...}|${...}|${...}` template-literal allocation every score
    * tick (~5 Hz). On a typical 3-minute song that's ~900 strings the
    * GC no longer has to chase, and the three-number compare is a
-   * straight-up integer triple-equality — faster than the string cmp
+   * straight-up integer triple-equality - faster than the string cmp
    * the old version did.
    */
   const lastScoreSentScoreRef = useRef<number>(-1);
   const lastScoreSentComboRef = useRef<number>(-1);
   const lastScoreSentMissRef = useRef<number>(-1);
   const finishedRef = useRef<boolean>(false);
-  /** Combo on the previous frame — see Game.tsx for the rationale. */
+  /** Combo on the previous frame - see Game.tsx for the rationale. */
   const prevComboRef = useRef<number>(0);
   /**
    * Flips true the first time the schedule effect successfully calls
    * `audio.start()`. Before that flip, `audioRef.current?.songTime()`
    * returns `ctx.currentTime - 0` (positive, growing) because
-   * `startedAtCtxTime` defaults to 0 — useless as a chart clock. The
+   * `startedAtCtxTime` defaults to 0 - useless as a chart clock. The
    * highway-gating logic in the rAF loop reads this ref to know when
    * `songTime()` is trustworthy for the "should we draw the real
    * chart yet?" decision during the silent lead-in window.
@@ -272,7 +272,7 @@ function CanvasPane({
    * lane letters and the giant combo number) already loaded.
    * Without this gate, multiplayer was relying on the fonts having
    * been requested by ANY parent layout earlier in the navigation
-   * — usually true, but on a cold load straight into a `/multi/:code`
+   * - usually true, but on a cold load straight into a `/multi/:code`
    * URL the canvas would render its first frame with the fallback
    * sans-serif and pay a font-swap reflow ~50-200 ms later, smack
    * in the middle of the silent lead-in or even into early gameplay.
@@ -288,7 +288,7 @@ function CanvasPane({
 
   const [stats, setStats] = useState<PlayerStats | null>(null);
   // Throttled song-progress fraction (0..1) for the rock-meter card's
-  // progress bar. Mirrors the single-player Game.tsx pattern — written
+  // progress bar. Mirrors the single-player Game.tsx pattern - written
   // alongside `setStats` from inside the rAF loop so it ticks at the
   // same ~10Hz cadence (smooth without re-rendering every vblank).
   const [songProgress, setSongProgress] = useState<number>(0);
@@ -302,13 +302,13 @@ function CanvasPane({
   const [countdownOverlay, setCountdownOverlay] = useState<
     null | { kind: "prompt" } | { kind: "number"; number: number }
   >(null);
-  // Audio + perf controls — same model as single-player. Metronome stays
+  // Audio + perf controls - same model as single-player. Metronome stays
   // user-toggleable here too (it only affects the LOCAL click track; the
   // server-driven `startsAt` timestamp is what actually keeps the room in
   // sync, not whether each player happens to hear the metronome).
   // Settings that live in localStorage are read via lazy `useState`
   // initializers so the very first render already reflects what the
-  // player saved last session — no flash of defaults, no `useEffect`
+  // player saved last session - no flash of defaults, no `useEffect`
   // hydration round-trip. MultiGame only mounts after the lobby
   // (countdown / playing phase), so these initializers always run on
   // the client; `loadX()` falls back to the hardcoded default if
@@ -327,14 +327,14 @@ function CanvasPane({
     volumeRef.current = volume;
   }, [volume]);
   const [metronome, setMetronome] = useState<boolean>(loadMetronome);
-  // Per-input feedback SFX — the "Feedback" toggle (hit / miss / release / combo-milestone +
+  // Per-input feedback SFX - the "Feedback" toggle (hit / miss / release / combo-milestone +
   // the song-duck whiff cue). Persisted via the same shared
   // settings store as solo so a player's preference carries across
   // game modes. The engine no-ops the relevant `play*` calls when
-  // off — song bus + metronome stay live.
+  // off - song bus + metronome stay live.
   const [sfx, setSfx] = useState<boolean>(loadSfx);
   const [fps, setFps] = useState<number>(0);
-  // Optional render-loop frame-rate cap — same control surface as
+  // Optional render-loop frame-rate cap - same control surface as
   // single-player (off / 30 / 60), shared persistence key so a player
   // who caps in solo also has it capped in multi without re-toggling.
   const [fpsLock, setFpsLock] = useState<FpsLock>(loadFpsLock);
@@ -342,12 +342,34 @@ function CanvasPane({
   useEffect(() => {
     fpsLockRef.current = fpsLock;
   }, [fpsLock]);
-  // Render quality preset — same persistence key as single-player so the
+  // Render quality preset - same persistence key as single-player so the
   // player's choice transfers between modes. Mirrored into
   // `renderOptsRef` below so toggling takes effect on the very next
   // rAF tick (no remount, no stutter).
   const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
-  // Sticky banner shown the first time storage refuses a write — same
+  // Strict Inputs (anti-mash protection) - match-wide and host-controlled
+  // in multiplayer (unlike SP, where each player owns their own toggle).
+  // The host flips it via `actions.setStrictInputs` from the lobby; the
+  // server fans the new value out to every player on the next snapshot,
+  // and we drive both the input-handler hot path (`strictInputsRef`) and
+  // the HealthPanel chip from `snapshot.strictInputs` directly. Falls
+  // back to `true` when an older server / snapshot omits the field so
+  // legacy behavior stays anti-mash by default.
+  //
+  // Why match-wide: head-to-head competitive play needs a uniform
+  // ruleset - letting one player mash freely while another self-imposes
+  // Strict makes the matchup unfair. Same reasoning competitive rhythm
+  // games (osu!mania, IIDX) use for room-wide input policy.
+  //
+  // Why no local persistence: the room is the source of truth. Honoring
+  // a remembered local preference would silently override what the host
+  // just chose, which is exactly the surprise we're trying to avoid.
+  const strictInputs = snapshot.strictInputs ?? true;
+  const strictInputsRef = useRef<boolean>(strictInputs);
+  useEffect(() => {
+    strictInputsRef.current = strictInputs;
+  }, [strictInputs]);
+  // Sticky banner shown the first time storage refuses a write - same
   // pattern as solo. The user can dismiss with one click.
   const [storageBlocked, setStorageBlocked] = useState<boolean>(false);
   useEffect(() => onStorageFailure(() => setStorageBlocked(true)), []);
@@ -374,7 +396,7 @@ function CanvasPane({
   }, [theme]);
 
   // Mount-time font gate. Mirrors the SP `await document.fonts.ready`
-  // that runs before countdown — see `fontsReadyRef` doc above. We
+  // that runs before countdown - see `fontsReadyRef` doc above. We
   // only flip the ref to `false` if we have a fonts API AND the
   // canvas-critical typeface isn't already loaded; otherwise we
   // never block the renderer.
@@ -395,7 +417,7 @@ function CanvasPane({
       })
       .catch(() => {
         // If the fonts promise rejects (Firefox edge case during
-        // navigation), unblock the renderer anyway — falling back
+        // navigation), unblock the renderer anyway - falling back
         // to the system stack for one match is much better than
         // staring at a blank canvas indefinitely.
         if (alive) fontsReadyRef.current = true;
@@ -405,7 +427,7 @@ function CanvasPane({
     };
   }, []);
 
-  // Crisp canvas + DPR resize. Mirrors the cap logic in Game.tsx —
+  // Crisp canvas + DPR resize. Mirrors the cap logic in Game.tsx -
   // coarse-pointer (mobile) clamps DPR to 1.5 instead of 2 so phones
   // with DPR 2.5-3 don't quietly burn 80 % more per-frame fillrate
   // than they need to. Keeps the highway scrolling smooth on phones.
@@ -424,15 +446,12 @@ function CanvasPane({
       canvas.height = Math.floor(rect.height * dpr);
       canvasSizeRef.current.w = rect.width;
       canvasSizeRef.current.h = rect.height;
-      // `desynchronized: true` lets the browser present canvas frames
-      // without round-tripping through the page compositor — saves
-      // ~1 frame of input-to-photon latency on most browsers (Chromium
-      // and Firefox honor it; Safari ignores the hint, no penalty).
-      // Free win, applies on every device. We do NOT pass `alpha:
-      // false` — the canvas is intentionally transparent so the body
-      // background can crossfade during the theme transition (see the
-      // `drawFrame` clearRect rationale in lib/game/renderer.ts).
-      const ctx = canvas.getContext("2d", { desynchronized: true });
+      // Same vsync-aligned ctx options as the render-loop getContext
+      // call below - we deliberately DON'T pass `desynchronized: true`
+      // because that opt-out trades ~1 frame of input latency for
+      // jittery frame pacing AND broken G-Sync support (see the
+      // matching getContext call below for the full rationale).
+      const ctx = canvas.getContext("2d");
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
       renderStateRef.current.cache = undefined;
@@ -441,7 +460,7 @@ function CanvasPane({
       // point), so the very first real frame after `audio.start()` doesn't
       // pay the 12–35 ms hitch of cold gradients + cold note/popup paths.
       // That hitch was the root cause of the "tiny stutter when the song
-      // begins" players were reporting in multi — without this, the first
+      // begins" players were reporting in multi - without this, the first
       // real-state frame had to build all 4 lane-gate gradients, the
       // highway radial, the milestone vignette AND let V8 promote
       // drawTapNote / drawHoldNote / drawJudgmentText out of the
@@ -464,7 +483,7 @@ function CanvasPane({
   }, []);
 
   /* -------- per-song state reset -------- */
-  // Decode is no longer this component's job — the page-level loading
+  // Decode is no longer this component's job - the page-level loading
   // effect already filled the AudioEngine's buffer before we even
   // mounted (see `audioEngineRef` in `app/multi/[code]/page.tsx`).
   // What's left for us to do on each new chart is purely the
@@ -517,7 +536,7 @@ function CanvasPane({
   useEffect(() => {
     // Wait for both: chart loaded AND audio buffer decoded. Without the
     // `audioReady` gate, this effect can fire while the buffer is still
-    // decoding — `audio.start()` would then throw, leave
+    // decoding - `audio.start()` would then throw, leave
     // `startedAtCtxTime = 0`, and the next frame's `songTime()` would
     // return raw `ctx.currentTime` (positive), making the renderer draw
     // notes from random points in the chart over the countdown overlay.
@@ -527,7 +546,7 @@ function CanvasPane({
     // the entire `playing` phase, so when `songStartedAt` flips from
     // null → number on the countdown→playing transition this effect
     // re-fires. Without this guard we'd hit `audio.start()` a SECOND
-    // time for the same round — and since `start()` always begins
+    // time for the same round - and since `start()` always begins
     // with `stop()`, that produces a tiny stop-and-restart click
     // exactly when the song should be settling into its first beat.
     // `audioStartedRef` is reset to false in the per-song state-reset
@@ -553,17 +572,17 @@ function CanvasPane({
       try {
         // Use the user's saved volume for the initial fade-in target
         // (read via ref so this effect doesn't restart on slider moves
-        // — see `volumeRef` declaration). Without this, every multi
+        // - see `volumeRef` declaration). Without this, every multi
         // start used to ramp to a hardcoded 0.85 and then snap up to
         // the user's actual volume on the next render via
         // `setVolume()`, which produced a small audible step at the
         // top of every song.
         const startVol = volumeRef.current;
         if (delayMs >= 0) {
-          // Future start — normal countdown lead-in.
+          // Future start - normal countdown lead-in.
           audio.start(delayMs / 1000, startVol);
         } else {
-          // Past start — seek to the right offset so we sound in time.
+          // Past start - seek to the right offset so we sound in time.
           // We give ourselves a tiny 50ms head-start so the fade-in doesn't
           // cut into the very first frame after mount.
           const offset = -delayMs / 1000;
@@ -592,7 +611,7 @@ function CanvasPane({
   // `pausedAt` flag. Only fires AFTER the schedule effect has
   // anchored `audioStartedRef.current = true`; before that, there's
   // no live source to suspend (the AudioBuffer is decoded but no
-  // source has been started yet — `audio.pause()` would just be a
+  // source has been started yet - `audio.pause()` would just be a
   // no-op `ctx.suspend()` that prevents the upcoming `audio.start()`
   // from running cleanly). Pause/resume on AudioContext freezes
   // `ctx.currentTime`, so each client's `songTime()` (and therefore
@@ -611,7 +630,7 @@ function CanvasPane({
 
   // Mirror `pausedAt` into a ref so the input handlers (which read it
   // synchronously on every keypress) don't have to be a dep of their
-  // installation effect. Same pattern as `phaseRef` — keeps the
+  // installation effect. Same pattern as `phaseRef` - keeps the
   // listener bound across the entire match instead of rebinding on
   // every snapshot tick.
   const pausedRef = useRef(snapshot.pausedAt !== null);
@@ -623,7 +642,7 @@ function CanvasPane({
   //
   // The server's `startsAt` is when audio actually fires. From that
   // anchor we work backwards to derive the overlay timeline so every
-  // client paints the same thing at the same wall-clock instant —
+  // client paints the same thing at the same wall-clock instant -
   // server, audio, and overlay all stay phase-locked even if a player
   // joined slightly late. Stages (working forwards from the moment
   // `phase:countdown` flips):
@@ -637,7 +656,7 @@ function CanvasPane({
   //   numbersStart  = numbersEnd - OVERLAY_MS            (3,2,1 begins)
   //
   // The "Get ready..." prompt starts immediately when we enter the
-  // countdown phase (no empty pre-roll any more) — there's nothing
+  // countdown phase (no empty pre-roll any more) - there's nothing
   // for the player to do during a silent runway and the prompt itself
   // already reads as "match is starting". The rAF loop only pushes
   // state when the visible stage actually changes, so cost is one
@@ -666,7 +685,7 @@ function CanvasPane({
       } else {
         next = null;
       }
-      // Only push state when the visible overlay actually changes —
+      // Only push state when the visible overlay actually changes -
       // avoids a setState per vblank and the React work that follows.
       const key =
         next === null
@@ -709,13 +728,13 @@ function CanvasPane({
   // from the "3/2/1" overlay into the silent runway).
   //
   // This mirrors single-player exactly. SP doesn't have a separate
-  // server-driven countdown phase — its `playing` state encompasses
+  // server-driven countdown phase - its `playing` state encompasses
   // both the silent lead-in AND the audio playback, so SP's
   // `if (p !== "playing") return` gate lets pre-audio taps fire
   // empty-press feedback by default. Multiplayer's split server
   // phases (`countdown` covers the full 8 s pre-roll, only flipping
   // to `playing` when audio actually starts) used to drop those
-  // pre-audio taps silently — same hands-on-the-keys window, no
+  // pre-audio taps silently - same hands-on-the-keys window, no
   // feedback. Now both modes feel identical.
   //
   // Inside the lead-in: `state.hit()` will simply return null for
@@ -723,7 +742,7 @@ function CanvasPane({
   // hasn't begun yet), so the press routes to `playEmptyPress`.
   // If a player taps very early on a note at `songTime ≈ 0` they
   // can still earn a real hit via the engine's normal early-hit
-  // window — also matches SP.
+  // window - also matches SP.
   const inputAllowed = (): boolean => {
     if (phaseRef.current === "results") return false;
     if (pausedRef.current) return false;
@@ -736,7 +755,7 @@ function CanvasPane({
   };
 
   // `eventTimestamp` is the `performance.now()` moment from the
-  // KeyboardEvent / PointerEvent that caused the press — passed
+  // KeyboardEvent / PointerEvent that caused the press - passed
   // through to `audio.inputSongTime()` so judgments use the audio
   // clock at the actual key-down moment, not "audio clock when the
   // React handler happened to run". See audio.ts and Game.tsx for
@@ -761,8 +780,20 @@ function CanvasPane({
       renderStateRef.current.pendingHits.push({ lane, judgment: evt.judgment });
       audio.playHit(lane, evt.judgment);
     } else {
+      // Empty press - same Strict-Inputs handoff as solo (see
+      // Game.tsx pressLane for the full rationale). With Strict
+      // Inputs ON, an empty press in a lane that has NO unjudged
+      // note within ±SPAM_GRACE silently breaks the player's combo
+      // (no MISS popup, no song wobble - the dropping combo number
+      // is the entire feedback). Honest mistimes near a real note
+      // are still unpenalized. Strict-Inputs is local-only - the
+      // server doesn't know or care, and combo / score deltas
+      // propagate through the existing per-tick stats sync.
       renderStateRef.current.laneFlash[lane] = 0.45;
       audio.playEmptyPress();
+      if (strictInputsRef.current) {
+        state.markEmptyPress(lane, songTime);
+      }
     }
   }, []);
 
@@ -772,7 +803,7 @@ function CanvasPane({
     // Mirror `pressLane`: outside the input-allowed window we still
     // clear the held state (so the player doesn't auto-fire on
     // resume / song start), but we don't run the engine's tail-
-    // judgment — the audio clock is either frozen or hasn't reached
+    // judgment - the audio clock is either frozen or hasn't reached
     // a meaningful chart position yet, so the judgment would land
     // at a stale time.
     if (!inputAllowed()) return;
@@ -791,12 +822,12 @@ function CanvasPane({
     }
   }, []);
 
-  // Global keyboard install — RUNS ONCE for the lifetime of the
+  // Global keyboard install - RUNS ONCE for the lifetime of the
   // component. Same fix as single-player Game.tsx: the previous
   // dep array `[snapshot.phase, snapshot.pausedAt, pressLane,
   // releaseLane]` caused the listeners to tear down + reattach at
   // the server-driven `countdown → playing` boundary, ~2 s before
-  // the song became audible — a documented contributor to the
+  // the song became audible - a documented contributor to the
   // first-second-of-the-match stutter. Reading phase + pausedAt
   // from `phaseRef` / `pausedRef` keeps listener identity stable
   // for the entire `lobby → countdown → playing → results` arc.
@@ -811,7 +842,7 @@ function CanvasPane({
       if (isEditableTarget(e.target)) return;
       // ESC → toggle the in-match menu for any player. Unlike
       // single-player (where ESC is a hard pause), this is a
-      // confirmation surface: the menu just OPENS — opening it
+      // confirmation surface: the menu just OPENS - opening it
       // does not pause the song or change game state. The host
       // can then click "Pause" / "Cancel match"; non-hosts can
       // click "Leave". That way an accidental ESC press is purely
@@ -829,7 +860,7 @@ function CanvasPane({
       // Block the keys that open the browser/OS menu bar on Windows,
       // because every one of them blurs the page and silently strands
       // any held lane keys until the player retaps. The big offender
-      // is `ContextMenu` — the dedicated right-click key between
+      // is `ContextMenu` - the dedicated right-click key between
       // RightAlt and RightCtrl, which palm-hits constantly during
       // fast play. `F10` traditionally activates the menu bar for
       // the same effect. Multi-player especially needs this because
@@ -863,7 +894,7 @@ function CanvasPane({
       if (e.repeat) return;
       e.preventDefault();
       // Drop focus from any non-text control (volume slider, settings
-      // checkbox, etc.) the moment lane input resumes — keeps the
+      // checkbox, etc.) the moment lane input resumes - keeps the
       // focus ring from following the player around and prevents
       // stuck arrow-key auto-repeat from secretly nudging the slider.
       // See Game.tsx for the full rationale.
@@ -884,7 +915,7 @@ function CanvasPane({
       // key, focused chat (keydown still in flight or already past),
       // and then released, the keyup target IS the input. Skipping
       // would strand the hold note's tail and leave `heldRef` set
-      // until they retap that lane — confusing in the middle of a
+      // until they retap that lane - confusing in the middle of a
       // song. Releasing is always safe (no-op if not held). Same
       // rationale as Game.tsx onKeyUp.
       const lane = KEY_TO_LANE[e.code];
@@ -897,14 +928,14 @@ function CanvasPane({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-    // Empty deps ON PURPOSE — see leading comment. Phase / pausedAt
+    // Empty deps ON PURPOSE - see leading comment. Phase / pausedAt
     // are read from refs; pressLane/releaseLane are mount-stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Block the OS / browser context menu while the match is live.
   // Right-click, the keyboard ContextMenu key, AND touch long-press
-  // all funnel through `contextmenu` — preventDefault here keeps the
+  // all funnel through `contextmenu` - preventDefault here keeps the
   // menu from opening (and stealing focus, which silently strands
   // any held lane keys until the player retaps).
   //
@@ -933,7 +964,7 @@ function CanvasPane({
   // Auto-close the in-match menu when we leave the playing phase
   // (host clicked "Cancel match" → room flips to lobby; the safety
   // timer transitioned to results; non-host's `room:leaveMatch`
-  // routed them out of MultiGame entirely — though in that case
+  // routed them out of MultiGame entirely - though in that case
   // this component has unmounted anyway). Without this, the menu
   // state would persist and pop back open the next time the player
   // enters a match.
@@ -962,11 +993,37 @@ function CanvasPane({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // Same `desynchronized: true` hint as the resize-effect ctx call.
-    // Browsers memoize the context object per canvas, so the option
-    // only takes effect on the first call; passing it on both keeps
-    // future refactors safe.
-    const ctx = canvas.getContext("2d", { desynchronized: true });
+    // We INTENTIONALLY use the default ctx options (vsync'd through
+    // the standard browser compositor) instead of opting into
+    // `desynchronized: true`. Earlier work added the desynchronized
+    // hint to shave ~1 frame of input-to-photon latency, but on
+    // high-refresh-rate displays - especially VRR setups (G-Sync /
+    // FreeSync) - the trade-off lost more than it saved:
+    //
+    //   - Desynchronized canvases bypass the compositor and present
+    //     directly. Without compositor pacing, frame intervals drift
+    //     (e.g. on a 200 Hz monitor: 4 ms / 6 ms / 4 ms / 6 ms…)
+    //     even when the rAF loop is hitting its 200 fps target. The
+    //     average is fine but the eye reads the irregular spacing as
+    //     judder, which is exactly what players reported as "feels
+    //     laggy even though the counter says 200 fps".
+    //   - G-Sync / FreeSync only engage on content presented through
+    //     the compositor pipeline. With `desynchronized: true` the
+    //     canvas may skip that pipeline entirely, silently
+    //     downgrading to fixed-refresh-with-tearing instead of
+    //     adaptive-sync-with-no-tearing.
+    //
+    // The compositor IS already vsync'd + triple-buffered (Chrome's
+    // surface flinger / Skia swap chain) - so by going through it
+    // we get smooth frame pacing, no tearing, and full G-Sync
+    // support automatically. The ~5 ms latency tax on a 200 Hz
+    // monitor is imperceptible in a rhythm game (audio is the
+    // timing reference, visuals are feedback - players hit when
+    // they HEAR the note, not when they see it land). The
+    // AudioContext clock that schedules hits + metronome runs
+    // independently of the render path, so the slight visual delay
+    // doesn't desync anything gameplay-critical.
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     let last = performance.now();
@@ -978,7 +1035,7 @@ function CanvasPane({
     // ≥ COMBO_BREAK_THRESHOLD, and we observe the counter as a
     // monotonic edge so a rapid miss-then-hit can't lose the trigger.
     let lastComboBreakCount = stateRef.current?.stats.comboBreaks ?? 0;
-    // FPS sampling — same 500ms window as Game.tsx.
+    // FPS sampling - same 500ms window as Game.tsx.
     let fpsAccumStart = last;
     let fpsAccumFrames = 0;
     const songMeta = loaded?.meta;
@@ -1030,7 +1087,7 @@ function CanvasPane({
       const state = stateRef.current;
       const songTime = audio ? audio.songTime() : -3;
       // Read phase off the ref so this loop doesn't have to be a dep of
-      // the effect — that's what keeps the same rAF + audio engine alive
+      // the effect - that's what keeps the same rAF + audio engine alive
       // across the countdown → playing transition (otherwise the loop
       // tore itself down at the moment the song actually started, which
       // also reset `last` / `pacedNext` and produced a visible stutter
@@ -1039,7 +1096,7 @@ function CanvasPane({
 
       if (state && currentPhase === "playing") {
         state.expireMisses(songTime);
-        // Per-miss SFX is silent — but a subtle Guitar-Hero-style
+        // Per-miss SFX is silent - but a subtle Guitar-Hero-style
         // song distort fires on every miss (45 % dip + light lowpass
         // + 30-cent pitch wobble, ~220 ms). The combo-break watcher
         // runs immediately after with its own deeper duck; `duckSong`
@@ -1076,7 +1133,7 @@ function CanvasPane({
         }
 
         // End-of-song detection. `state.notes.every(...)` used to walk
-        // the entire chart EVERY frame in the trailing 1.5s window —
+        // the entire chart EVERY frame in the trailing 1.5s window -
         // O(n) per frame, measurable on dense charts in a 50-player
         // room. Replaced with `notesPlayed >= totalNotes`, which the
         // engine maintains in O(1) (holds add 2 to totalNotes for
@@ -1127,7 +1184,7 @@ function CanvasPane({
             continue;
           }
           // Multiplayer: metronome is ON to keep pace, but quieter (handled
-          // inside the engine's scheduleClick — same code path as solo).
+          // inside the engine's scheduleClick - same code path as solo).
           audio.scheduleClick(audio.ctxTimeAt(beatSongTime), bi % 4 === 0);
           lastScheduledBeatRef.current = bi;
         }
@@ -1139,7 +1196,7 @@ function CanvasPane({
       }
       if (state) rs.recentEvents = state.events;
 
-      // Combo + milestone — same logic as single-player. The chime here is
+      // Combo + milestone - same logic as single-player. The chime here is
       // local-only (each player hears their own milestones), which keeps
       // the audio bus uncluttered in a 50-player room.
       if (state) {
@@ -1172,7 +1229,7 @@ function CanvasPane({
       //              Overlay is gone, audio not yet playing, but we
       //              WANT the highway showing the real chart so any
       //              note at t<leadTime can spawn at the top of the
-      //              highway and slide down naturally — that's what
+      //              highway and slide down naturally - that's what
       //              gives the player the "board sliding as I prepare"
       //              feel they're after instead of notes popping in
       //              at the strike line the instant the song begins.
@@ -1194,7 +1251,7 @@ function CanvasPane({
             : emptyStateRef.current
           : (state ?? emptyStateRef.current);
       // Skip painting until canvas-critical fonts have settled.
-      // See `fontsReadyRef` for the full rationale — this is the
+      // See `fontsReadyRef` for the full rationale - this is the
       // multiplayer parity for SP's pre-countdown `await
       // document.fonts.ready`. Per-frame state still steps (the
       // `rs.laneFlash` decay above continues), only the visible
@@ -1217,7 +1274,7 @@ function CanvasPane({
       if (state && now - lastHud > 100) {
         setStats({ ...state.stats });
         if (songMeta && songMeta.duration > 0) {
-          // Clamp to [0..1] — `songTime` runs negative during the
+          // Clamp to [0..1] - `songTime` runs negative during the
           // server-synced lead-in and can briefly exceed `duration`
           // while the audio buffer drains at the tail.
           const frac = songTime / songMeta.duration;
@@ -1244,13 +1301,13 @@ function CanvasPane({
   // Mirror React state into the AudioEngine and persist it. `loaded`
   // is in the dep list for the engine-mirror effects so the values
   // get re-applied as soon as the engine finishes (re)initializing
-  // for a new song — otherwise toggling metronome / dragging the
+  // for a new song - otherwise toggling metronome / dragging the
   // volume slider before the engine spun up would silently drop the
   // value.
   //
   // Persistence rides along: because the lazy `useState(loadX)`
   // initializers above already seed state from storage, the first
-  // fire of these effects writes the same value back — a harmless
+  // fire of these effects writes the same value back - a harmless
   // no-op that keeps the contract simple (no hydration gate, no
   // separate `useEffect` to "load" later, no flash of defaults). All
   // four settings share the same store as single-player via
@@ -1271,7 +1328,7 @@ function CanvasPane({
     saveSfx(sfx);
   }, [sfx, loaded]);
 
-  // Persist the FPS lock — the rAF loop reads `fpsLockRef`, so this is
+  // Persist the FPS lock - the rAF loop reads `fpsLockRef`, so this is
   // purely about remembering the choice across reconnects / refreshes.
   useEffect(() => {
     saveFpsLock(fpsLock);
@@ -1283,7 +1340,7 @@ function CanvasPane({
   // again on full page unmount, which covers every legitimate way
   // a player can exit the canvas. Stopping here too would race with
   // the page's own `stop()` and, more importantly, would kill the
-  // engine when transitioning to the `results` screen — the engine
+  // engine when transitioning to the `results` screen - the engine
   // is supposed to keep its decoded buffer alive across that screen
   // so a "play again" round in the same room reuses the same buffer
   // (the loadFromBytes dedup check in audio.ts catches this).
@@ -1296,7 +1353,7 @@ function CanvasPane({
       />
 
       {/* Discreet "settings won't persist" banner. Identical to the
-          solo flow's banner — surfaces the first time storage refuses
+          solo flow's banner - surfaces the first time storage refuses
           a write so the player understands why their toggles reset
           on reload. Anchored top-center so it doesn't compete with
           the HUD strip on either side. Dismissible. */}
@@ -1329,7 +1386,7 @@ function CanvasPane({
         // meter card stacked directly underneath. The wrapping column is
         // `w-fit` so it shrinks to the wider of its two children (the
         // performance panel), and the rock meter then uses `w-full` to
-        // match it pixel-for-pixel — that's what the user sees as "the
+        // match it pixel-for-pixel - that's what the user sees as "the
         // rock meter is as wide as the score container above".
         // No HUD-level pause button: multiplayer pause is host-only
         // and reached through the ESC menu (`MatchMenuOverlay`),
@@ -1353,7 +1410,7 @@ function CanvasPane({
               from eating too much vertical real estate on short
               landscape phones. */}
           {/* Locked-down width so the left column always matches the
-              right scoreboard's card width — the two side panels read
+              right scoreboard's card width - the two side panels read
               as a balanced pair, and neither ever creeps onto the
               fret/highway. The values track the single-player HUD
               (`Game.tsx`) exactly so solo and multi feel like the
@@ -1377,6 +1434,16 @@ function CanvasPane({
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               quality={quality}
               onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+              strictInputs={strictInputs}
+              isHost={isHost}
+              // HealthPanel is only rendered mid-match (loading/
+              // countdown/playing/results); the server rejects
+              // Strict Inputs flips outside the lobby phase. Pass
+              // `undefined` so the HUD chip renders read-only for
+              // hosts AND guests during the match - flips happen
+              // back in the lobby's PlayerSettingsModal where the
+              // policy belongs (committed before everyone goes).
+              onSetStrictInputs={undefined}
               songTitle={loaded?.meta.title ?? snapshot.selectedSong?.title ?? null}
               songArtist={loaded?.meta.artist ?? snapshot.selectedSong?.artist ?? null}
               songDuration={loaded?.meta.duration ?? null}
@@ -1391,13 +1458,13 @@ function CanvasPane({
        * Two render-states sit under one component to keep the keyboard
        * focus + visual style consistent:
        *
-       *   1. Room paused (`snapshot.pausedAt !== null`) — every player
+       *   1. Room paused (`snapshot.pausedAt !== null`) - every player
        *      sees the dimmed overlay. Host gets [Resume, Cancel match]
        *      buttons; non-hosts get [Leave] (and a "waiting for host"
        *      subtitle since they can't resume the room themselves).
        *
        *   2. Menu open while still playing (`matchMenuOpen` and
-       *      `pausedAt === null`) — confirmation surface for any
+       *      `pausedAt === null`) - confirmation surface for any
        *      player. The match keeps running underneath. Host actions
        *      are [Resume, Pause, Cancel match]; non-host actions are
        *      [Resume, Leave]. "Leave" calls `room:leaveMatch` which
@@ -1445,7 +1512,7 @@ function CanvasPane({
             {/* Keyboard hint footer. The four arrow keys are rendered
                 with the brutalist <ArrowIcon> SVG (same family used in
                 the lobby + entry screens) instead of the unicode
-                `←↓↑→` glyphs — those render as thin strokes in most
+                `←↓↑→` glyphs - those render as thin strokes in most
                 monospace fonts and clash with the chunky D F J K
                 letters. Icons inherit `currentColor` so the
                 bone-50/60 paragraph color carries through. */}
@@ -1495,13 +1562,13 @@ function CanvasPane({
               {loadError}
             </p>
             <p className="mt-2 font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
-              Hang tight — host can cancel back to the lobby.
+              Hang tight - host can cancel back to the lobby.
             </p>
           </div>
         </Overlay>
       )}
 
-      {/* Touch / click lane buttons — shared component with solo. Shown
+      {/* Touch / click lane buttons - shared component with solo. Shown
           whenever a coarse pointer is available (mobile, tablet, hybrid
           touchscreen laptop), only during countdown/playing so the buttons
           don't intercept clicks on the lobby / loading / results UI. */}
@@ -1575,12 +1642,12 @@ function ScoreboardSidebar({
           highway:
             - default (mobile / narrow tablet): 240 px, capped further by
               `max-w-[40vw]` so it never eats more than a screen-half.
-            - sm  (≥ 640 px laptops): 264 px  — fits beside the shrunk
+            - sm  (≥ 640 px laptops): 264 px  - fits beside the shrunk
               highway with a few px of breathing room on common 1024 px
               viewports.
-            - lg  (≥ 1024 px desktops): 288 px — restores room for long
+            - lg  (≥ 1024 px desktops): 288 px - restores room for long
               player names once the highway has plenty of side area.
-            - xl  (≥ 1280 px monitors): 310 px — original full-size band.
+            - xl  (≥ 1280 px monitors): 310 px - original full-size band.
           The right-3 sm:right-3 lg:right-5 ladder keeps the panel hugging
           the screen edge on small screens (where every px of side area
           counts) and only adds the original 20 px of breathing room on
@@ -1603,7 +1670,7 @@ function ScoreboardSidebar({
         </span>
       </div>
       {/* Same cap as the lobby roster (~6-7 rows) so the live scoreboard
-          stays compact even on tall viewports — keeps the panel from
+          stays compact even on tall viewports - keeps the panel from
           stretching down to the gameplay canvas ceiling on a 4K monitor
           when a 50-player room is full. The brutalist scrollbar (wired
           globally in globals.css) takes over once the cap is hit. */}
@@ -1639,7 +1706,7 @@ function ScoreboardSidebar({
                   </span>
                 )}
               </span>
-              {/* Live combo badge — makes the sidebar feel like a race
+              {/* Live combo badge - makes the sidebar feel like a race
                   even when scores are close. Only shown for non-finished
                   players (finished rows show the ✓ mark instead). */}
               {!e.finished && e.combo > 0 && (
@@ -1689,7 +1756,7 @@ function ScoreboardSidebar({
 /* ------------------------------------------------------------------------ */
 
 /** mm:ss formatter for the song-progress label. Defined locally so
- * the HUD doesn't depend on a shared util — also matches the helper
+ * the HUD doesn't depend on a shared util - also matches the helper
  * in single-player Game.tsx so output formatting stays in lockstep. */
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -1712,10 +1779,10 @@ function PerformancePanel({
   const accuracy = computeAccuracy(stats);
   const tierStars = modeStars(chartMode);
   return (
-    // Performance card — score + combo + rock meter + hits stats in one
+    // Performance card - score + combo + rock meter + hits stats in one
     // cohesive "how are you doing" block. Mirrors the single-player HUD
     // exactly so both modes share visual vocabulary; the only
-    // difference here is there's no per-player pause button — pause
+    // difference here is there's no per-player pause button - pause
     // is host-only and lives in the ESC menu so the host explicitly
     // owns "freeze the room". The rock meter bar is bumped up
     // (`h-3.5 sm:h-[1.05rem]`) so it reads as the headline status
@@ -1724,7 +1791,7 @@ function PerformancePanel({
     // PerformancePanel (`Game.tsx`). The vertical separator between
     // SCORE and COMBO and the horizontal rule above the rock-meter
     // group were removed because the parent card's `gap-*` already
-    // creates visual separation — same vocabulary as solo. The combo
+    // creates visual separation - same vocabulary as solo. The combo
     // column also drops `items-center justify-center` so it aligns
     // top-left like the score column, with the same `mt-1.5` rhythm
     // and identical font sizes (color is the only diff).
@@ -1758,7 +1825,7 @@ function PerformancePanel({
         </div>
       </div>
       {/* Rock meter label on the left, difficulty tag on the right
-          — the tag tells the player which tier they're actually
+          - the tag tells the player which tier they're actually
           playing right now and lives next to the rock meter (the
           live "performance" block) instead of on the now-playing
           strip across the screen, since difficulty is part of the
@@ -1803,7 +1870,7 @@ function PerformancePanel({
 }
 
 /**
- * Multiplayer settings card — now-playing strip + per-player audio /
+ * Multiplayer settings card - now-playing strip + per-player audio /
  * perf knobs (Metronome, Feedback, FPS lock, Volume), all styled
  * as consistent border-tiled rows. The rock meter itself moved up into
  * `PerformancePanel` (where it conceptually belongs alongside score and
@@ -1824,6 +1891,9 @@ function HealthPanel({
   onCycleFpsLock,
   quality,
   onCycleQuality,
+  strictInputs,
+  isHost,
+  onSetStrictInputs,
   songTitle,
   songArtist,
   songDuration,
@@ -1840,11 +1910,22 @@ function HealthPanel({
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
-  /** Render quality preset — same control as the in-match HUD in
+  /** Render quality preset - same control as the in-match HUD in
    *  single-player. Persisted across sessions and shared between
    *  modes. */
   quality: RenderQuality;
   onCycleQuality: () => void;
+  /** Strict Inputs (anti-mash protection) - match-wide, host-controlled.
+   *  Surface read-only for non-hosts; only the host's chip toggles it.
+   *  Server enforces lobby-phase-only flips, so the in-match HUD chip
+   *  for the host is read-only mid-song too (the toggle UI just goes
+   *  inert when no setter is provided). */
+  strictInputs: boolean;
+  isHost: boolean;
+  /** Provided only when the local player is the host AND a flip is
+   *  legal in the current room phase. `undefined` → render the chip
+   *  as a read-only display. */
+  onSetStrictInputs?: (next: boolean) => void;
   songTitle: string | null;
   songArtist: string | null;
   /** Track duration in seconds, or null until the chart is loaded. */
@@ -1860,13 +1941,13 @@ function HealthPanel({
     // title→artist→progress all glued together), even though the
     // contents were identical.
     <div className="brut-card flex w-full flex-col gap-2 px-2.5 py-2.5 sm:gap-2.5 sm:px-3.5 sm:py-3.5">
-      {/* "Now playing" strip — see Game.tsx HUD for the rationale.
+      {/* "Now playing" strip - see Game.tsx HUD for the rationale.
           In multi we prefer the locally-loaded chart's metadata when
           available, falling back to the room snapshot's `selectedSong`
           so the strip is populated even before the audio buffer is
           ready. Spacing inside the strip (caption / title / artist /
           progress) carries explicit `mt-*` values that match the
-          single-player HUD beat-for-beat — that beat is the source of
+          single-player HUD beat-for-beat - that beat is the source of
           visual coherence between the two modes. The bottom border /
           padding on the wrapper was removed because the parent card's
           `gap-*` already separates this strip from the settings tiles
@@ -1878,7 +1959,7 @@ function HealthPanel({
           </p>
           {/* Two-line clamp + ellipsis (matches the single-player
               HUD). Full "Song / Artist" text is on hover via the
-              tooltip — same wording as the landing-page card so the
+              tooltip - same wording as the landing-page card so the
               user learns one pattern. `pointer-events-auto` is
               required because the HUD wrapper is `pointer-events-
               none` (so it doesn't trap clicks over the highway). */}
@@ -1896,7 +1977,7 @@ function HealthPanel({
               {songArtist}
             </p>
           )}
-          {/* Live song progress strip — slim, accent-fill, mm:ss
+          {/* Live song progress strip - slim, accent-fill, mm:ss
               elapsed/total on the right. Mirrors the single-player
               HUD so multiplayer feels consistent. The fill source
               `songProgress` is throttled to ~10Hz from the rAF loop,
@@ -1929,7 +2010,7 @@ function HealthPanel({
           )}
         </div>
       )}
-      {/* Metronome tile — `<label>` so clicking anywhere on the
+      {/* Metronome tile - `<label>` so clicking anywhere on the
           tile (caption included) toggles the checkbox. Same
           aesthetic as the StartCard's pre-game toggle tiles, just
           scaled down for HUD density. */}
@@ -1965,7 +2046,7 @@ function HealthPanel({
           aria-keyshortcuts="N"
         />
       </label>
-      {/* FPS lock tile — same two-column layout as the single-
+      {/* FPS lock tile - same two-column layout as the single-
           player HUD: left column stacks "FPS LOCK" caption over
           the live `### fps` readout, right column shows the cap
           (OFF / 30 / 60) as plain accent / dim text. The audio
@@ -1978,10 +2059,10 @@ function HealthPanel({
         className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
         data-tooltip={
           fpsLock == null
-            ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+            ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
             : fpsLock === 30
-              ? "Frame-rate capped at 30 FPS — saves battery on laptops"
-              : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
+              ? "Frame-rate capped at 30 FPS - saves battery on laptops"
+              : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
         }
         aria-label="Cycle render FPS lock"
       >
@@ -2002,7 +2083,7 @@ function HealthPanel({
           {fpsLock == null ? "OFF" : fpsLock}
         </span>
       </button>
-      {/* Quality preset tile — see Game.tsx HUD for the full design
+      {/* Quality preset tile - see Game.tsx HUD for the full design
           rationale. Same affordance as the FPS-lock tile above:
           whole-tile click target, left caption + readout, right
           chip flips to accent when not on the default value.
@@ -2016,8 +2097,8 @@ function HealthPanel({
         className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
         data-tooltip={
           quality === "high"
-            ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
-            : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
+            ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
+            : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
         }
         aria-label="Cycle render quality preset"
       >
@@ -2036,9 +2117,56 @@ function HealthPanel({
           {quality === "high" ? "HIGH" : "PERF"}
         </span>
       </button>
+      {/* Strict Inputs HUD chip - anti-mash protection. Match-wide
+          and host-controlled in multi (unlike SP). Server only
+          accepts flips during the lobby phase, so even the host's
+          in-match chip renders read-only here (the parent passes
+          `onSetStrictInputs={undefined}` once the room is past lobby).
+          Non-hosts always see a read-only chip with a "set by host"
+          tooltip so the policy attribution is unambiguous. */}
+      {(() => {
+        const editable = isHost && !!onSetStrictInputs;
+        const tooltip = editable
+          ? strictInputs
+            ? "ON · empty press with no nearby note silently breaks combo (anti-mash)"
+            : "OFF · empty presses are free"
+          : isHost
+            ? `Match-wide · locked to lobby. Currently ${strictInputs ? "ON" : "OFF"}.`
+            : `Match-wide · set by host. Currently ${strictInputs ? "ON" : "OFF"}.`;
+        return (
+          <label
+            className={`pointer-events-auto flex items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 ${
+              editable ? "cursor-pointer" : "cursor-default"
+            }`}
+            data-tooltip={tooltip}
+          >
+            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+              Strict
+            </span>
+            {editable ? (
+              <input
+                type="checkbox"
+                checked={strictInputs}
+                onChange={(e) => onSetStrictInputs!(e.target.checked)}
+                className="h-[14px] w-[14px] cursor-pointer accent-accent"
+                aria-label="Toggle strict inputs (anti-mash)"
+              />
+            ) : (
+              <span
+                aria-hidden
+                className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums ${
+                  strictInputs ? "text-accent" : "text-bone-50/40"
+                }`}
+              >
+                {strictInputs ? "ON" : "OFF"}
+              </span>
+            )}
+          </label>
+        );
+      })()}
       <div
         className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Song playback volume — separate from feedback SFX"
+        data-tooltip="Song playback volume - separate from feedback SFX"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           vol
@@ -2050,7 +2178,7 @@ function HealthPanel({
           step={0.01}
           value={volume}
           onChange={(e) => onVolume(parseFloat(e.target.value))}
-          // See Game.tsx HUD for why min-w-0 is required here — the
+          // See Game.tsx HUD for why min-w-0 is required here - the
           // UA intrinsic min-width on <input type="range"> would
           // otherwise overflow the tile on narrow viewports.
           className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
@@ -2065,7 +2193,7 @@ function HealthPanel({
 }
 
 /**
- * Same scrollable-overlay pattern as the single-player Game's Overlay —
+ * Same scrollable-overlay pattern as the single-player Game's Overlay -
  * see that component for the rationale. Multiplayer hits the same bug
  * on tall LoadingScreen content + short viewports, so the same fix.
  */
@@ -2079,7 +2207,7 @@ function HealthPanel({
  *     the audio for the whole room; cancel ends the match for
  *     everyone.
  *   - HOST · not paused  → [Resume, Pause, Cancel match]. The
- *     match keeps running underneath the menu — Resume just closes
+ *     match keeps running underneath the menu - Resume just closes
  *     the menu without changing state; Pause freezes everyone;
  *     Cancel bounces everyone to the lobby.
  *   - NON-HOST · paused  → [Leave]. The host owns Resume; non-hosts
@@ -2112,11 +2240,11 @@ function MatchMenuOverlay({
   const headline = paused ? "Paused" : "Match in progress";
   const subheading = paused
     ? isHost
-      ? "Audio is suspended for everyone — resume when you're ready"
-      : "Host paused the match — hang tight, or leave to sit it out in the lobby"
+      ? "Audio is suspended for everyone - resume when you're ready"
+      : "Host paused the match - hang tight, or leave to sit it out in the lobby"
     : isHost
-      ? "The song is still playing — choose how to proceed"
-      : "The song is still playing — resume to keep playing or leave to sit it out";
+      ? "The song is still playing - choose how to proceed"
+      : "The song is still playing - resume to keep playing or leave to sit it out";
   // Lighter dim while the song is still going (so the player can still
   // see what they're missing); full dim when paused (everyone is
   // staring at the same frozen frame, no point pretending).
@@ -2166,7 +2294,7 @@ function MatchMenuOverlay({
             <button
               onClick={onCancel}
               className="brut-btn px-3 py-3"
-              data-tooltip="End the match early — everyone returns to the lobby (no standings recorded)"
+              data-tooltip="End the match early - everyone returns to the lobby (no standings recorded)"
             >
               ✕ Cancel match
             </button>
@@ -2174,7 +2302,7 @@ function MatchMenuOverlay({
         ) : (
           // Non-host actions: [Resume (when not paused), Leave]. We
           // hide Resume during a pause because there's nothing for
-          // the non-host to resume — they'd just be closing the
+          // the non-host to resume - they'd just be closing the
           // overlay over a frozen game with no input registering.
           // Leaving is the only sensible action while paused.
           <div className={`mt-7 grid gap-3 ${paused ? "grid-cols-1" : "grid-cols-2"}`}>
@@ -2190,7 +2318,7 @@ function MatchMenuOverlay({
             <button
               onClick={onLeave}
               className="brut-btn inline-flex items-center justify-center gap-1.5 px-3 py-3"
-              data-tooltip="Leave this match and watch from the lobby — the rest of the room keeps playing"
+              data-tooltip="Leave this match and watch from the lobby - the rest of the room keeps playing"
             >
               <ArrowIcon direction="left" strokeWidth={2.75} />
               Leave
@@ -2200,7 +2328,7 @@ function MatchMenuOverlay({
 
         {!isHost && paused && (
           // Subtle reminder that the host is the one who controls the
-          // resume — keeps non-hosts from refreshing the page or
+          // resume - keeps non-hosts from refreshing the page or
           // assuming the room hung.
           <div className="mt-4 flex items-center justify-center gap-3">
             <Spinner />
@@ -2215,7 +2343,7 @@ function MatchMenuOverlay({
             ? paused
               ? "Resume picks up exactly where the song left off"
               : "ESC = close menu · cancel doesn't save the run"
-            : "Leaving keeps you in the room — you'll be in the next round automatically"}
+            : "Leaving keeps you in the room - you'll be in the next round automatically"}
         </p>
       </div>
     </Overlay>
@@ -2258,9 +2386,9 @@ function Spinner() {
 
 /**
  * True when the focused element is a TEXT-editing surface (a real text
- * input, textarea, or contenteditable). Everything else — including the
+ * input, textarea, or contenteditable). Everything else - including the
  * volume slider (`<input type="range">`), the metronome / SFX
- * checkboxes (`<input type="checkbox">`), buttons, selects, etc. — is
+ * checkboxes (`<input type="checkbox">`), buttons, selects, etc. - is
  * NOT treated as editable, even though it's an `<input>`. Same
  * rationale as the single-player Game.tsx version: chat / pause-menu
  * fields still get to swallow keys, but volume / SFX / metronome

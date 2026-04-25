@@ -5,7 +5,7 @@ import { ArrowIcon } from "@/components/icons/ArrowIcon";
 /**
  * App-wide 404 page. Next.js renders this whenever a route doesn't match
  * (or when a server component calls `notFound()`), wrapped in the same
- * RootLayout as everything else — meaning the global theme variables,
+ * RootLayout as everything else - meaning the global theme variables,
  * brutalist tokens, and TooltipLayer are already in scope.
  *
  * The default Next.js 404 (small "404" + "This page could not be found")
@@ -15,7 +15,7 @@ import { ArrowIcon } from "@/components/icons/ArrowIcon";
  * so a mistyped URL still feels like part of Syncle, not a system error.
  *
  * Implemented as a plain server component:
- *   - No client-only APIs (no router events, no theme reads — the
+ *   - No client-only APIs (no router events, no theme reads - the
  *     CSS-driven theme tokens already adapt the surface to dark/light).
  *   - The single CTA is a `next/link` → no JavaScript required to
  *     bounce back to the landing page.
@@ -26,7 +26,7 @@ export default function NotFound() {
       {/* Header is a stripped-down version of the landing-page header:
           same icon + SYNC|LE wordmark on the left, no nav chips on the
           right (since there's nothing meaningful to link to from a
-          dead URL — "back to home" lives as the primary CTA below).
+          dead URL - "back to home" lives as the primary CTA below).
           The bottom border is the same `border-bone-50/90` brutalist
           rule used everywhere else, so the page still feels framed
           even without right-side controls. */}
@@ -69,7 +69,7 @@ export default function NotFound() {
           surface. */}
       <section className="relative z-10 mx-auto flex w-full max-w-2xl flex-1 flex-col items-stretch justify-center gap-6 px-4 py-10 sm:gap-8 sm:px-6 sm:py-14">
         <div className="brut-card-accent flex flex-col gap-6 p-6 sm:gap-8 sm:p-10">
-          {/* Brand stamp — same icon + SYNC|LE wordmark used in
+          {/* Brand stamp - same icon + SYNC|LE wordmark used in
               the header / footer, anchored at the top of the card
               so the 404 message reads like an in-app moment instead
               of a generic system page. The icon and wordmark sizes
@@ -128,7 +128,7 @@ export default function NotFound() {
             </div>
           </div>
 
-          {/* Primary CTA — `brut-btn` shares the brutalist border
+          {/* Primary CTA - `brut-btn` shares the brutalist border
               + hover-fill recipe used by every other accent button
               in the app. The arrow nudges right on hover (same
               200 ms slide as the multi "Join" / lobby buttons), so
@@ -171,7 +171,7 @@ export default function NotFound() {
 }
 
 export const metadata = {
-  title: "404 — SYNCLE",
+  title: "404 · SYNCLE",
   description:
-    "This Syncle page doesn't exist. Head back to home for a fresh osu!mania track.",
+    "This Syncle page doesn't exist. Head back to home for a fresh track.",
 };

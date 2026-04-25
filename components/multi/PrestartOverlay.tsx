@@ -5,7 +5,7 @@
  * ----------------
  * Centered, full-bleed modal that appears for every player in a room
  * during the brief 3 s "starting in 3, 2, 1…" window after the host
- * clicks Start. The countdown is server-driven — every client computes
+ * clicks Start. The countdown is server-driven - every client computes
  * remaining seconds against `RoomSnapshot.prestartEndsAt` so all
  * overlays show the same number at the same wall-clock moment.
  *
@@ -20,7 +20,7 @@
  * Lifecycle:
  *   - Parent (`RoomBody`) mounts/unmounts based on
  *     `snapshot.prestartEndsAt !== null`. We don't manage our own
- *     show/hide state — the snapshot IS the state.
+ *     show/hide state - the snapshot IS the state.
  *   - Internal `seconds` state ticks via rAF every ~100 ms so the
  *     number doesn't jitter against the system clock and we don't pay
  *     the cost of a 16 ms timer for a 3 s overlay. Falls back to the
@@ -63,7 +63,7 @@ export default function PrestartOverlay({ endsAt, isHost, onCancel }: Props) {
   useEffect(() => {
     // Host-only ESC shortcut to cancel. Non-hosts have no cancel
     // affordance, so ESC is a no-op for them (and intentionally does
-    // NOT close the overlay — there's nothing for the player to do
+    // NOT close the overlay - there's nothing for the player to do
     // here except wait the 3 s out).
     //
     // Capture phase + stopImmediatePropagation so we own ESC while
@@ -96,7 +96,7 @@ export default function PrestartOverlay({ endsAt, isHost, onCancel }: Props) {
           // `tabular-nums` keeps the digit width steady so the card
           // doesn't reflow as 3 → 2 → 1. `animate-pulse-soft` is too
           // heavy for a 3 s overlay; a CSS transition on a key change
-          // would feel snappier but adds complexity for little gain —
+          // would feel snappier but adds complexity for little gain -
           // the static large number does the job.
           className="mt-4 font-display text-[5.5rem] font-bold leading-none tabular-nums text-accent"
           aria-live="polite"
@@ -132,7 +132,7 @@ export default function PrestartOverlay({ endsAt, isHost, onCancel }: Props) {
 
 /**
  * Whole seconds remaining until `endsAt`. Floors so the integer
- * counter feels "right" — at t = 2.4 s remaining the user expects to
+ * counter feels "right" - at t = 2.4 s remaining the user expects to
  * see "3" (the third second is still running), not "2". Clamped at 0
  * to avoid showing negatives during the brief gap between the timer
  * elapsing on the server and the next snapshot landing here.

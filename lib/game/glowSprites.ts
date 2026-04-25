@@ -11,13 +11,13 @@
  *   on integrated GPUs and software-rendered fallbacks. Each shadowed
  *   draw triggers a temporary offscreen pass + Gaussian blur on the
  *   CPU. Replacing it with a precomputed bitmap blit is 5-50x faster
- *   on low-end systems and a few % faster everywhere — at zero visual
+ *   on low-end systems and a few % faster everywhere - at zero visual
  *   cost, since the sprite IS the same blurred shape we'd have drawn.
  *
  * Cache strategy:
  *   - Quantize `radius` and `blur` to small integer buckets so animated
  *     values (e.g. `blur = 18 * alpha`) collapse onto a small set of
- *     pre-rendered sprites without any visible "stepping" — glows are
+ *     pre-rendered sprites without any visible "stepping" - glows are
  *     inherently soft, a 12 vs 14 px blur is imperceptible mid-flight
  *     and the renderer modulates `globalAlpha` for the smooth fade
  *     anyway.
@@ -25,8 +25,8 @@
  *     `globalAlpha *= alpha` so one peak-intensity sprite serves an
  *     entire fade-in/out cycle.
  *   - LRU eviction at MAX_ENTRIES keeps memory bounded. The working
- *     set (sprites referenced THIS frame) is small — ~30-50 across all
- *     four lanes at the busiest density — so cache thrash is a
+ *     set (sprites referenced THIS frame) is small - ~30-50 across all
+ *     four lanes at the busiest density - so cache thrash is a
  *     non-issue once warm.
  *   - DPR is baked into each sprite so blits are pixel-perfect on
  *     hi-DPI displays. We read DPR from the destination ctx's
@@ -50,14 +50,14 @@
 
 // Quantization for cache-key bucketing only. The blit ALWAYS happens
 // at the caller's exact requested radius (the sprite is scaled at draw
-// time to match) — these steps just decide which sprite size we
+// time to match) - these steps just decide which sprite size we
 // reuse, not what size shows on screen. So radius can be coarse
 // without any visible "stepping" as the value interpolates.
 //
 // Blur is more sensitive: it can't be smoothly scaled (scaling a
 // peak-blur sprite would also shrink the inner shape), so we quantize
 // finer. At step 2 the lane-gate flash decay (40 → 8 over 200 ms)
-// crosses ~16 buckets, ~one bucket per frame at 60 Hz — adjacent
+// crosses ~16 buckets, ~one bucket per frame at 60 Hz - adjacent
 // buckets are visually indistinguishable, so the decay reads as a
 // continuous fade instead of a strobing pulse like step 4 was.
 const QUANTIZE_RADIUS_PX = 4;
@@ -74,10 +74,10 @@ function quantize(value: number, step: number): number {
 function readDpr(ctx: CanvasRenderingContext2D): number {
   // The renderer applies `setTransform(dpr, 0, 0, dpr, 0, 0)` once at
   // resize time and never modifies the transform inside helpers
-  // (verified — no scale/translate/rotate calls in the renderer
+  // (verified - no scale/translate/rotate calls in the renderer
   // call tree). So `getTransform().a` here always equals DPR.
   // Falling back to 1 if the API isn't available (very old browsers
-  // without OffscreenCanvas et al — we ship for evergreen anyway).
+  // without OffscreenCanvas et al - we ship for evergreen anyway).
   try {
     const t = ctx.getTransform();
     return t.a > 0 ? t.a : 1;
@@ -168,7 +168,7 @@ function buildStrokedRingSprite(
  *   ctx.shadowBlur = 0;
  *
  * `alpha` is multiplied into `ctx.globalAlpha` for the duration of
- * the blit, then restored — so the caller doesn't need to wrap it
+ * the blit, then restored - so the caller doesn't need to wrap it
  * in save/restore (and we avoid the cost of save/restore).
  */
 export function drawRadialGlow(
@@ -199,12 +199,12 @@ export function drawRadialGlow(
     evictIfFull();
   }
   // Blit at the caller's EXACT requested size, not the quantized
-  // bucket size — the sprite scales linearly via drawImage's
+  // bucket size - the sprite scales linearly via drawImage's
   // dest-rect args. This kills visible "stepping" as `radius`
   // interpolates between cache buckets (notes growing as they fall
   // toward the line, etc.). The blur halo scales proportionally,
   // which slightly softens / shrinks the halo on smaller variants
-  // — imperceptible vs. the original at typical scale ratios
+  // - imperceptible vs. the original at typical scale ratios
   // (≤ 1.0 ± QUANTIZE_RADIUS_PX/r ≈ ± 17 % at the smallest notes,
   // less for everything else).
   const halfCssQ = sprite.width / dpr / 2;

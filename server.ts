@@ -27,7 +27,7 @@ import type {
 } from "./lib/multi/protocol";
 
 const dev = process.env.NODE_ENV !== "production";
-// Bind to all interfaces by default. Use HOST (not HOSTNAME — which Windows
+// Bind to all interfaces by default. Use HOST (not HOSTNAME - which Windows
 // pre-populates with the machine name and breaks listen()) to override.
 const hostname = process.env.HOST ?? "0.0.0.0";
 const portFromEnv = process.env.PORT ? Number(process.env.PORT) : null;
@@ -56,7 +56,7 @@ async function main(): Promise<void> {
       // Faster heartbeat than defaults (25s/20s) so a refresh feels snappy.
       pingInterval: 15_000,
       pingTimeout: 10_000,
-      // Hard cap on payload size — score updates are <1 KB; 5 MB protects
+      // Hard cap on payload size - score updates are <1 KB; 5 MB protects
       // against a malicious client trying to OOM the server.
       maxHttpBufferSize: 5 * 1024 * 1024,
     },

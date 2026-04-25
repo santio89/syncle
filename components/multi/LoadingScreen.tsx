@@ -54,12 +54,12 @@ export function LoadingScreen({
         {song ? (
           <h2
             className="truncate font-display text-[1.97rem] font-bold sm:text-[2.36rem]"
-            data-tooltip={`${song.artist} — ${song.title}`}
+            data-tooltip={`${song.artist} - ${song.title}`}
           >
             {song.title}
           </h2>
         ) : (
-          <h2 className="font-display text-[1.97rem] font-bold sm:text-[2.36rem]">—</h2>
+          <h2 className="font-display text-[1.97rem] font-bold sm:text-[2.36rem]">-</h2>
         )}
         {song && (
           <p className="-mt-2 truncate text-bone-50/70" data-tooltip={song.artist}>
@@ -78,7 +78,7 @@ export function LoadingScreen({
           </p>
           {error ? (
             <p className="mt-0.5 font-mono text-[0.92rem] text-rose-400">
-              ✕ {error} — waiting on the others, or hit cancel
+              ✕ {error} - waiting on the others, or hit cancel
             </p>
           ) : progress ? (
             <p className="mt-0.5 flex items-center gap-2 font-mono text-[0.92rem] text-bone-50/85">
@@ -90,7 +90,7 @@ export function LoadingScreen({
           ) : (
             <p className="mt-0.5 flex items-center gap-2 font-mono text-[0.92rem] text-accent">
               <span className="inline-block h-2 w-2 bg-accent" />
-              ready — waiting for the room
+              ready - waiting for the room
             </p>
           )}
         </div>
@@ -99,10 +99,10 @@ export function LoadingScreen({
           <Stat label="ready" value={`${ready} / ${total}`} accent />
           <Stat
             label="deadline"
-            value={remaining !== null ? `${Math.ceil(remaining / 1000)}s` : "—"}
+            value={remaining !== null ? `${Math.ceil(remaining / 1000)}s` : "-"}
             // Tint the deadline value as time runs short so the room can
             // feel the pressure: amber under 10s, red + pulsing under 5s.
-            // The pulse is the "GAME WILL START" arcade urgency cue —
+            // The pulse is the "GAME WILL START" arcade urgency cue -
             // people instantly know to nudge a struggling teammate.
             tone={
               remaining === null
@@ -137,7 +137,7 @@ export function LoadingScreen({
         />
 
         <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/40">
-          ░ Match starts at the deadline — late loaders join in mid-song
+          ░ Match starts at the deadline - late loaders join in mid-song
         </p>
 
         {isHost && (

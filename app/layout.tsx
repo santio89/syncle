@@ -23,7 +23,7 @@ const mono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
   // 800 is the heaviest weight Google ships for JetBrains Mono. We need it
-  // for the lane-gate letters drawn on the canvas — without it the browser
+  // for the lane-gate letters drawn on the canvas - without it the browser
   // silently falls back to the next-loaded weight (700), so a 900 request
   // looks identical to font-bold.
   weight: ["400", "700", "800"],
@@ -63,7 +63,7 @@ export default function RootLayout({
         <ThemeProvider>
           {/* LeaveGuardProvider sits inside ThemeProvider so its
               modal inherits the same theme tokens. Inert when no
-              page registers a guard — the cost on idle pages is one
+              page registers a guard - the cost on idle pages is one
               context value + a couple of refs. */}
           <LeaveGuardProvider>{children}</LeaveGuardProvider>
         </ThemeProvider>

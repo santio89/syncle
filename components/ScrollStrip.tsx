@@ -16,7 +16,7 @@
  * Drag detection:
  *   - We don't `setPointerCapture` until the pointer has moved past a
  *     small threshold (5 px). That keeps a plain click on a child
- *     button working — pointers that never exceed the threshold fall
+ *     button working - pointers that never exceed the threshold fall
  *     through as a normal `click`. Once we DO start dragging, we
  *     suppress the next `click` event (capture phase) so dropping the
  *     mouse on top of a child doesn't accidentally activate it after
@@ -26,10 +26,10 @@
  *     gesture stays snappy and doesn't drift.
  *
  * The visible scrollbar is hidden via the `.scroll-strip` CSS utility
- * (in `globals.css`) — the strip is short and the row of buttons
+ * (in `globals.css`) - the strip is short and the row of buttons
  * already communicates "more to the side" via overflow / cursor.
  *
- * Generic enough to wrap any `<button>`/`<div>` children — the only
+ * Generic enough to wrap any `<button>`/`<div>` children - the only
  * structural assumption is `display: flex` (added here) so children
  * lay out in a row.
  */
@@ -44,7 +44,7 @@ interface Props {
   gapClass?: string;
   /** Extra Tailwind classes piped onto the scroll container. */
   className?: string;
-  /** Aria-label for the scroll region (defaults to undefined — let
+  /** Aria-label for the scroll region (defaults to undefined - let
    * the consumer decide whether the strip is meaningful enough to
    * announce). */
   ariaLabel?: string;
@@ -57,7 +57,7 @@ export default function ScrollStrip({
   ariaLabel,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  // All drag state lives in a ref — re-rendering on each pointer move
+  // All drag state lives in a ref - re-rendering on each pointer move
   // would be wasteful (and would cause input lag at 120 Hz polling).
   const dragRef = useRef({
     active: false,
@@ -71,7 +71,7 @@ export default function ScrollStrip({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // Capture-phase click suppressor — fires BEFORE any child button's
+    // Capture-phase click suppressor - fires BEFORE any child button's
     // own click handler, so we can short-circuit a `click` that was
     // really the tail of a drag gesture (mouse released while still
     // hovering a tier button after a flick). Threshold is the same as
@@ -89,7 +89,7 @@ export default function ScrollStrip({
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Mouse: only react to left-button drags. Touch / pen always
-    // qualify (they have no concept of "right-click") — skipping them
+    // qualify (they have no concept of "right-click") - skipping them
     // would break swipe-to-scroll on mobile.
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const el = ref.current;

@@ -22,7 +22,7 @@ import process from "node:process";
 const START_PORT = Number(process.env.PORT) || 3000;
 const MAX_TRIES = 50;
 // Hosts to probe. Next binds dual-stack on Windows (::), so we have to make
-// sure the port is free on BOTH IPv4 and IPv6 — checking only one was the
+// sure the port is free on BOTH IPv4 and IPv6 - checking only one was the
 // bug that let our wrapper think 3000 was "free" while Next still failed
 // with EADDRINUSE on :::3000.
 const PROBE_HOSTS = ["0.0.0.0", "::"];

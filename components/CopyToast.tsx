@@ -2,7 +2,7 @@
  * Tiny "just copied" pill that overlays above its sibling trigger.
  *
  * Designed to be dropped inside a `position: relative` wrapper next
- * to a copy button — the pill is `absolute`-positioned so it never
+ * to a copy button - the pill is `absolute`-positioned so it never
  * shifts the surrounding layout, and uses opacity transitions
  * instead of mount/unmount so the fade-out actually plays. Pair
  * with `useCopyToClipboard()` and feed its `copied` flag into
@@ -18,7 +18,7 @@ export function CopyToast({
 }: {
   visible: boolean;
   /**
-   * Override label. Defaults to "Copied to clipboard" — the most
+   * Override label. Defaults to "Copied to clipboard" - the most
    * common case. Pass shorter text (e.g. "Copied!") when space is
    * tight or the trigger is small.
    */

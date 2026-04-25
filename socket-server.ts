@@ -1,5 +1,5 @@
 /**
- * Standalone Socket.IO server — does NOT import Next.js.
+ * Standalone Socket.IO server - does NOT import Next.js.
  *
  * This is the entry point you deploy to Render (or any other persistent-Node
  * host) when running the multiplayer realtime layer separately from the
@@ -91,7 +91,7 @@ function main(): void {
       pingInterval: 15_000,
       pingTimeout: 10_000,
       maxHttpBufferSize: 5 * 1024 * 1024,
-      // Long polling fallback path — keep the default `/socket.io` so the
+      // Long polling fallback path - keep the default `/socket.io` so the
       // client doesn't need any custom `path` config.
     },
   );

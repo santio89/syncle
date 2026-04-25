@@ -9,9 +9,9 @@
  *
  * Two trigger sources, in priority order:
  *
- *   1. `data-tooltip="some text"` — preferred for new code; the value
+ *   1. `data-tooltip="some text"` - preferred for new code; the value
  *      is the canonical source so React re-renders never lose it.
- *   2. `title="some text"` — back-compat for the existing call sites
+ *   2. `title="some text"` - back-compat for the existing call sites
  *      that already use the native attribute. On first hover we
  *      MOVE the title's value into our own WeakMap and STRIP the
  *      attribute from the DOM so the browser never gets a chance to
@@ -20,11 +20,11 @@
  *      WeakMap entry is GC'd automatically when the element unmounts.
  *
  * Why event delegation instead of a wrapper component?
- *   - Zero per-element runtime cost — we wire 4 listeners total.
+ *   - Zero per-element runtime cost - we wire 4 listeners total.
  *   - Works with arbitrary children (third-party libs, raw HTML)
  *     without forcing every call site to import a `<Tooltip>`.
  *   - Migrating the codebase is just "add data-tooltip" or "leave
- *     title alone" — no JSX restructuring.
+ *     title alone" - no JSX restructuring.
  *
  * Touch devices skip the whole thing: `(hover: none)` matchMedia
  * suppresses tooltips entirely so they don't conflict with native
@@ -39,14 +39,14 @@ type Placement = "top" | "bottom";
 
 interface TooltipState {
   text: string;
-  /** Anchor rect (viewport coords) — used to compute final position. */
+  /** Anchor rect (viewport coords) - used to compute final position. */
   rect: DOMRect;
   placement: Placement;
 }
 
 // Hover dwell time before a tooltip appears. Tuned to feel like
 // the native browser `title` attribute (≈500–700 ms) so casual
-// mouse-overs don't trigger ambient bubbles — the user has to
+// mouse-overs don't trigger ambient bubbles - the user has to
 // actually pause and "ask" for the affordance. 320 ms (the
 // previous value) was short enough that simply gliding the mouse
 // across a row of buttons would flash multiple tooltips in a
@@ -93,7 +93,7 @@ export function TooltipLayer() {
       return;
     }
     const r = tooltipRef.current.getBoundingClientRect();
-    // Only update if size meaningfully changed — prevents a render loop
+    // Only update if size meaningfully changed - prevents a render loop
     // when the same tooltip text re-measures to the same dimensions.
     setBoxSize((prev) =>
       prev && Math.abs(prev.w - r.width) < 0.5 && Math.abs(prev.h - r.height) < 0.5
@@ -165,12 +165,12 @@ export function TooltipLayer() {
 
     const onPointerOver = (e: PointerEvent) => {
       // Touch / pen events get filtered by hover:none above, but be
-      // defensive anyway — some hybrid devices report "mouse" for
+      // defensive anyway - some hybrid devices report "mouse" for
       // touch interactions.
       if (e.pointerType !== "mouse" && e.pointerType !== "pen") return;
       const found = findTooltipTarget(e.target as Element | null);
       if (!found) return;
-      // Pointer wandered into a child of the same trigger — keep
+      // Pointer wandered into a child of the same trigger - keep
       // current tooltip up, don't restart the show timer.
       if (currentTargetRef.current === found.el && state) return;
       clearHideTimer();
@@ -206,7 +206,7 @@ export function TooltipLayer() {
       // by KEYBOARD navigation (Tab / Shift+Tab / arrow keys),
       // signalled by `:focus-visible` matching. Pointer-induced focus
       // (a click on a button) intentionally does NOT trigger the
-      // tooltip — every click on a tooltip-bearing control was
+      // tooltip - every click on a tooltip-bearing control was
       // otherwise flashing the bubble for the post-pointerdown /
       // pre-blur window, which felt distracting and "instant" even
       // though the hover code path has a deliberate 600 ms dwell
@@ -218,7 +218,7 @@ export function TooltipLayer() {
       } catch {
         // `:focus-visible` is well-supported (Chrome 86+, Firefox
         // 85+, Safari 15.4+) but defensively swallow throws on
-        // older engines — in that case we fall through to the
+        // older engines - in that case we fall through to the
         // legacy "show immediately on any focus" behavior, which
         // is no worse than what we shipped before.
       }
@@ -243,7 +243,7 @@ export function TooltipLayer() {
       }
     };
     const onPointerDownGlobal = () => {
-      // Clicking anywhere dismisses — feels right because click =
+      // Clicking anywhere dismisses - feels right because click =
       // commitment, tooltip = ambient hint.
       clearShowTimer();
       hide();
@@ -271,7 +271,7 @@ export function TooltipLayer() {
       clearShowTimer();
       clearHideTimer();
     };
-    // We intentionally exclude `state` from deps — the listeners
+    // We intentionally exclude `state` from deps - the listeners
     // capture state via the closure once, and we re-attach only on
     // mount/unmount. The duplicate-trigger guard inside `onPointerOver`
     // works because we read `currentTargetRef.current` (always fresh).

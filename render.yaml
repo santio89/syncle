@@ -24,11 +24,11 @@ services:
     name: syncle-socket
     env: node
     plan: free                   # bump to "starter" for always-on multiplayer
-    region: virginia             # US East — lowest latency from South America
-    # No `branch:` line — Render will track your repo's default branch
+    region: virginia             # US East - lowest latency from South America
+    # No `branch:` line - Render will track your repo's default branch
     # (whether it's `main`, `master`, or anything else).
     autoDeploy: true
-    # No `next build` needed — this service doesn't ship the Next.js app.
+    # No `next build` needed - this service doesn't ship the Next.js app.
     buildCommand: npm install
     startCommand: npm run socket:start
     healthCheckPath: /healthz

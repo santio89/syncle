@@ -47,7 +47,7 @@ export class GameState {
   private activeHold: Array<Note | null> = [null, null, null, null];
   /**
    * Per-lane "first note index that still might be hittable in this
-   * lane" hint. Strictly monotonically increasing — we only ever
+   * lane" hint. Strictly monotonically increasing - we only ever
    * bump it forward as notes get judged or fall outside the future
    * lookahead.
    *
@@ -60,7 +60,7 @@ export class GameState {
    *   the quiet lane had to step over ~30–80 unrelated notes every
    *   time. With a per-lane hint that average drops to ~1.
    *
-   *   The cursor is still authoritative for FIFO/notelock — we only
+   *   The cursor is still authoritative for FIFO/notelock - we only
    *   USE this hint as a starting point and the loop still bails
    *   the instant it walks past an in-future note in the wrong
    *   lane (those are skipped, but the future-bail check at
@@ -128,7 +128,7 @@ export class GameState {
    *
    * STRICT FIFO judgment ("notelock", as in osu!mania):
    *   The press is locked to the EARLIEST unjudged note in `lane`
-   *   whose hit window currently contains `songTime` — not the
+   *   whose hit window currently contains `songTime` - not the
    *   closest-timed one. If two same-lane notes both have the
    *   press time inside their windows (e.g. a jack: t=1.90 and
    *   t=2.00, press at t=1.95), the earlier note (t=1.90) takes
@@ -151,20 +151,20 @@ export class GameState {
    *     into a good (or even a miss if the player slipped a beat
    *     entirely), which is the right teaching signal.
    *
-   * Cross-lane traffic doesn't change anything — the loop just
+   * Cross-lane traffic doesn't change anything - the loop just
    * skips any note whose `lane !== lane`. The cursor walk stays
    * O(amortized 1) because we still bail as soon as we hit a note
    * more than 0.6 s in the future (no in-window note can possibly
    * exist past that gap).
    */
   hit(lane: number, songTime: number): JudgmentEvent | null {
-    // Start at the per-lane hint — but never before the global
+    // Start at the per-lane hint - but never before the global
     // cursor (the cursor is the authoritative "earliest unjudged
     // anywhere" line, and a stale lane hint that lags behind would
     // cause us to inspect already-cursored-past notes for nothing).
     const hint = this.laneNext[lane] ?? 0;
     const start = hint < this.cursor ? this.cursor : hint;
-    // First unjudged in-lane note we touch on this walk — committed
+    // First unjudged in-lane note we touch on this walk - committed
     // back to `laneNext[lane]` after the loop so the next press in
     // this lane skips straight to it.
     let firstInLane = -1;
@@ -176,7 +176,7 @@ export class GameState {
       if (delta < -TIMING.good) {
         // Note is still in the future, outside even the largest
         // hit window. If it's far enough out we can stop scanning
-        // entirely — chart is sorted by `t` so nothing further
+        // entirely - chart is sorted by `t` so nothing further
         // can be in window either. Before bailing, commit any
         // first-in-lane index we found above so the hint isn't
         // pinned to an already-judged note.
@@ -186,23 +186,23 @@ export class GameState {
         }
         continue;
       }
-      // Past the good window — this note is already too late to
+      // Past the good window - this note is already too late to
       // hit. `expireMisses` will auto-miss it on the next frame;
       // for now we just look past it.
       if (delta > TIMING.good) continue;
       if (n.lane !== lane) continue;
-      // First unjudged in-lane candidate we've seen this walk —
+      // First unjudged in-lane candidate we've seen this walk -
       // remember its index for the lane hint.
       if (firstInLane === -1) firstInLane = i;
 
-      // First in-window unjudged note in the target lane wins —
+      // First in-window unjudged note in the target lane wins -
       // this is the FIFO / notelock contract. Don't peek further.
       //
       // `absDelta <= TIMING.good` is guaranteed here: lines above
       // already break on `delta < -TIMING.good` and continue on
       // `delta > TIMING.good`, so any note reaching this point sits
       // inside the good window. The cascade therefore needs no
-      // fallback branch — `judgment` is always assigned.
+      // fallback branch - `judgment` is always assigned.
       const absDelta = Math.abs(delta);
       let judgment: Judgment;
       if (absDelta <= TIMING.perfect) judgment = "perfect";
@@ -224,7 +224,7 @@ export class GameState {
       }
       return evt;
     }
-    // No judgment landed — commit whatever first-in-lane index we
+    // No judgment landed - commit whatever first-in-lane index we
     // walked past so the next press skips straight to it.
     if (firstInLane !== -1) this.laneNext[lane] = firstInLane;
     return null;
@@ -246,7 +246,7 @@ export class GameState {
 
     let judgment: Judgment;
     if (delta < -0.18) {
-      // Released way too early — tail miss + combo break.
+      // Released way too early - tail miss + combo break.
       judgment = "miss";
     } else if (abs <= TIMING.perfect) judgment = "perfect";
     else if (abs <= TIMING.great)    judgment = "great";
@@ -254,6 +254,93 @@ export class GameState {
     else                              judgment = "good";
 
     return this.applyTailJudgment(n, judgment, delta, songTime);
+  }
+
+  /**
+   * Strict-Inputs spam check.
+   *
+   * Call this AFTER `hit(lane, songTime)` returned `null` (i.e. the
+   * press didn't land in any note's hit window) and ONLY when the
+   * player has Strict Inputs enabled. Returns:
+   *
+   *   - `true`  if the press was classified as spam: combo broken,
+   *             multiplier reset, small health drop applied. Caller
+   *             should suppress the usual "empty press" SFX track in
+   *             favor of whatever subtle feedback Strict Inputs uses
+   *             (currently: just the existing empty-press tick - the
+   *             combo number visibly dropping is the primary cue).
+   *
+   *   - `false` if there's an unjudged note in this lane within
+   *             ±TIMING.spamGrace of `songTime`. The player WAS
+   *             trying to hit something, just slightly too early/
+   *             late for the good window - that's an honest mistime
+   *             and is left unpenalized (the engine will register a
+   *             real miss for that note via `expireMisses` if/when
+   *             it falls past the miss window). Caller falls back to
+   *             the standard empty-press tick.
+   *
+   * Why we don't increment `stats.hits.miss` or `notesPlayed`:
+   *   Spam misses aren't "real notes the chart authored". Folding
+   *   them into the accuracy denominator would silently rebalance
+   *   every accuracy figure the player has ever seen, and the
+   *   on-screen combo dropping to zero is already an unmistakable
+   *   signal that the press cost them something. We also skip
+   *   `comboBreaks` so the level-edge SFX in the renderer (which
+   *   watches that counter) doesn't fire - the user explicitly
+   *   asked for a SILENT combo break here, just the empty-press
+   *   tick that pressLane already plays unconditionally.
+   *
+   * Why we don't push a JudgmentEvent into `events`:
+   *   The events ring is what the renderer's drawJudgmentPopups
+   *   reads to draw the floating "MISS / GOOD / GREAT / PERFECT"
+   *   text at the lane's gate. Pushing a synthetic miss here would
+   *   surface an on-screen "MISS" popup and contradict the
+   *   "no popup" UX the user requested for spam-misses. Combo
+   *   visibly dropping is the only intended visual cue.
+   *
+   * The walk reuses the same `laneNext` hint as `hit()` so the cost
+   * is amortized O(1) - we usually inspect 0-1 notes, never more
+   * than a handful even on dense charts.
+   */
+  markEmptyPress(lane: number, songTime: number): boolean {
+    const grace = TIMING.spamGrace;
+    const start = Math.max(this.cursor, this.laneNext[lane] ?? 0);
+
+    for (let i = start; i < this.notes.length; i++) {
+      const n = this.notes[i];
+      if (n.judged) continue;
+      // We can bail as soon as we walk past `songTime + grace` -
+      // chart is sorted by `t` so anything further is too far in
+      // the future to count as a "near note" anyway.
+      const future = n.t - songTime;
+      if (future > grace) break;
+      // Notes already in the past (more than `grace` behind) are
+      // fair game to skip: they haven't been judged yet (would have
+      // been caught by `n.judged` above) but `expireMisses` will
+      // finalize them within ~30 ms - they don't represent
+      // intent-to-hit at THIS press.
+      if (-future > grace) continue;
+      if (n.lane !== lane) continue;
+      // Found an unjudged in-lane note within ±grace of the press.
+      // Honest mistime - no spam penalty.
+      return false;
+    }
+
+    // No nearby note in this lane → spam. Apply silent penalty.
+    const s = this.stats;
+    if (s.combo === 0) {
+      // Combo was already broken (e.g. just missed a note last
+      // frame). Don't double-apply the health drop or fire any
+      // listeners that key off lastJudgeAt - let the prior break
+      // own the moment. Important to keep this no-op so a player
+      // who panic-mashes during a stream of misses doesn't see
+      // their health bar tick down per press.
+      return true;
+    }
+    s.combo = 0;
+    s.multiplier = 1;
+    s.health = Math.max(0, s.health - 0.04);
+    return true;
   }
 
   /** True if the given lane currently has a hold being sustained. */
@@ -322,7 +409,7 @@ export class GameState {
       // SFX trigger can tell whether this miss broke a "meaningful"
       // combo. Increment is gated on the threshold so trivial 0-19
       // streaks don't fire the combobreak cue (matches osu! convention
-      // — a 3-note streak loss isn't a "moment").
+      // - a 3-note streak loss isn't a "moment").
       if (s.combo >= COMBO_BREAK_THRESHOLD) {
         s.comboBreaks += 1;
       }
@@ -355,7 +442,7 @@ export class GameState {
     //     loop and skips entries by `songTime - ev.at > 0.6`, so it
     //     doesn't care about insertion order.
     //   - The cap (32) is large enough that no two on-screen popups
-    //     can share a slot — the popup window is 0.6 s and the engine
+    //     can share a slot - the popup window is 0.6 s and the engine
     //     can produce at most 4 events / frame (one per lane), so 24
     //     of those 32 entries clear out before reuse even at 60 FPS.
     //

@@ -38,12 +38,12 @@ export const PLACEHOLDER_META: SongMeta = {
 /* ------------------------------------------------------------------------- */
 
 /**
- * Syncle difficulty modes — five universal tiers (easy / normal / hard /
+ * Syncle difficulty modes - five universal tiers (easy / normal / hard /
  * insane / expert) that mirror osu!mania's own naming scheme. Same
  * vocabulary works across the homepage card, the in-game picker, the
  * multiplayer lobby, and the saved-score keys.
  *
- * Resolution model — "originals only" (no synthesis):
+ * Resolution model - "originals only" (no synthesis):
  *
  *   - For each beatmapset, every parsed mapper chart is bucketed into one
  *     of the five tiers via {@link assignBucket} (mapper-named tier with
@@ -52,7 +52,7 @@ export const PLACEHOLDER_META: SongMeta = {
  *     bucket; a tier with no winning mapper chart is simply UNAVAILABLE.
  *
  *   - When a tier is unavailable the picker disables that button. The
- *     player sees exactly the difficulties the mapper actually shipped —
+ *     player sees exactly the difficulties the mapper actually shipped -
  *     no quantization, no subsampling, no grid-snapping. The previous
  *     "synthesize a tier from the densest chart" path was removed because
  *     re-timed notes drifted off the song's beat just enough to feel
@@ -102,7 +102,7 @@ export function modeStars(mode: ChartMode): 1 | 2 | 3 | 4 | 5 {
  *     and nps. Tiers are populated by routing each parsed mapper chart
  *     through `assignBucket(version, nps)` (see `lib/game/difficulty.ts`).
  *   - No mapper chart for that bucket → unavailable. The picker disables
- *     the button. We don't synthesize from neighbouring tiers anymore —
+ *     the button. We don't synthesize from neighbouring tiers anymore -
  *     re-timing notes drifted them just off the song's beat enough to
  *     feel wrong on careful play, and an honest "not available" beats a
  *     subtly-mistimed Easy.
@@ -134,13 +134,13 @@ export interface LoadSongResult {
    * The UI uses this to show "fetched from catboy.best" / etc.
    */
   delivery: "local" | "remote";
-  /** Set when delivery === "remote" — raw audio bytes for AudioEngine.loadFromBytes. */
+  /** Set when delivery === "remote" - raw audio bytes for AudioEngine.loadFromBytes. */
   audioBytes?: ArrayBuffer;
-  /** Set when delivery === "remote" — opaque dedup key for the audio cache. */
+  /** Set when delivery === "remote" - opaque dedup key for the audio cache. */
   audioKey?: string;
-  /** Set when delivery === "remote" — which mirror served the bytes. */
+  /** Set when delivery === "remote" - which mirror served the bytes. */
   mirror?: string;
-  /** Set when delivery === "remote" — beatmapset id we pulled. */
+  /** Set when delivery === "remote" - beatmapset id we pulled. */
   beatmapsetId?: number;
 }
 
@@ -149,12 +149,12 @@ export interface LoadSongResult {
 /* ------------------------------------------------------------------------- */
 
 /**
- * Songs shipped in /public/songs/ — used as a fallback when every public
+ * Songs shipped in /public/songs/ - used as a fallback when every public
  * mirror search API is unreachable. Two is enough for "I can still play
  * something offline / when APIs are down". Add more by dropping a folder
  * under public/songs/<slug>/ with audio.mp3 + chart.osu and listing it here.
  *
- * The runtime never picks from this list as long as a mirror is reachable —
+ * The runtime never picks from this list as long as a mirror is reachable -
  * the whole point of v0.x is "fresh random song every refresh".
  *
  * Once we add Firestore-backed daily scheduling, this list is what the
@@ -192,7 +192,7 @@ const LOCAL_FALLBACKS: LocalSong[] = [
 /* ------------------------------------------------------------------------- */
 
 /**
- * One parsed chart inside a session — either a mapper-provided difficulty
+ * One parsed chart inside a session - either a mapper-provided difficulty
  * from the .osz, or (for local fallback songs) the single chart that ships.
  */
 interface RawChart {
@@ -208,12 +208,12 @@ interface RawChart {
 
 /**
  * Everything we need to materialize a `LoadSongResult` for any difficulty.
- * Captured ONCE per page session — switching modes is a free O(1) lookup
+ * Captured ONCE per page session - switching modes is a free O(1) lookup
  * into `bucketCharts`, never another network roll.
  *
  * `bucketCharts` holds at most one mapper chart per bucket (best name +
  * density match wins ties; see `rawSessionFromExtracted`). Buckets with
- * no qualifying mapper chart are simply absent — those tiers will be
+ * no qualifying mapper chart are simply absent - those tiers will be
  * marked unavailable in the picker. `fallbackBase` is the densest chart
  * we parsed and is used by local-fallback songs (which ship only one
  * .osu and so populate at most one bucket) for chart-level metadata.
@@ -233,9 +233,9 @@ interface RawSession {
      * background art on the homepage card and the in-game StartCard.
      */
     coverUrl?: string;
-    /** Beatmapset moderation status — "ranked", "loved", etc. */
+    /** Beatmapset moderation status - "ranked", "loved", etc. */
     status?: string;
-    /** Mapper username — used as a credit line in the UI. */
+    /** Mapper username - used as a credit line in the UI. */
     creator?: string;
   };
   delivery: "local" | "remote";
@@ -390,7 +390,7 @@ async function pickSession(
   try {
     return await pickRandomRemote(onProgress);
   } catch (err) {
-    // Dev-only — these warnings are signal during local debugging
+    // Dev-only - these warnings are signal during local debugging
     // (mirror flake, search-api outage, CORS misconfig) but pure
     // noise in production where the local fallback path immediately
     // takes over and the player never notices. NODE_ENV is statically
@@ -405,7 +405,7 @@ async function pickSession(
     onProgress?.("Mirrors unreachable, loading local song…");
   }
 
-  // 2) Local fallback — random pick across whatever ships in /public/songs/.
+  // 2) Local fallback - random pick across whatever ships in /public/songs/.
   return pickRandomLocal();
 }
 
@@ -424,19 +424,19 @@ async function pickRandomRemote(
     } catch (err) {
       lastErr = err;
       // No point retrying discovery if we already tried once and got an
-      // error — search APIs either work or they don't, retrying produces
+      // error - search APIs either work or they don't, retrying produces
       // the same failure. Surface immediately so the caller can fall back.
       throw err;
     }
     if (triedSets.has(pick.beatmapsetId)) {
-      // Random search rolled the same id twice in a row — try once more.
+      // Random search rolled the same id twice in a row - try once more.
       continue;
     }
     triedSets.add(pick.beatmapsetId);
     try {
       onProgress?.(
         `Picked beatmapset ${pick.beatmapsetId}${
-          pick.title ? ` (${pick.artist} — ${pick.title})` : ""
+          pick.title ? ` (${pick.artist} - ${pick.title})` : ""
         }, downloading…`,
       );
       const extracted = await fetchAndExtractAll(pick.beatmapsetId, { onProgress });
@@ -446,7 +446,7 @@ async function pickRandomRemote(
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Dev-only — same rationale as the outer mirror-failed warn.
+      // Dev-only - same rationale as the outer mirror-failed warn.
       // The retry loop itself decides whether to surface anything to
       // the player; the per-attempt detail only helps when debugging
       // why a *specific* mirror keeps rejecting a download.
@@ -499,7 +499,7 @@ function rawSessionFromExtracted(
   // mapper charts collide in the same bucket we tie-break by density:
   //   - Easy / Normal: prefer LOWER nps (more chill, closer to band min)
   //   - Hard / Insane / Expert: prefer HIGHER nps (more challenge,
-  //     closer to band max). Expert is now uncapped — if a mapper
+  //     closer to band max). Expert is now uncapped - if a mapper
   //     ships a 25-nps "Lunatic" the player gets it as-is, since the
   //     "originals only" model means we don't thin notes anymore.
   const bucketCharts: Partial<Record<ChartMode, RawChart>> = {};
@@ -513,7 +513,7 @@ function rawSessionFromExtracted(
     if (better) bucketCharts[bucket] = raw;
   }
 
-  // Densest chart in the set, regardless of bucket — kept around for
+  // Densest chart in the set, regardless of bucket - kept around for
   // chart-level metadata / fallback id generation. Synthesis is gone,
   // so this no longer feeds resolveTier directly.
   const fallbackBase = parsedCharts.reduce(
@@ -572,13 +572,13 @@ async function pickRandomLocal(): Promise<RawSession> {
       `Local fallback chart "${song.id}" is not a valid 4K mania beatmap`,
     );
   }
-  // Local fallback songs ship a single .osu — bucket it by density so
+  // Local fallback songs ship a single .osu - bucket it by density so
   // the picker enables exactly the tier it actually belongs to and
   // disables the rest. Since synthesis was removed there's no longer a
   // way for the player to "play this song on Easy" if the local chart
   // is a Hard, but local fallbacks only fire when every public mirror
   // is unreachable, so this lives in the "best-effort offline mode"
-  // budget — a single playable difficulty beats no song at all.
+  // budget - a single playable difficulty beats no song at all.
   const nps = parsed.duration > 0 ? parsed.notes.length / parsed.duration : 0;
   const fallbackBase: RawChart = {
     rawNotes: parsed.notes,
@@ -614,7 +614,7 @@ async function pickRandomLocal(): Promise<RawSession> {
  * be sourced from the right place when the player switches mode.
  *
  * In the "originals only" model `notes === source.rawNotes` whenever
- * the tier is available — `mapperShipped` is now always `true` for
+ * the tier is available - `mapperShipped` is now always `true` for
  * available tiers, kept on the type for downstream code that still
  * branches on it (HUD "raw N notes" badge etc.).
  */
@@ -670,7 +670,7 @@ function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
   const requested = tiers[mode];
   // Audio metadata source: the mapper chart that owns this tier, or the
   // fallback (used by local-fallback songs where the same chart drives
-  // every available tier — typically only one bucket is populated for a
+  // every available tier - typically only one bucket is populated for a
   // local song since they ship a single .osu).
   const chartForMode = requested.source ?? base;
 
@@ -734,7 +734,7 @@ function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
     source: "osu",
     // `rawNoteCount` always equals the requested tier's note count now
     // (mapper chart is used as-is, no thinning). Kept on the result for
-    // backward compat with the HUD's "raw N" badge — it'll just always
+    // backward compat with the HUD's "raw N" badge - it'll just always
     // match `requested.count`. Falls back to `base` only for the
     // pathological case where the caller requests an unavailable tier.
     rawNoteCount: (requested.source ?? base).rawNotes.length,
@@ -759,7 +759,7 @@ function emptyTier(): ResolvedTier {
 }
 
 /**
- * Resolve a single tier — mapper-only, no synthesis.
+ * Resolve a single tier - mapper-only, no synthesis.
  *
  * `buckets[tier]` was populated in `rawSessionFromExtracted` by walking
  * every parsed mapper chart in the .osz and routing it through

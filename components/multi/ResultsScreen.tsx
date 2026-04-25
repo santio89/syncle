@@ -7,10 +7,10 @@
  *   - Two big buttons: [Back to room] and [Back to main menu].
  *     - "Back to room": any player who clicks it triggers a server-side
  *       transition that pulls the WHOLE room back to the lobby. No host
- *       confirmation needed (per the new UX brief — "everyone has to go
+ *       confirmation needed (per the new UX brief - "everyone has to go
  *       to the room anyway"). The clicker briefly shows a "Going back…"
  *       state until the snapshot phase flips to "lobby".
- *     - "Back to main menu": this player only — leaves the room and
+ *     - "Back to main menu": this player only - leaves the room and
  *       routes home. Other players keep playing / chatting.
  *   - Live chat sticks around so the room can talk over the standings.
  */
@@ -51,7 +51,7 @@ export function ResultsScreen({
     if (results?.standings?.length) return results.standings;
     // Fallback: derive standings from the live snapshot if the
     // `phase:results` event was missed (late socket reconnect, slow
-    // network). Includes ALL roster players — late joiners who arrive
+    // network). Includes ALL roster players - late joiners who arrive
     // mid-song or right at results land here too, with whatever live
     // stats they accumulated (zero if they never played a note). They
     // appear at the bottom of the leaderboard, which is the intended
@@ -83,7 +83,7 @@ export function ResultsScreen({
 
   const handleLeave = useCallback(() => {
     // Routed through the global leave-guard so a results-screen
-    // exit also gets the "Are you sure?" prompt — same surface as
+    // exit also gets the "Are you sure?" prompt - same surface as
     // closing the tab or hitting browser back. Pass-through when
     // the guard happens to be off (shouldn't on results, but the
     // helper handles it gracefully either way).
@@ -99,7 +99,7 @@ export function ResultsScreen({
     });
   }, [attemptLeave, actions, router]);
 
-  // ESC = leave shortcut. Keep the same affordance as before — quick
+  // ESC = leave shortcut. Keep the same affordance as before - quick
   // way out for users who don't want to wait on whatever the room is
   // doing. Use a stable handler to avoid re-binding on every render.
   useEffect(() => {

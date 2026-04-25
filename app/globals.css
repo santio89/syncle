@@ -7,7 +7,7 @@
  *
  * All themeable colors live here as space-separated RGB triplets so Tailwind
  * can do `rgb(var(--fg) / <alpha-value>)` and existing classes like
- * `text-bone-50/70` keep working. Switching themes only changes these vars —
+ * `text-bone-50/70` keep working. Switching themes only changes these vars -
  * no JS needs to touch a single class name.
  *
  * Cubic-bezier `--ease-theme` is the curve used everywhere a property is
@@ -28,27 +28,27 @@
   /* Brutalist drop shadow.
    * Mirrors light mode: there the shadow color matches the page text
    * (--fg, near-black) so it reads as a hard ink offset against cream.
-   * In dark mode the inverse holds — bone-white shadow against the
-   * black page bg — giving cards the same brutalist depth in either
+   * In dark mode the inverse holds - bone-white shadow against the
+   * black page bg - giving cards the same brutalist depth in either
    * theme. Pure black (the previous value) was invisible against the
    * equally-black bg, so cards looked flat. */
   --shadow:    245 245 240;
   /* Accent-tinted shadow for the play CTAs. A deeper-than-accent navy
    * so the brand-blue buttons feel like they sit on their own colored
-   * ink instead of a stark white block — keeps the palette unified. */
+   * ink instead of a stark white block - keeps the palette unified. */
   --shadow-accent: 25 80 155;
   /* Translucent surface fill for brut-card. Stays distinct from --bg-2 so
    * we can re-tint per theme (dark glass vs frosted white). */
   --surface:   4 5 8;
   --surface-a: 0.6;
-  /* Halo around the play CTA — semitransparent accent in dark mode. */
+  /* Halo around the play CTA - semitransparent accent in dark mode. */
   --cta-halo:  61 169 255;
   --cta-halo-a: 0.55;
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  /* Off-white paper, not pure white — keeps the brutalist warmth, easier
+  /* Off-white paper, not pure white - keeps the brutalist warmth, easier
    * on the eyes, and lets the same blue accent stay readable without a
    * harsh contrast jump. */
   --bg:        245 245 240;
@@ -59,7 +59,7 @@
   /* Slightly deeper blue so it still pops on a cream background. */
   --accent:    14 108 186;
   --shadow:    12 14 18;       /* dark shadow, mirrors --fg */
-  /* Same idea as dark mode but tuned for cream bg — a deep navy that
+  /* Same idea as dark mode but tuned for cream bg - a deep navy that
    * reads as "ink shadow of the accent" rather than plain black. */
   --shadow-accent: 8 60 110;
   --surface:   245 245 240;
@@ -73,7 +73,7 @@
   /* Near-linear easing so background and text feel perfectly in lockstep.
    *
    * The previous tightened ease-in-out (0.65, 0, 0.35, 1) is mathematically
-   * symmetric, so both bg and text arrive at the same instant — but the
+   * symmetric, so both bg and text arrive at the same instant - but the
    * curve has a slow start AND slow end, which makes the bg feel like it
    * "settles" before the text "appears" (because the text crosses through
    * a gray low-contrast midpoint while the bg doesn't). A near-linear
@@ -96,7 +96,7 @@
  * margins. Cheaper than auditing every component to make sure it
  * neutralizes its own defaults.
  *
- * IMPORTANT: nothing else in this file restates `box-sizing` — the rule
+ * IMPORTANT: nothing else in this file restates `box-sizing` - the rule
  * below is the single source of truth.
  * ------------------------------------------------------------------------- */
 *,
@@ -155,7 +155,7 @@ body {
 /* Form / interactive elements ship with their own user-agent font + color
  * resets that ignore the page's typography. Forcing inheritance keeps
  * <button>, <input>, <select>, <textarea>, <a>, <label>, <summary> in
- * lockstep with the surrounding text — no surprise serifs in a button
+ * lockstep with the surrounding text - no surprise serifs in a button
  * inside a card, no Chrome-blue link override, no native input cream
  * showing through on a dark surface. Tailwind's Preflight does most of
  * this; we restate it so any non-Preflight CSS layer (third-party
@@ -179,7 +179,7 @@ summary {
  * strips the leading/trailing half-leading from a line box so a single
  * line of text visually rests in the geometric center of its container
  * instead of sitting slightly low. Critical for the small UI primitives
- * — pills, tags, duration chips, button labels — where the off-center
+ * - pills, tags, duration chips, button labels - where the off-center
  * baseline reads as a layout bug. Browsers that don't support the
  * property just ignore it; no fallback needed.
  *
@@ -187,7 +187,7 @@ summary {
  * distributed across lines instead of leaving a one-word orphan on the
  * last row.
  *
- * `text-wrap: pretty` is the long-form sibling — applied only to
+ * `text-wrap: pretty` is the long-form sibling - applied only to
  * paragraphs so the browser's slower line-break optimizer is reserved
  * for prose, not single-line UI text.
  * ------------------------------------------------------------------------- */
@@ -195,14 +195,14 @@ summary {
  * one-word orphan on the second row) but DELIBERATELY keep their full
  * line box. Trimming the half-leading off an <h1>/<h2> visually
  * collapses the gap between the title and the subtitle/paragraph that
- * follows it — the implicit breathing room from line-height was doing
+ * follows it - the implicit breathing room from line-height was doing
  * real layout work, not just decorating the glyph. */
 :where(h1, h2, h3, h4, h5, h6) {
   text-wrap: balance;
 }
 
 /* Trim is reserved for genuine "single-line UI primitives" the user
- * perceives as a chip, tag, badge, button, label, or tooltip — i.e.
+ * perceives as a chip, tag, badge, button, label, or tooltip - i.e.
  * things that read as a self-contained shape with text inside. For
  * those the half-leading is purely decorative and removing it makes
  * the glyph rest dead-center inside its container.
@@ -213,7 +213,7 @@ summary {
  * line box doubles as the gap between the label and the value below,
  * so trimming them collapses the visual rhythm of the whole card.
  * That's why we deliberately do NOT match plain monospace+uppercase
- * text here — only elements that ALSO have a border (i.e. an actual
+ * text here - only elements that ALSO have a border (i.e. an actual
  * pill recipe) qualify. */
 :where(
   button,
@@ -228,7 +228,7 @@ summary {
    * recipe (e.g. a third-party widget rendering its own markup). */
   .brut-pill,
   [data-pill],
-  /* Bordered pill / tag / chip recipes — the only "label-shaped"
+  /* Bordered pill / tag / chip recipes - the only "label-shaped"
    * elements that benefit from trimming. Stacked attribute selectors
    * are strict whole-word matches against the class list, so only
    * elements that explicitly carry the matching Tailwind utilities
@@ -254,7 +254,7 @@ summary {
  * box used to leave above and below the glyphs. For bare inline labels
  * that's a pure win (better baseline alignment), but for BORDERED
  * pills the previously-invisible half-leading was doubling as visual
- * padding — strip it and the text now reads as cramped against the
+ * padding - strip it and the text now reads as cramped against the
  * border (see the "RANKED" / "4:19" chips on the home card).
  *
  * Restore that breathing room with explicit `padding-block` on the
@@ -272,7 +272,7 @@ summary {
 [class~="border"][class~="px-1.5"][class~="py-0.5"],
 [class~="border"][class~="px-1"][class~="py-0.5"] {
   /* ~5px each side. Calibrated against text-[10.5px]/text-[12.5px] at
-   * line-height 1.4 — restores the same total box height the pill had
+   * line-height 1.4 - restores the same total box height the pill had
    * before trimming, so existing layouts don't shift. */
   padding-block: 0.32rem;
 }
@@ -317,7 +317,7 @@ textarea,
 }
 
 /* Suppress Chromium's yellow autofill flash. Re-tinting via inset
- * box-shadow is the well-known trick — actual fill stays the form's
+ * box-shadow is the well-known trick - actual fill stays the form's
  * own background, and the text color sticks to our token. */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
@@ -333,7 +333,7 @@ select:-webkit-autofill {
 
 /* Native focus rings are inconsistent across browsers and rarely match
  * the brand. Replace with a hard accent outline only for keyboard
- * users — pointer focus stays clean. Components that own a custom
+ * users - pointer focus stays clean. Components that own a custom
  * focus look (.icon-btn, .brut-btn) keep priority via specificity. */
 :focus-visible {
   outline: 2px solid rgb(var(--accent));
@@ -411,12 +411,12 @@ html::-webkit-scrollbar-thumb:hover {
  * suppressed (Firefox `scrollbar-width: none`, WebKit `::-webkit-scrollbar`
  * display:none) because the row is short, the container is small, and
  * the brutalist 8 px track would dominate the card visually. The strip
- * still scrolls — we just rely on the cursor change + drag affordance
+ * still scrolls - we just rely on the cursor change + drag affordance
  * (handled in the React wrapper) and the children-overflow hint to
  * communicate scrollability.
  *
  * `overscroll-behavior-x: contain` keeps a fast horizontal flick from
- * also scrolling the page — without this a wide swipe inside a narrow
+ * also scrolling the page - without this a wide swipe inside a narrow
  * card would steal the gesture from the page-level scroll on touch
  * devices. `touch-action: pan-x` does the same job on the inverse
  * axis (lets vertical swipes still scroll the page through the strip).
@@ -437,7 +437,7 @@ html::-webkit-scrollbar-thumb:hover {
 /* ---------------------------------------------------------------------------
  * Theme transition
  *
- * Animate only the props that actually change with theme — never `all`,
+ * Animate only the props that actually change with theme - never `all`,
  * which would also animate hover transforms and add jank. Scoped to a
  * narrow allowlist so a button's micro-interactions (translate/scale)
  * keep their own faster curves.
@@ -446,7 +446,7 @@ html::-webkit-scrollbar-thumb:hover {
  * frame around the toggle so we don't pay the transition cost on every
  * single hover/focus.
  * ------------------------------------------------------------------------- */
-/* Non-inherited properties stay on the universal selector — they don't
+/* Non-inherited properties stay on the universal selector - they don't
  * suffer the "double animation" issue because each element either has an
  * explicit value or doesn't, and the browser starts exactly one transition. */
 .theme-transitioning,
@@ -462,23 +462,23 @@ html::-webkit-scrollbar-thumb:hover {
 /* `color` is inherited, so applying its transition via the universal `*`
  * selector causes a visible flicker on text that doesn't set its own color
  * (e.g. the SYNCLE <h1>, the song title <h2> inside .brut-card-accent).
- * Each frame the inherited value changes — and each frame the descendant
+ * Each frame the inherited value changes - and each frame the descendant
  * restarts its own color transition from the current intermediate value,
  * fighting the parent's animation.
  *
  * Fix: only elements that DIRECTLY own a themed `color` value get `color`
  * in their transition list. Containers whose `color` comes purely from
- * inheritance (cards, layout boxes) must NOT animate `color` — otherwise
+ * inheritance (cards, layout boxes) must NOT animate `color` - otherwise
  * their inherited value triggers a second transition that fights the
  * body's, causing flicker on every text descendant.
  *
  * IMPORTANT: each selector list has higher specificity than the universal
- * `* ` rule above, so we must repeat the relevant transition properties —
+ * `* ` rule above, so we must repeat the relevant transition properties -
  * otherwise the universal rule's background/border/etc transitions get
  * dropped on these specific elements (body in particular, which would lose
  * its background-color crossfade). */
 
-/* (a) Owners of a themed `color` value — these are safe to animate color
+/* (a) Owners of a themed `color` value - these are safe to animate color
  *     because the value really does change on the element itself, so the
  *     transition doesn't double-fire via inheritance. */
 .theme-transitioning,
@@ -497,7 +497,7 @@ html::-webkit-scrollbar-thumb:hover {
 }
 
 /* (b) Card-style containers that own ONLY background/border/shadow. They
- *     inherit `color` from <body>, so they must NOT include `color` here —
+ *     inherit `color` from <body>, so they must NOT include `color` here -
  *     otherwise themed text inside them (h2 song title, paragraphs) flickers
  *     during the swap. */
 .theme-transitioning .brut-card,
@@ -550,11 +550,11 @@ html::-webkit-scrollbar-thumb:hover {
   background: rgb(var(--accent));
   color: rgb(var(--bg));
   border: 2px solid rgb(var(--accent));
-  /* Accent-tinted shadow — see --shadow-accent. Keeps the play/start
+  /* Accent-tinted shadow - see --shadow-accent. Keeps the play/start
    * buttons reading as a single blue color block rather than blue-on-
    * white (dark mode) or blue-on-black (light mode).
    *
-   * Base shadow is 4px (vs `.brut-btn`'s 5px) — the saturated accent
+   * Base shadow is 4px (vs `.brut-btn`'s 5px) - the saturated accent
    * fill has higher contrast against the page than the secondary
    * button's bone/ink fill, so it visually "weighs more" already.
    * Trimming a pixel off the shadow keeps the overall mass
@@ -585,7 +585,7 @@ html::-webkit-scrollbar-thumb:hover {
  *
  * Use cases: small inline buttons that sit INSIDE other UI blocks
  * where the brutalist shadow visually competes with the surrounding
- * chrome — e.g. the rename "save" button next to a text input, the
+ * chrome - e.g. the rename "save" button next to a text input, the
  * pagination ← PREV / NEXT → buttons under the catalog, the copy-
  * code button in the lobby header, the catalog refresh / clear-
  * search buttons. In those contexts the shadow doubled up against
@@ -595,7 +595,7 @@ html::-webkit-scrollbar-thumb:hover {
  * The translate is also removed because translating a button with
  * NO shadow looks like the button is drifting in space (there's
  * nothing left behind to indicate where it was). Hover feedback
- * comes from a subtle `filter: brightness` ramp instead — short
+ * comes from a subtle `filter: brightness` ramp instead - short
  * 80ms timing matches the original lift/slam timing so the
  * interaction feel is preserved, just visually flat.
  *
@@ -704,7 +704,7 @@ html::-webkit-scrollbar-thumb:hover {
  * Each bar reads its own --bar-dur and --bar-delay so they pulse out of
  * phase with each other and the whole strip looks like a real spectrum
  * analyzer. Animating transform: scaleY (instead of height) keeps it on
- * the GPU compositor — even 70+ bars stays at full framerate. */
+ * the GPU compositor - even 70+ bars stays at full framerate. */
 @keyframes waveformBar {
   0%, 100% { transform: scaleY(0.4); }
   50%      { transform: scaleY(1); }
@@ -722,14 +722,14 @@ html::-webkit-scrollbar-thumb:hover {
 }
 
 /* ---------------------------------------------------------------------------
- * Phase shell — the wrapper around each multiplayer-room phase (lobby,
+ * Phase shell - the wrapper around each multiplayer-room phase (lobby,
  * loading, results) gets a 220ms opacity ramp so swapping phases reads
  * as a soft fade-in instead of a hard cut. Combined with the React
  * `key={phase}` remount, this also re-fires the animation on *every*
  * phase change, even the ones where the surrounding chrome is identical.
  *
  * `prefers-reduced-motion` users get an instant swap. We don't animate
- * transform here — opacity-only animations are GPU-cheap and don't
+ * transform here - opacity-only animations are GPU-cheap and don't
  * interact badly with the chat panel's own scroll position.
  * ------------------------------------------------------------------------- */
 @keyframes phaseFadeIn {
@@ -788,7 +788,7 @@ html::-webkit-scrollbar-thumb:hover {
  * border, mono uppercase tracking, square corners, hard-offset shadow.
  * Position + show/hide are driven by `<TooltipLayer />` (single mount
  * in the root layout, document-level event delegation). The element
- * itself is just the styled bubble — it never carries layout state.
+ * itself is just the styled bubble - it never carries layout state.
  *
  * `::after` paints a tiny brutalist arrow nub pointing back at the
  * trigger; offset and rotation flip via `data-placement` so the same
@@ -815,7 +815,7 @@ html::-webkit-scrollbar-thumb:hover {
   /* Without an explicit width, fixed-positioned boxes use shrink-to-fit,
      which lets the available viewport space (small near the right edge,
      where the header buttons live) compress the tooltip and wrap on
-     every space — e.g. "SWITCH / TO / LIGHT / MODE" instead of two
+     every space - e.g. "SWITCH / TO / LIGHT / MODE" instead of two
      clean rows. `max-content` forces the box to be as wide as its
      widest line first, and `max-width` still clamps very long single
      lines so they soft-wrap inside a sane width. */
@@ -828,7 +828,7 @@ html::-webkit-scrollbar-thumb:hover {
      `!important` defends against any cascading inheritance (some
      parent containers apply `text-align: center`, which would otherwise
      leak in via inheritance even though `text-align` is now in our own
-     rule — Tailwind's `text-center` utility carries higher specificity
+     rule - Tailwind's `text-center` utility carries higher specificity
      than expected because it lands in the `utilities` layer). The
      `text-align-last: left` line forces the trailing single line of a
      wrapped tooltip to also stay left, instead of inheriting `justify`
@@ -861,7 +861,7 @@ html::-webkit-scrollbar-thumb:hover {
   border-top: 2px solid rgb(var(--accent));
 }
 @keyframes tooltipIn {
-  /* Animate opacity ONLY — transform is owned by the inline style for
+  /* Animate opacity ONLY - transform is owned by the inline style for
    * centering (translate(-50%, ...)), and adding it to the keyframe
    * would clobber that mid-animation. */
   from { opacity: 0; }
@@ -881,7 +881,7 @@ html::-webkit-scrollbar-thumb:hover {
  * `--ease-theme` curve so the toggle is in sync with the page-wide swap.
  *
  * Inherits all base styling (size, border, hover, focus) from `.icon-btn`
- * — only the rotate/crossfade animation lives here.
+ * - only the rotate/crossfade animation lives here.
  * ------------------------------------------------------------------------- */
 
 .theme-toggle__icon {

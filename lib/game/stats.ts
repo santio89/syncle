@@ -2,7 +2,7 @@
 //
 // Used to back the homepage scoreboard now that Syncle is "random song every
 // refresh, endless retries". Daily framing was retired with the Firestore
-// scheduler — when that lands, these stats become the local cache of the
+// scheduler - when that lands, these stats become the local cache of the
 // player's cloud profile (same field names, just synced).
 //
 // All writes are best-effort: on quota/disabled storage we silently drop.
@@ -64,7 +64,7 @@ function save(stats: LifetimeStats): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
   } catch {
-    /* quota / disabled — best-effort only */
+    /* quota / disabled - best-effort only */
   }
 }
 

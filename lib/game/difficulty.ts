@@ -1,5 +1,5 @@
 /**
- * Pure difficulty classification — no I/O, no browser-only deps.
+ * Pure difficulty classification - no I/O, no browser-only deps.
  *
  * Lives in its own tiny module (instead of inside `lib/game/chart.ts`)
  * because BOTH the client (chart loader) and the server (catalog
@@ -13,7 +13,7 @@
  *     five Syncle tiers using its mapper-given difficulty NAME and its
  *     real notes-per-second density. Name is the primary signal,
  *     density is the tiebreaker / sanity check.
- *   - We DO NOT modify the chart itself here — no quantization, no
+ *   - We DO NOT modify the chart itself here - no quantization, no
  *     subsampling, no synthesis. Those concepts were removed from the
  *     codebase along with the "show every tier on every song" model;
  *     the player now sees exactly the tiers the mapper actually shipped
@@ -28,7 +28,7 @@
  * stay stable across every song.
  *
  * NOTE on `"normal"`: stored on the wire, in localStorage, and in the
- * leaderboard as `"normal"` for backward compatibility — labelled as
+ * leaderboard as `"normal"` for backward compatibility - labelled as
  * `"medium"` in the UI via {@link displayMode}.
  */
 export type ChartMode = "easy" | "normal" | "hard" | "insane" | "expert";
@@ -57,15 +57,15 @@ export function displayMode(
 }
 
 /**
- * Per-tier notes-per-second band — the canonical density window for
+ * Per-tier notes-per-second band - the canonical density window for
  * "what is a Hard?". Used for two decisions only (synthesis is gone):
  *
  *   1. Bucket validation. A mapper-named "Hard" only counts as Hard if
  *      its real density falls in `[min, max]`. A "Hard" chart at 14 nps
- *      is misclassified — we re-bucket it into Insane or Expert based
+ *      is misclassified - we re-bucket it into Insane or Expert based
  *      on the density band that actually contains it.
  *   2. Density-only fallback when a mapper's name gives nothing usable
- *      ("[4K Lv.27]", "Promethean Kings", etc.) — `classifyByDensity`
+ *      ("[4K Lv.27]", "Promethean Kings", etc.) - `classifyByDensity`
  *      walks the bands and picks the one containing the chart's nps.
  *
  * Bands overlap by ~0.5 nps at boundaries and are biased toward the
@@ -81,7 +81,7 @@ export const TIER_BANDS: Record<
   normal: { min: 3.0, max: 5.0 },
   hard: { min: 4.5, max: 7.5 },
   insane: { min: 6.5, max: 10.5 },
-  // Expert has no real upper cap — anything above 10.5 nps reads as
+  // Expert has no real upper cap - anything above 10.5 nps reads as
   // Expert. We deliberately let the original chart through as-is,
   // even at 25+ nps, because the user opted into "originals only" and
   // an unplayable Expert button is a more honest signal than silently
@@ -135,7 +135,7 @@ export function classifyDifficultyByName(version: string): ChartMode | null {
 
 /**
  * Pick the bucket a mapper chart actually belongs to. Name is the
- * primary signal but density gets the final say WHEN WE HAVE IT —
+ * primary signal but density gets the final say WHEN WE HAVE IT -
  * if the name says one tier and the real nps clearly says another,
  * we trust the math.
  *
@@ -144,7 +144,7 @@ export function classifyDifficultyByName(version: string): ChartMode | null {
  * not every mirror exposes hit-object counts on every diff (some
  * return zeros, some omit the fields entirely). When that happens
  * `nps` is 0 / non-finite and `classifyByDensity(0)` would dump
- * everything into Easy — that's the "every catalog row says EASY"
+ * everything into Easy - that's the "every catalog row says EASY"
  * bug. So we treat `nps <= 0` (or NaN) as "no density signal" and
  * lean entirely on the mapper name, which is always present.
  *
@@ -153,7 +153,7 @@ export function classifyDifficultyByName(version: string): ChartMode | null {
  *   - mapper "Hard" at 14 nps    → name says Hard, density says Expert (9.5+)  → Expert
  *   - mapper "[4K Lv.27]" at 8.2 → name unrecognized, density 8.2 ∈ Insane    → Insane
  *
- * Examples (no density signal — `nps <= 0` or `NaN`):
+ * Examples (no density signal - `nps <= 0` or `NaN`):
  *   - mapper "Hard"      → trust the name → Hard
  *   - mapper "Lunatic"   → trust the name → Expert
  *   - mapper "[4K Lv.?]" → unknown name + no density → fall back to "normal"

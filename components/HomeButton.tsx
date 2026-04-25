@@ -26,7 +26,7 @@ import {
  * surface a "Are you sure?" prompt before the navigation actually
  * runs. When no guard is active (idle pages, homepage), the
  * intercept is a synchronous pass-through and the click flows
- * straight through to the router — same UX as a plain Link.
+ * straight through to the router - same UX as a plain Link.
  */
 export function HomeButton({
   className = "",
@@ -56,7 +56,7 @@ export function HomeButton({
       // `router.replace` when a guard is active so the
       // LeaveGuardProvider can collapse the guarded URL (e.g.
       // /multi/[code] / /play) out of history alongside its
-      // popstate sentinel — pressing browser back from / would
+      // popstate sentinel - pressing browser back from / would
       // otherwise re-mount the guarded page in its "no session"
       // fallback (JoinForm / fresh random song) and trap the user
       // in a loop. On unguarded pages we keep the regular
@@ -103,7 +103,7 @@ function HomeIcon({ size = 19 }: { size?: number }) {
       <path d="M5 10 V21 H19 V10" />
       {/* Door: small rectangle centered in the lower half. Solid
           stroke (no fill) so the icon stays readable on both light
-          and dark themes — currentColor + transparent fill follows
+          and dark themes - currentColor + transparent fill follows
           the brutalist hollow-shape convention used elsewhere. */}
       <rect x="10" y="14" width="4" height="7" />
     </svg>

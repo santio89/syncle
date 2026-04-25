@@ -5,13 +5,13 @@ import { useEffect, useRef, type RefObject } from "react";
 /**
  * Soft animated gradient blobs that drift in a tight cluster around the
  * CENTER of whatever element this is rendered into, blending so overlapping
- * blues mix into brighter cyan/teal/violet highlights — the "Stripe website"
+ * blues mix into brighter cyan/teal/violet highlights - the "Stripe website"
  * liquid-gradient look.
  *
  * Positioning is intentionally DOM-driven, not canvas-driven:
  *   - All blob coordinates (cx, cy) are expressed as fractions of the
  *     canvas's own width/height, with the cluster centered around
- *     (0.5, 0.6) — slightly bottom-biased.
+ *     (0.5, 0.6) - slightly bottom-biased.
  *   - Where the cluster appears on the page is therefore fully
  *     determined by where the parent positions the canvas. To anchor
  *     the halo to a specific element (e.g. the play CTA on the
@@ -24,13 +24,13 @@ import { useEffect, useRef, type RefObject } from "react";
  * Two key tricks make it feel artistic instead of generic:
  *
  *   1. Additive-ish compositing (`globalCompositeOperation = "screen"`)
- *      — when two blobs overlap, their RGB values combine via the
+ *      - when two blobs overlap, their RGB values combine via the
  *      screen formula (1 - (1-a)(1-b)), so deep navy + cyan brightens
  *      to teal and brand-blue + indigo nudges toward violet, but the
  *      mix asymptotes to white instead of clipping there. Stops
  *      "lighter" from punching out a harsh white center.
  *
- *   2. Lissajous motion — each blob has independent X and Y frequencies
+ *   2. Lissajous motion - each blob has independent X and Y frequencies
  *      (and independent phases), so it traces an ellipse / figure-8
  *      instead of a circle. Across 9 blobs with different ratios the
  *      cluster's overlap pattern keeps morphing indefinitely without
@@ -46,7 +46,7 @@ type Blob = {
   /** Oscillation frequency in radians/sec, X / Y axes independent. */
   freqX: number;
   freqY: number;
-  /** Phases in radians, X / Y axes independent — drives Lissajous orbit. */
+  /** Phases in radians, X / Y axes independent - drives Lissajous orbit. */
   phaseX: number;
   phaseY: number;
   /** Radius as a fraction of max(width, height). */
@@ -54,13 +54,13 @@ type Blob = {
   /**
    * Either an explicit "r,g,b" string or a CSS-var name (without `var()`).
    * Var names are resolved against `document.documentElement` each frame so
-   * the gradient retints when the theme changes — no remount required.
+   * the gradient retints when the theme changes - no remount required.
    */
   hue: string | { var: string };
   /** Base opacity at the blob's brightest peak. */
   alpha: number;
   /**
-   * Alpha "breathing" — multiplies the rendered alpha by
+   * Alpha "breathing" - multiplies the rendered alpha by
    * `1 + sin(t*breathFreq + breathPhase) * breathDepth` so each blob
    * fades in and out independently. With different freqs across the
    * cluster, the visible color mix keeps shifting (one moment indigo
@@ -77,7 +77,7 @@ type Blob = {
 // wrapper around the play CTA on the homepage), so all blob coords
 // are relative to that local box rather than the viewport.
 //
-// Cluster geometry: bulk centered at (0.5, 0.6) — slightly below
+// Cluster geometry: bulk centered at (0.5, 0.6) - slightly below
 // the box center, so when the parent wraps the play CTA, the halo
 // blooms mostly *below* the CTA (matching the user's "below and to
 // the sides, not so much top, just a bit" direction) while a small
@@ -85,15 +85,15 @@ type Blob = {
 //
 // Three families of blobs, deliberately mixed:
 //
-//   1. ANCHORS (deep, low-breath) — deep blue, deep navy, deep indigo.
+//   1. ANCHORS (deep, low-breath) - deep blue, deep navy, deep indigo.
 //      Provide the "rich" base color so the cluster reads as
 //      saturated theme-blue instead of pastel wash.
 //
-//   2. CORE (mid, mid-breath) — brand accent, mid-blue, blue-violet.
+//   2. CORE (mid, mid-breath) - brand accent, mid-blue, blue-violet.
 //      Sit at the perceptual center of the cluster and do most of
 //      the color-mixing work.
 //
-//   3. HIGHLIGHTS (bright, high-breath) — cyan + periwinkle. Small
+//   3. HIGHLIGHTS (bright, high-breath) - cyan + periwinkle. Small
 //      blobs with strong breathing depth, so they sometimes surge
 //      as flashes of bright over the dark anchors, then fade.
 //
@@ -101,7 +101,7 @@ type Blob = {
 // breath frequencies (0.10 – 0.22 Hz) and phases keep the cluster
 // from ever syncing into a single beat. Screen blend mode means
 // deep colors stay deep on their own and only brighten where
-// bright + bright overlap — preserving contrast through the cycle.
+// bright + bright overlap - preserving contrast through the cycle.
 //
 // Radii are noticeably larger than the previous viewport-wide
 // version (0.18 – 0.28 vs 0.10 – 0.17) because the canvas is now
@@ -109,7 +109,7 @@ type Blob = {
 // Same fractional radius == smaller pixel halo, so we scale up to
 // keep the perceived softness/spread.
 const BLOBS: Blob[] = [
-  // CORE — brand accent, dead center of the cluster. Identity color.
+  // CORE - brand accent, dead center of the cluster. Identity color.
   {
     cx: 0.50, cy: 0.60,
     ax: 0.045, ay: 0.040,
@@ -120,7 +120,7 @@ const BLOBS: Blob[] = [
     alpha: 0.55,
     breathDepth: 0.28, breathFreq: 0.16, breathPhase: 0.0,
   },
-  // ANCHOR — deep saturated blue, lower-left of the cluster.
+  // ANCHOR - deep saturated blue, lower-left of the cluster.
   // Largest blob, low breath: the "ground tone" everything mixes over.
   {
     cx: 0.43, cy: 0.72,
@@ -132,7 +132,7 @@ const BLOBS: Blob[] = [
     alpha: 0.66,
     breathDepth: 0.16, breathFreq: 0.12, breathPhase: 1.7,
   },
-  // ANCHOR — deep indigo, lower-right. Pairs with the deep blue
+  // ANCHOR - deep indigo, lower-right. Pairs with the deep blue
   // anchor to weight the bottom of the cluster with rich indigo.
   {
     cx: 0.60, cy: 0.70,
@@ -144,7 +144,7 @@ const BLOBS: Blob[] = [
     alpha: 0.62,
     breathDepth: 0.20, breathFreq: 0.14, breathPhase: 2.5,
   },
-  // CORE — mid blue, left of the cluster center. Slightly cooler
+  // CORE - mid blue, left of the cluster center. Slightly cooler
   // than the brand accent so overlap mixes to a richer blue.
   {
     cx: 0.40, cy: 0.60,
@@ -156,7 +156,7 @@ const BLOBS: Blob[] = [
     alpha: 0.50,
     breathDepth: 0.26, breathFreq: 0.18, breathPhase: 2.6,
   },
-  // CORE — blue-violet right of cluster center. Purple-leaning
+  // CORE - blue-violet right of cluster center. Purple-leaning
   // blue: overlap with the accent visibly biases toward violet
   // without leaving the blue family.
   {
@@ -169,7 +169,7 @@ const BLOBS: Blob[] = [
     alpha: 0.48,
     breathDepth: 0.30, breathFreq: 0.17, breathPhase: 1.4,
   },
-  // ANCHOR — deepest navy, anchors the very bottom of the cluster.
+  // ANCHOR - deepest navy, anchors the very bottom of the cluster.
   // Darkest blob in the field; steady breath = perceptual "floor."
   {
     cx: 0.50, cy: 0.85,
@@ -181,9 +181,9 @@ const BLOBS: Blob[] = [
     alpha: 0.68,
     breathDepth: 0.14, breathFreq: 0.10, breathPhase: 3.2,
   },
-  // HIGHLIGHT — bright cyan, upper-left. Big breath depth so it
+  // HIGHLIGHT - bright cyan, upper-left. Big breath depth so it
   // crests as a flash of bright over the dark anchors below, then
-  // fades — a major source of the "bright moments" in the cycle.
+  // fades - a major source of the "bright moments" in the cycle.
   {
     cx: 0.40, cy: 0.55,
     ax: 0.050, ay: 0.030,
@@ -194,7 +194,7 @@ const BLOBS: Blob[] = [
     alpha: 0.42,
     breathDepth: 0.45, breathFreq: 0.20, breathPhase: 1.2,
   },
-  // HIGHLIGHT — periwinkle (light blue-violet) at the upper-right.
+  // HIGHLIGHT - periwinkle (light blue-violet) at the upper-right.
   // Pulses strongly; when it surges with the cyan above, the cluster
   // briefly washes lavender-cyan.
   {
@@ -207,7 +207,7 @@ const BLOBS: Blob[] = [
     alpha: 0.40,
     breathDepth: 0.42, breathFreq: 0.19, breathPhase: 2.4,
   },
-  // BRIDGE HINT — small dim periwinkle directly behind/above the
+  // BRIDGE HINT - small dim periwinkle directly behind/above the
   // anchor element. Bridges the gap so the anchor element still
   // feels visually connected to the gradient instead of floating
   // on bare bg, even though the bulk has moved south.
@@ -250,7 +250,7 @@ type Props = {
    */
   anchorRef?: RefObject<HTMLElement | null>;
   /**
-   * Cluster spread in pixels — the side length of the "logical" box
+   * Cluster spread in pixels - the side length of the "logical" box
    * the blob fractional coordinates (cx/cy/r) are scaled against.
    * Bigger = wider, lower-density halo. Default 1100 ≈ the visible
    * halo size from the previous fixed-canvas iteration.
@@ -283,7 +283,7 @@ export function GradientBg({
     let anchorCy = 0;
 
     const resize = () => {
-      // Canvas always fills its parent — never has its own fixed size.
+      // Canvas always fills its parent - never has its own fixed size.
       // This is the whole point of the new approach: the canvas can't
       // be edge-clipped by ancestors because it's only ever as big as
       // its container, and the cluster lives at JS-tracked pixel
@@ -346,14 +346,14 @@ export function GradientBg({
     // 60fps target so the cluster actually reads as smoothly animated on
     // high-refresh monitors. The drawing loop is cheap (8 radial gradient
     // fills + a single CSS blur on the canvas element, GPU-accelerated)
-    // so the cost is negligible vs the visual upgrade — at 30fps the
+    // so the cost is negligible vs the visual upgrade - at 30fps the
     // breathing/drift looked stuttery on 120/144/200Hz displays.
     const TARGET_FPS = reduce ? 1 : 60;
     const FRAME_MS = 1000 / TARGET_FPS;
     let lastDraw = 0;
 
     /**
-     * Cache resolved CSS-var hues across draws — getComputedStyle isn't
+     * Cache resolved CSS-var hues across draws - getComputedStyle isn't
      * cheap, and the value only changes when the theme flips. We refresh
      * the cache once per second; that's plenty given the toggle's ~400ms
      * transition and the gradient's heavy 48px CSS blur smoothing it out.
@@ -386,7 +386,7 @@ export function GradientBg({
 
       // `screen` blending: result = 1 - (1 - dst) * (1 - src). Like
       // additive (`lighter`) it brightens overlaps, but the curve
-      // softly approaches white instead of clipping to it — which
+      // softly approaches white instead of clipping to it - which
       // kills the "harsh white center where the cluster overlaps"
       // problem that `lighter` had at our current alphas. The mix
       // colors stay vivid (cyan + indigo still goes lavender, accent
@@ -407,14 +407,14 @@ export function GradientBg({
         // the blob's logical coordinates around 0 (so b.cx=0.5,
         // b.cy=0.5 places the blob exactly on the anchor) and
         // multiplying by clusterSize converts to pixels. This is the
-        // key change vs the old fractional-canvas model — the blobs
+        // key change vs the old fractional-canvas model - the blobs
         // know where the play CTA is, not where the canvas edge is.
         const cx = anchorCx + (b.cx - 0.5 + offX) * clusterSize;
         const cy = anchorCy + (b.cy - 0.5 + offY) * clusterSize;
         const radius = b.r * clusterSize;
         const hue = resolveHue(b.hue, now);
 
-        // "Breathing" alpha — slow per-blob sine that fades each blob
+        // "Breathing" alpha - slow per-blob sine that fades each blob
         // in and out around its base alpha. Different breath frequencies
         // across the cluster (~0.13 – 0.22 Hz) mean no two blobs peak
         // together, so the dominant color of the field is always
@@ -428,7 +428,7 @@ export function GradientBg({
 
         const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
         grad.addColorStop(0, `rgba(${hue}, ${a})`);
-        // Mid-stop falls off softer than a pure linear ramp — gives the
+        // Mid-stop falls off softer than a pure linear ramp - gives the
         // blobs a gauzy core-to-edge transition that reads as "liquid"
         // once the CSS blur compounds it.
         grad.addColorStop(0.55, `rgba(${hue}, ${a * 0.35})`);
@@ -457,7 +457,7 @@ export function GradientBg({
       // `absolute inset-0 overflow-hidden`: covers the parent's
       // content area (e.g. <main>) and clips anything that tries to
       // paint past it. The canvas inside fills this wrapper exactly,
-      // so it can never be edge-clipped — and the cluster lives at
+      // so it can never be edge-clipped - and the cluster lives at
       // anchor-relative pixel coordinates inside the canvas, fading
       // to transparent via the radial-gradient blob alpha falloff
       // (no CSS mask required).
@@ -466,7 +466,7 @@ export function GradientBg({
       <canvas
         ref={canvasRef}
         className="h-full w-full"
-        // `filter: blur(40px)` — gauzy bloom so the underlying
+        // `filter: blur(40px)` - gauzy bloom so the underlying
         // radial-gradient disc shapes read as one liquid mass instead
         // of overlapping circles. 40px is the sweet spot for current
         // radii (~0.18 – 0.26 of clusterSize); bigger smears the

@@ -8,6 +8,6 @@ out/
 .vscode/
 
 # Local-only AI agent onboarding docs (see docs/AGENTS.md). Kept out of
-# the public repo on purpose — internal context, not user-facing.
+# the public repo on purpose - internal context, not user-facing.
 docs/
 

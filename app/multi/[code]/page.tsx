@@ -86,10 +86,10 @@ export default function MultiRoomPage() {
   }, [kicked, actions, router]);
 
   // Tracks whether the user already has a session for THIS room cached in
-  // sessionStorage — set when they came in via Create or Join from the
+  // sessionStorage - set when they came in via Create or Join from the
   // /multi entry page (which writes the sessionId before navigating).
   // While true, `useRoomSocket` auto-rejoins on connect and the snapshot
-  // lands a beat later — we just show the "joining…" connecting card in
+  // lands a beat later - we just show the "joining…" connecting card in
   // the meantime. If false (cold URL hit, or back-navigation after a
   // leave cleared the session) we kick the user back to `/multi` instead
   // of rendering a redundant inline join form here. If the auto-rejoin
@@ -126,7 +126,7 @@ export default function MultiRoomPage() {
 
   // Leave guard: prompt the user before they accidentally drop out
   // of the room. Active any time we have a confirmed seat AND we
-  // haven't already been kicked (kick is involuntary — surfacing a
+  // haven't already been kicked (kick is involuntary - surfacing a
   // "stay?" prompt to a kicked player would just be confusing).
   // Covers tab close / refresh (browser-native dialog), browser
   // back button (popstate sentinel), and in-page Back / Home /
@@ -134,8 +134,8 @@ export default function MultiRoomPage() {
   //
   // We branch on whether the player is currently IN A MATCH (not
   // just sitting in the lobby): leaving from inside a match drops
-  // them back into the lobby of the SAME room — same end-state as
-  // the in-game match menu's "Leave" / "Cancel match" — instead of
+  // them back into the lobby of the SAME room - same end-state as
+  // the in-game match menu's "Leave" / "Cancel match" - instead of
   // yanking them all the way back to /multi. The intuition is that
   // "Back" mid-round means "abandon this round", not "abandon the
   // whole party". Only Back from the lobby itself fully exits the
@@ -159,13 +159,13 @@ export default function MultiRoomPage() {
   //     keep playing.
   //   - Host fires `host:cancelMatch`, which transitions the WHOLE
   //     room back to lobby. The host has no equivalent of
-  //     "drop-out-but-keep-the-round-running" — they own the round.
+  //     "drop-out-but-keep-the-round-running" - they own the round.
   //     This mirrors the in-match menu where the host's only
   //     escape is the "Cancel match" button.
   //
   // `defaultLeave` (browser back button) and the in-page Back
   // button both call `handleConfirmedLeave` so the two paths are
-  // guaranteed identical — no risk of one diverging from the other
+  // guaranteed identical - no risk of one diverging from the other
   // (which is what the previous Back-button impl had: it always
   // ran the full-leave path regardless of phase, contradicting the
   // browser-back guard right next to it).
@@ -188,17 +188,17 @@ export default function MultiRoomPage() {
       } else {
         // Server flips `me.inMatch` to false on receipt; the next
         // snapshot tick routes this client to the lobby UI (see
-        // RoomBody's per-player phase routing). No URL change —
+        // RoomBody's per-player phase routing). No URL change -
         // the rest of the room keeps playing.
         actions.leaveMatch();
       }
       return;
     }
-    // Lobby (or results — see phase notes above): full room leave.
+    // Lobby (or results - see phase notes above): full room leave.
     actions.leave();
     // router.replace (not push) so the LeaveGuardProvider can
     // collapse the guarded /multi/[code] entry out of history
-    // — see its sentinel-pop logic. Pressing browser back from
+    // - see its sentinel-pop logic. Pressing browser back from
     // /multi after this lands the user at whatever they were
     // doing BEFORE joining the room. (Even if it didn't, the
     // cold-hit redirect on /multi/[code] would now bounce the
@@ -220,8 +220,8 @@ export default function MultiRoomPage() {
     // context.
     message: inActiveMatch
       ? isHost
-        ? "There's a match in progress — leaving will cancel it for everyone."
-        : "There's a match in progress — leaving will drop you out of this round."
+        ? "There's a match in progress - leaving will cancel it for everyone."
+        : "There's a match in progress - leaving will drop you out of this round."
       : "You'll leave the room and lose your seat at the table.",
     defaultLeave: handleConfirmedLeave,
   });
@@ -235,8 +235,8 @@ export default function MultiRoomPage() {
   // Page-level AudioEngine.
   //
   // Hoisted up here (instead of living inside <MultiGame>) so we can
-  // decode the song's AudioBuffer DURING the `loading` phase — i.e.
-  // alongside the .osz download — instead of after the player has
+  // decode the song's AudioBuffer DURING the `loading` phase - i.e.
+  // alongside the .osz download - instead of after the player has
   // already advanced into `countdown` and the engine is being created
   // for the first time. The previous topology meant the decode (~100–
   // 500ms for a 3min mp3 / ogg) raced against the visible "3 / 2 / 1"
@@ -251,7 +251,7 @@ export default function MultiRoomPage() {
   //
   // Engine lifecycle:
   //   - Created lazily on the FIRST song load (loading effect below).
-  //   - Reused across rounds in the same room — `loadFromBytes()`
+  //   - Reused across rounds in the same room - `loadFromBytes()`
   //     dedups via its `key` arg AND replaces the buffer in-place,
   //     so the AudioContext + master/SFX graph survives every round
   //     change.
@@ -270,13 +270,13 @@ export default function MultiRoomPage() {
   // Tracks the song key the in-flight chart download / decode is for.
   // We DON'T tie cancellation to effect lifecycle (a `let cancelled`
   // captured in closure), because the loading effect re-runs on every
-  // phase tick — so a slow loader whose room flips from `loading` →
+  // phase tick - so a slow loader whose room flips from `loading` →
   // `countdown` while their download is in flight would have their
   // promise short-circuited by the cleanup, yet `lastLoadedKeyRef`
   // would still point at the same key and the new effect run would
   // early-return. Result: the player gets stuck on "Decoding audio…"
   // forever. With a key-keyed inflight ref, the in-flight promise
-  // checks `inflightLoadKeyRef.current === key` on resolve — phase
+  // checks `inflightLoadKeyRef.current === key` on resolve - phase
   // changes don't disturb it; only a real song change supersedes it.
   // The mounted ref handles the page-unmount safety (don't setState
   // after unmount).
@@ -295,11 +295,11 @@ export default function MultiRoomPage() {
   // changed, etc).
   //
   // We ALSO trigger this in countdown / playing phases when we don't yet
-  // have a chart loaded — that's the reconnect case. If a player drops
+  // have a chart loaded - that's the reconnect case. If a player drops
   // mid-game and the socket re-establishes after the room has already
   // moved past `loading`, the snapshot they receive on rejoin will be
   // in `countdown` or `playing` and the loading effect would otherwise
-  // never fire — leaving the highway stuck on "Waiting for chart…"
+  // never fire - leaving the highway stuck on "Waiting for chart…"
   // forever. Re-fetching here (deduped by `lastLoadedKeyRef`) lets the
   // returning player catch back up to the same song the room is on.
   useEffect(() => {
@@ -308,7 +308,7 @@ export default function MultiRoomPage() {
     if (!song) return;
     // Late-joiners and leavers (`me.inMatch === false`) sit in the
     // lobby with a "match in progress" indicator and never run the
-    // chart locally — skip the heavy download / decode pipeline for
+    // chart locally - skip the heavy download / decode pipeline for
     // them. They'll get the chart on the next round when the host
     // pulls everyone back into a fresh match.
     if (!me?.inMatch) return;
@@ -325,7 +325,7 @@ export default function MultiRoomPage() {
     // The host's chosen difficulty is communicated via the `phase:loading`
     // event (kept off the snapshot to avoid renegotiating mid-play). If we
     // somehow missed the event (joined right at phase change, or the
-    // socket reconnected past the loading phase), fall back to "easy" —
+    // socket reconnected past the loading phase), fall back to "easy" -
     // the server will still gate hits + the load works regardless.
     const targetMode: ChartMode = selectedMode ?? "easy";
 
@@ -348,13 +348,13 @@ export default function MultiRoomPage() {
 
     setLoadedChart(null);
     setAudioReady(false);
-    setLoadProgress(`Downloading ${song.artist} — ${song.title}…`);
+    setLoadProgress(`Downloading ${song.artist} - ${song.title}…`);
     setLoadError(null);
 
     // Two-stage prep: download + parse the chart, THEN decode the audio
     // bytes into the (page-level) AudioEngine. Both stages run before
     // we report `markReady()` so the server only advances past `loading`
-    // once every player has the AudioBuffer actually in memory — no
+    // once every player has the AudioBuffer actually in memory - no
     // "decoded during countdown" race, no first-frame catch-up via the
     // seek-fallback path. The progress label is updated between stages
     // so the LoadingScreen shows what we're actually doing.
@@ -368,7 +368,7 @@ export default function MultiRoomPage() {
         setLoadedChart(res);
         setLoadProgress("Decoding audio…");
 
-        // Stand the engine up on first need. Reused across rounds —
+        // Stand the engine up on first need. Reused across rounds -
         // `loadFromBytes()` swaps the buffer in-place, so the
         // AudioContext + master / SFX graph carries over.
         if (!audioEngineRef.current) {
@@ -377,7 +377,7 @@ export default function MultiRoomPage() {
         const engine = audioEngineRef.current;
         // `ensureContext()` is best-effort; the AudioContext might
         // start suspended if the browser hasn't seen a user gesture
-        // for this tab yet (rare in practice — players reach loading
+        // for this tab yet (rare in practice - players reach loading
         // by clicking READY or START). Decode works fine on a
         // suspended context, and `audio.start()` resumes it later.
         try {
@@ -388,7 +388,7 @@ export default function MultiRoomPage() {
 
         try {
           if (res.delivery === "remote" && res.audioBytes && res.audioKey) {
-            // `decodeAudioData` detaches its input — slice so the
+            // `decodeAudioData` detaches its input - slice so the
             // original bytes live on in `loadedChart` for any future
             // re-use (e.g. a "play again" round in the same room
             // that re-fires this effect with the same key, which
@@ -398,7 +398,7 @@ export default function MultiRoomPage() {
             await engine.load(res.meta.audioUrl);
           }
         } catch {
-          // Decode failed — surface it as a load error so the host
+          // Decode failed - surface it as a load error so the host
           // can see and retry, same path as a chart-fetch failure.
           if (stillCurrent()) {
             setLoadError("Failed to decode audio");
@@ -423,7 +423,7 @@ export default function MultiRoomPage() {
         // reconnect-into-play AND on the slow-loader-late-join path
         // the server has already advanced past the gate, so a stray
         // `client:ready` would be ignored at best, churn state at
-        // worst — we just want the local chart + audio populated so
+        // worst - we just want the local chart + audio populated so
         // the canvas can render and the schedule effect can seek.
         if (snapshot?.phase === "loading") actions.markReady();
         return res;
@@ -450,7 +450,7 @@ export default function MultiRoomPage() {
   // Reset the chart when we go back to lobby so a fresh round can re-trigger
   // the loading effect for the same song (same key) without thinking it was
   // already done. Also tears down any in-flight audio so the next round
-  // starts from silence — the engine itself is kept alive (its
+  // starts from silence - the engine itself is kept alive (its
   // AudioContext + graph are reused) but the playing source is stopped.
   useEffect(() => {
     if (snapshot?.phase === "lobby") {
@@ -468,7 +468,7 @@ export default function MultiRoomPage() {
   // server flipped `me.inMatch` to false in response to `room:leaveMatch`,
   // or this is a late joiner), MultiGame is about to unmount. Without
   // this effect the page-level AudioEngine would keep its source node
-  // playing — the player would hear the song they "left" continue in
+  // playing - the player would hear the song they "left" continue in
   // the background while sitting in the lobby UI. Stopping the engine
   // here cuts the audio cleanly. We also reset the chart cache so a
   // future "rejoin match" path (or a new round starting) re-runs the
@@ -532,7 +532,7 @@ export default function MultiRoomPage() {
   // Late-joiners (`inMatch=false` set by the server in `joinRoom` when the
   // room is past the lobby) and players who used the in-match menu's
   // "Leave" button fall into the lobby branch even when the room phase is
-  // `playing`. RoomBody's switch mirrors this — it routes to the Lobby
+  // `playing`. RoomBody's switch mirrors this - it routes to the Lobby
   // component for non-participants regardless of `snapshot.phase`.
   const inGame =
     me &&
@@ -553,8 +553,8 @@ export default function MultiRoomPage() {
             // runs. Pass-through when no guard is active (joining
             // / connecting screens).
             //
-            // The proceed callback is `handleConfirmedLeave` — the
-            // same function the browser-back guard uses — so Back-
+            // The proceed callback is `handleConfirmedLeave` - the
+            // same function the browser-back guard uses - so Back-
             // button clicks and browser-back presses produce the
             // SAME behavior:
             //   - mid-loading / mid-countdown / mid-playing →
@@ -644,12 +644,12 @@ export default function MultiRoomPage() {
         // VIEWPORT edge instead of the inner content's right edge:
         //   - Outer: full-width container (z-10, flex-1). On
         //     mobile / tablet it's `overflow-y-auto` so long
-        //     content scrolls the page naturally — the columns
+        //     content scrolls the page naturally - the columns
         //     stack and a phone's viewport can't fit the whole
         //     lobby anyway. On `lg+` it flips to `overflow-hidden`:
         //     the lobby is sized to fit the viewport exactly and
         //     each card carries its own internal scroller (roster,
-        //     catalog, chat). No page-level scrollbar on desktop —
+        //     catalog, chat). No page-level scrollbar on desktop -
         //     same feel as a typical productivity app.
         //   - Inner: centered, max-w-7xl. On `lg+` it's a flex
         //     column with `h-full` so child screens (the lobby
@@ -657,17 +657,17 @@ export default function MultiRoomPage() {
         //     available vertical space.
         // Putting overflow-y-auto on the centered max-w-7xl box
         // (as we did before) made the scrollbar sit at the right
-        // edge of the centered box — visibly inset on wide
-        // monitors — instead of flush against the viewport like
+        // edge of the centered box - visibly inset on wide
+        // monitors - instead of flush against the viewport like
         // every normal website does it.
         <div className="relative z-10 flex-1 overflow-y-auto lg:flex lg:flex-col lg:overflow-hidden">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pt-6 pb-12 sm:px-6 lg:h-full lg:min-h-0 lg:flex-1 lg:pb-6">
             {/* Connecting card covers three cases:
                   1. socket isn't connected yet (initial handshake / reconnecting),
                   2. socket IS connected and we have a stored session for this
-                     room, so the hook is mid-rejoin — show "joining" UI rather
+                     room, so the hook is mid-rejoin - show "joining" UI rather
                      than a blank page,
-                  3. cold URL hit (`needsJoin` true) — the redirect effect
+                  3. cold URL hit (`needsJoin` true) - the redirect effect
                      above bounces us to /multi?code=…; this card paints
                      for the single tick before the navigation lands. */}
             {!me && <ConnectingCard conn={conn} />}
@@ -696,7 +696,7 @@ export default function MultiRoomPage() {
               // Width-locked to the ConnectingCard above so the error
               // banner reads as a sibling of that card instead of a
               // full-bleed strip across the page. Both surfaces use
-              // `mx-auto w-full max-w-md` — keep them in lockstep here.
+              // `mx-auto w-full max-w-md` - keep them in lockstep here.
               <div className="brut-card-accent mx-auto flex w-full max-w-md items-start justify-between gap-3 p-3">
                 <p className="font-mono text-[0.79rem]">
                   <span className="text-rose-400">[{lastError.code}]</span>{" "}
@@ -759,12 +759,12 @@ function RoomBody({
 }) {
   // Wrap each phase in a fade-in shell so transitions from one phase
   // to another don't pop. The shell uses Tailwind's `animate-fade-in`
-  // (defined in globals.css) which is a 220ms opacity ramp — enough
+  // (defined in globals.css) which is a 220ms opacity ramp - enough
   // to feel intentional without slowing anyone down. The `key`
   // attribute on the wrapper is the phase name so React fully unmounts
   // / re-mounts on phase change, re-firing the animation.
   // Per-player routing: late-joiners + leavers (`inMatch=false`) are
-  // routed to the Lobby for the entire duration of the match —
+  // routed to the Lobby for the entire duration of the match -
   // regardless of whether the room phase is `loading`, `countdown`,
   // `playing`, or `results`. The Lobby component picks up the
   // match-in-progress state from `snapshot.phase` + the live
@@ -845,17 +845,17 @@ function RoomBody({
     }
   })();
   // The countdown / playing phases hand off to <MultiGame>, whose root
-  // is `<div class="relative h-full w-full">` — that `h-full` only
+  // is `<div class="relative h-full w-full">` - that `h-full` only
   // resolves to a real pixel height if every wrapper between it and the
   // flex-1 game shell also carries an explicit height. Without it, the
   // canvas measures 0×0 (the HUD overlays still paint because they hang
-  // off larger ancestors, but the highway itself is invisible — the
+  // off larger ancestors, but the highway itself is invisible - the
   // exact symptom of the "missing game area" bug after a viewport
   // resize). Applying `h-full w-full` for those two phases keeps the
   // chain intact; the lobby / loading / results phases stay in their
   // default auto-height card layout because they're form-style screens
   // that scroll with the page rather than fill it.
-  // Only true match participants get the full-bleed canvas shell —
+  // Only true match participants get the full-bleed canvas shell -
   // in-lobby watchers (inMatch=false) stay in the constrained card
   // layout even when the room phase is `playing`.
   const isCanvasPhase =
@@ -864,13 +864,13 @@ function RoomBody({
   // Stable key across countdown → playing so React keeps the SAME
   // <MultiGame> instance through the transition. Using `snapshot.phase`
   // here (the previous behavior) caused the wrapper to unmount and
-  // remount the moment the server flipped the phase — which destroyed
+  // remount the moment the server flipped the phase - which destroyed
   // the canvas, rAF loop, and `stats` state that gates the HUD
   // overlays. Visible symptom: the score / combo / rock-meter panels
   // disappeared for ~2 s while the first tick of the rAF loop
   // repopulated `stats`, plus a noticeable gameplay stutter on the
   // first frame as everything reinitialized. (Audio is no longer in
-  // the danger list — the AudioEngine lives on this page in
+  // the danger list - the AudioEngine lives on this page in
   // `audioEngineRef`, so even a remount of MultiGame doesn't tear
   // down or re-decode the buffer. The fix here is still important
   // for the canvas/rAF/stats half.) Treating both canvas phases as
@@ -892,7 +892,7 @@ function RoomBody({
     : isLobbyPhase
       ? " lg:flex lg:min-h-0 lg:flex-1 lg:flex-col"
       : "";
-  // Pre-start countdown overlay — only meaningful in the lobby (the
+  // Pre-start countdown overlay - only meaningful in the lobby (the
   // server clears `prestartEndsAt` the moment it flips to `loading`,
   // and we never queue starts from any other phase). Gating on
   // `phase === "lobby"` is belt-and-braces against any race where a
@@ -952,7 +952,7 @@ function ConnectingCard({ conn }: { conn: string }) {
   // Three states map to three different copy lines so the user always
   // knows what the spinner is waiting on. "connected" lands here only
   // when we have a stored session for this room and the hook is
-  // mid-rejoin — the socket handshake itself is already done.
+  // mid-rejoin - the socket handshake itself is already done.
   const label =
     conn === "connected"
       ? "Joining lobby…"
@@ -1008,7 +1008,7 @@ function InvalidCodeScreen({ code, onBack }: { code: string; onBack: () => void 
         <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-rose-400">
           Bad room code
         </p>
-        <h1 className="font-display text-[1.97rem] font-bold">{code || "—"}</h1>
+        <h1 className="font-display text-[1.97rem] font-bold">{code || "-"}</h1>
         <p className="text-[0.92rem] text-bone-50/70">
           Room codes are 6 characters, A–Z and 2–9. Double-check what your
           friend sent and try again.

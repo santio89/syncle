@@ -42,6 +42,8 @@ import {
   loadRenderQuality,
   saveRenderQuality,
   nextRenderQuality,
+  loadStrictInputs,
+  saveStrictInputs,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
@@ -71,7 +73,7 @@ type Phase =
 // "Get ready..." prompt shown before the 3 / 2 / 1 numbers. Three
 // seconds gives the player time to register that the run is starting,
 // shift focus from the menu UI to the canvas, and settle into a
-// "hands on the keys" stance — all before any cognitive load from
+// "hands on the keys" stance - all before any cognitive load from
 // the numbers. Mirrors the multiplayer match intro so both modes feel
 // identical (see `MATCH_INTRO_PROMPT_MS` in `lib/multi/protocol.ts`).
 const PROMPT_SECONDS = 3;
@@ -96,7 +98,7 @@ const TOTAL_START_DELAY =
   PROMPT_SECONDS + COUNTDOWN_SECONDS + LEAD_IN_SECONDS;
 
 // Each lane accepts EITHER its letter key OR the matching arrow key.
-// 4 lanes only — osu!mania 4K layout.
+// 4 lanes only - osu!mania 4K layout.
 const KEY_TO_LANE: Record<string, number> = {
   KeyD: 0, ArrowLeft: 0,
   KeyF: 1, ArrowDown: 1,
@@ -120,7 +122,7 @@ export default function Game() {
   const stateRef = useRef<GameState | null>(null);
   const renderStateRef = useRef<RenderState>(createRenderState());
   /**
-   * Combo from the previous frame — used to detect when we cross one of the
+   * Combo from the previous frame - used to detect when we cross one of the
    * milestone thresholds (25/50/100/...). When that happens we both flash the
    * canvas (vignette tint via renderer) and play a brief upward arpeggio.
    * Tracked outside of React state so the RAF loop is allocation-free.
@@ -166,12 +168,12 @@ export default function Game() {
   const [stats, setStats] = useState<PlayerStats | null>(null);
   // Throttled song-progress fraction (0..1) used by the rock-meter
   // card's progress bar. Updated alongside `stats` from inside the
-  // rAF loop so it ticks at the same ~10Hz cadence — smooth enough to
+  // rAF loop so it ticks at the same ~10Hz cadence - smooth enough to
   // feel live without forcing a full React re-render every vblank.
   const [songProgress, setSongProgress] = useState<number>(0);
   // Settings that live in localStorage are read via lazy `useState`
   // initializers so the very first render already reflects what the
-  // player saved last session — no flash of defaults, no `useEffect`
+  // player saved last session - no flash of defaults, no `useEffect`
   // round-trip. Game.tsx is loaded via `dynamic({ ssr: false })` so
   // these initializers never run on the server; `loadX()` falls back
   // to the hardcoded default if `window` is missing anyway.
@@ -180,7 +182,7 @@ export default function Game() {
   const [songSource, setSongSource] = useState<"osu" | "fallback" | null>(null);
   const [chartMode, setChartMode] = useState<ChartMode>("easy");
   const [rawNoteCount, setRawNoteCount] = useState<number>(0);
-  // Per-mode availability — drives the disabled state of the difficulty
+  // Per-mode availability - drives the disabled state of the difficulty
   // buttons. Defaults to "all available" while loading so the picker doesn't
   // flash into a disabled state on first paint.
   const [modeAvailability, setModeAvailability] = useState<ModeAvailability>({
@@ -189,7 +191,7 @@ export default function Game() {
     // hard (or any other tier) as enabled too early would let the
     // player click a button whose density we haven't actually computed
     // yet, then re-render with a different availability map a frame
-    // later — visually jumpy and racy. All-disabled-until-ready keeps
+    // later - visually jumpy and racy. All-disabled-until-ready keeps
     // the picker honest on first paint.
     noteCounts: { easy: 0, normal: 0, hard: 0, insane: 0, expert: 0 },
     available: {
@@ -201,7 +203,7 @@ export default function Game() {
     },
     npsByMode: { easy: 0, normal: 0, hard: 0, insane: 0, expert: 0 },
   });
-  /** Real meta once the chart loads — null until then so we can show a spinner. */
+  /** Real meta once the chart loads - null until then so we can show a spinner. */
   const [displayMeta, setDisplayMeta] = useState<SongMeta | null>(null);
   /** Error string if the chart preview fetch failed. */
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -231,25 +233,39 @@ export default function Game() {
    *  combo-milestone chime + the song-duck whiff cue). Persisted so a
    *  player who prefers pure music keeps their preference across
    *  sessions. Mirrored into the AudioEngine via `setSfx` whenever it
-   *  changes — the engine no-ops the relevant `play*` calls when off,
+   *  changes - the engine no-ops the relevant `play*` calls when off,
    *  which means zero audible feedback for hits or misses (song +
    *  metronome are unaffected). */
   const [sfx, setSfx] = useState<boolean>(loadSfx);
   /** Render quality preset. `"high"` is the default and runs every VFX
    *  (shadow blurs, glow halos, particles, shockwaves, milestone
    *  vignette). `"performance"` strips out the offscreen-pass shadow
-   *  passes and disables the celebration VFX entirely — gameplay reads
+   *  passes and disables the celebration VFX entirely - gameplay reads
    *  identically (judgment line still pulses, gates still flash, lane
    *  fills still light up on press) but per-frame GPU + GC pressure
    *  drops sharply on integrated graphics / older laptops. Persisted
    *  across sessions; mirrored into `renderOptsRef` so toggling takes
    *  effect on the very next frame. */
   const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
+  /** Strict Inputs (anti-mash protection). When ON, an empty key
+   *  press with NO unjudged note in the same lane within ±SPAM_GRACE
+   *  silently breaks combo + drops health a touch - making panic
+   *  mash a net negative. When OFF, empty presses are silently
+   *  ignored (legacy osu!mania behavior). Persisted across sessions;
+   *  read via `strictInputsRef` from the input handler so toggling
+   *  it mid-match takes effect on the very next press without a
+   *  remount. */
+  const [strictInputs, setStrictInputs] = useState<boolean>(loadStrictInputs);
+  const strictInputsRef = useRef<boolean>(loadStrictInputs());
+  useEffect(() => {
+    strictInputsRef.current = strictInputs;
+    saveStrictInputs(strictInputs);
+  }, [strictInputs]);
   /** Persistent banner when localStorage / sessionStorage refuses a
    *  write (typical causes: Safari Private Browsing quota, exhausted
    *  per-origin quota, an extension that blocks storage). Surfaces a
    *  single discreet "settings won't persist" toast so the player
-   *  knows their toggles will reset on reload — historically these
+   *  knows their toggles will reset on reload - historically these
    *  failures were swallowed silently and players assumed the toggle
    *  itself was broken. Cleared by the player on dismiss; sticky
    *  across phase transitions because the underlying problem usually
@@ -263,13 +279,13 @@ export default function Game() {
   /** True if the device exposes ANY coarse pointer (phone, tablet,
    *  hybrid touchscreen laptop). Drives the on-screen <TouchLanes>
    *  overlay so click + finger inputs work alongside (or instead of)
-   *  the keyboard. Distinct from `touchOnly` — a touchscreen laptop
+   *  the keyboard. Distinct from `touchOnly` - a touchscreen laptop
    *  has both a coarse and a fine pointer, so we want the lane buttons
    *  visible there too while still showing the keyboard hint copy. */
   const [coarsePointer, setCoarsePointer] = useState<boolean>(false);
 
   /**
-   * Recovered solo run from a previous tab session — set on mount if
+   * Recovered solo run from a previous tab session - set on mount if
    * `sessionStorage` has a fresh saved record (see `lib/game/resume.ts`).
    * Surfaces as a "Resume previous run?" banner above the StartCard.
    * Cleared when:
@@ -278,7 +294,7 @@ export default function Game() {
    *   - the player rejects (banner's "dismiss" button) → we just
    *     `setPendingResume(null)` and clear the storage record.
    *   - a new run finishes cleanly (`finishRun`) or the player
-   *     explicitly bails (`giveUp`) — both clear the record so the
+   *     explicitly bails (`giveUp`) - both clear the record so the
    *     next mount doesn't re-offer to resume a song they decided
    *     against.
    */
@@ -286,19 +302,19 @@ export default function Game() {
     () => loadSoloResume(),
   );
   /**
-   * Set when the player has accepted a resume — drives the load
+   * Set when the player has accepted a resume - drives the load
    * effect to call `loadSong({ forceBeatmapsetId: X })` instead of
    * the random pool. Cleared as soon as the load resolves so the
    * NEXT difficulty toggle (which re-runs the load effect) goes
    * through the cached session and doesn't re-fetch. Held in a ref
    * because the effect that consumes it also depends on `chartMode`
-   * — putting it in state would force a re-fetch on every mode flip
+   * - putting it in state would force a re-fetch on every mode flip
    * during the resume turn.
    */
   const forceBeatmapsetIdRef = useRef<number | null>(null);
 
   // Leave guard: prompt before the user accidentally drops out of an
-  // active solo run. The guard is on while a song is "alive" — that
+  // active solo run. The guard is on while a song is "alive" - that
   // means countdown, playing, or paused. Idle / loading / results
   // are pass-through (loading hasn't started a real run yet, results
   // is post-game, idle is the homepage of the page). Covers tab
@@ -309,8 +325,8 @@ export default function Game() {
   // `defaultLeave` is what fires for the BROWSER back button (the
   // in-page Back link in /play has its own `attemptLeave(go-home)`
   // wrapper). We deliberately keep the user on /play here and just
-  // reset to the idle phase — same end-state as the pause menu's
-  // "Give up" action — so back-from-mid-game lands on the single
+  // reset to the idle phase - same end-state as the pause menu's
+  // "Give up" action - so back-from-mid-game lands on the single
   // player setup card, not all the way back at the homepage. If
   // the user wants to actually leave the page they can press back
   // a second time (or use the in-page Syncle / Home buttons).
@@ -328,7 +344,7 @@ export default function Game() {
    * its dep array changed (e.g. resume request that happens to use
    * the same chartMode that's already selected). React would
    * otherwise skip the re-render and the random song would stay on
-   * screen. The actual value is irrelevant — only the increment
+   * screen. The actual value is irrelevant - only the increment
    * matters.
    */
   const [loadNonce, setLoadNonce] = useState(0);
@@ -349,7 +365,7 @@ export default function Game() {
   // gradient cache (highway / vignette gradients are baked per palette), so
   // the next RAF tick redraws with the new colors. Because the RAF loop runs
   // continuously, the swap is visually instant (limited only by the same
-  // cubic-bezier the rest of the page uses for theme transitions — the
+  // cubic-bezier the rest of the page uses for theme transitions - the
   // canvas itself just hard-cuts to the new palette in one frame, which
   // reads as in-sync with the surrounding 220ms CSS crossfade).
   const { theme } = useTheme();
@@ -361,7 +377,7 @@ export default function Game() {
   // Mirror render quality into the rAF-loop options ref. Persist on
   // change so the choice survives reloads. We also save here (not in
   // the toggle handler) so the *initial value* hydrated from
-  // localStorage doesn't count as a write — `loadRenderQuality()` is
+  // localStorage doesn't count as a write - `loadRenderQuality()` is
   // already a no-op when the key is missing.
   useEffect(() => {
     renderOptsRef.current.quality = quality;
@@ -371,7 +387,7 @@ export default function Game() {
   // Force-load the JetBrains Mono ExtraBold weight used by the lane-gate
   // letters drawn on the canvas. next/font only downloads weights that are
   // actually used on the page, and canvas font requests don't count as
-  // usage — so without this the browser silently falls back to the next
+  // usage - so without this the browser silently falls back to the next
   // available weight (700) and our "800" letters render thinner than
   // intended for the first few seconds. document.fonts.load triggers a
   // real download and resolves once the file is in memory.
@@ -402,7 +418,7 @@ export default function Game() {
     setMirror(null);
     setBeatmapsetId(null);
     // If the player just accepted a "Resume previous run?" banner, the
-    // ref holds the beatmapsetId we want — bypass the random pool and
+    // ref holds the beatmapsetId we want - bypass the random pool and
     // load that exact set. We swallow the ref into a local so a fast
     // mode-toggle that re-fires this effect mid-fetch still gets the
     // forced song; we clear the ref once the session cache is populated
@@ -454,7 +470,7 @@ export default function Game() {
           setMirror(loaded.mirror ?? null);
           setBeatmapsetId(loaded.beatmapsetId ?? null);
         } else {
-          // Warm the HTTP cache for the audio bytes — safe to do without a
+          // Warm the HTTP cache for the audio bytes - safe to do without a
           // user gesture since we're not creating an AudioContext yet.
           prefetchAudio(loaded.meta.audioUrl);
         }
@@ -480,7 +496,7 @@ export default function Game() {
   // Once we have a real meta AND the user has interacted with the page at
   // least once (any click / keydown / pointermove), spin up the AudioContext
   // and decode the song in the background. Decoding requires a context but
-  // not necessarily a *running* one — a suspended context is enough — so by
+  // not necessarily a *running* one - a suspended context is enough - so by
   // the time the user clicks PLAY the AudioBuffer is ready and start() is
   // basically a no-op.
   useEffect(() => {
@@ -499,12 +515,12 @@ export default function Game() {
         audioRef.current.setMetronome(metronome);
         audioRef.current.setVolume(volume);
         audioRef.current.setSfx(sfx);
-        // Fire and forget — by the time PLAY is clicked, this is usually done.
+        // Fire and forget - by the time PLAY is clicked, this is usually done.
         // We DO surface decode failures here. Earlier this catch block
         // was a silent no-op, which meant a corrupt mp3 / a CORS-blocked
         // audio URL would let the player click PLAY, then `start()`
         // would fail with the same error. Reporting it now lets the
-        // StartCard show the message before the click — and start()'s
+        // StartCard show the message before the click - and start()'s
         // own error handler will still catch the same condition if the
         // user reaches it from a different code path (e.g. they click
         // PLAY before the prep finishes).
@@ -512,7 +528,7 @@ export default function Game() {
         const onPrepError = (e: unknown) => {
           if (cancelled) return;
           const msg = (e as { message?: string } | null)?.message
-            ?? "Audio decode failed — the chart may be unplayable.";
+            ?? "Audio decode failed - the chart may be unplayable.";
           setError(msg);
         };
         if (loaded?.delivery === "remote" && loaded.audioBytes && loaded.audioKey) {
@@ -538,7 +554,7 @@ export default function Game() {
     window.addEventListener("pointermove", prep, { once: false });
     // Try to prep RIGHT NOW too. Modern browsers (Chrome, Firefox,
     // Safari ≥ 14) allow creating an AudioContext outside a user
-    // gesture — it just starts in `suspended` state until `resume()`
+    // gesture - it just starts in `suspended` state until `resume()`
     // is called from inside one. Crucially, `decodeAudioData` runs
     // fine on a suspended context, so we can finish the entire
     // decode in the window between page mount and the user clicking
@@ -547,7 +563,7 @@ export default function Game() {
     // gestureless context creation. Without this proactive prep, a
     // fast user who clicked PLAY before pointermove fired would
     // hit `await audio.load(...)` synchronously inside `start()`
-    // and pay the entire decode cost on the click critical path —
+    // and pay the entire decode cost on the click critical path -
     // a documented contributor to "Start lag → opening notes feel
     // late / first frame stutters".
     prep();
@@ -562,7 +578,7 @@ export default function Game() {
   // Mirror each setting into the audio engine on change AND persist
   // it to storage. The lazy `useState(loadX)` initializers above mean
   // the very first render already holds the persisted value, so the
-  // initial fire of these effects writes the same value back — a
+  // initial fire of these effects writes the same value back - a
   // harmless no-op that keeps the contract simple (no hydration gate,
   // no `useEffect` to "load" later, no flash of defaults).
   useEffect(() => {
@@ -612,7 +628,7 @@ export default function Game() {
     if (!canvas) return;
     const resize = () => {
       // Cap DPR. On coarse-pointer devices (phones / tablets) the cap is
-      // tighter (1.5) — most modern phones report DPR 2.5-3, which would
+      // tighter (1.5) - most modern phones report DPR 2.5-3, which would
       // double or triple the per-frame pixel budget on a fillrate-limited
       // mobile GPU and visibly stutter the highway scroll. 1.5x is still
       // visually crisp on a small screen and recovers a chunk of GPU
@@ -629,13 +645,14 @@ export default function Game() {
       canvas.height = Math.floor(rect.height * dpr);
       canvasSizeRef.current.w = rect.width;
       canvasSizeRef.current.h = rect.height;
-      // Same `desynchronized: true` hint as the render-loop ctx — see
-      // the matching getContext below for the full rationale. Both
-      // calls return the SAME context object (browsers memoize per
-      // canvas), so the option only takes effect on the first call;
-      // we pass it on both anyway so deletes/refactors don't break
-      // the flag silently.
-      const ctx = canvas.getContext("2d", { desynchronized: true });
+      // Same vsync-aligned ctx options as the render-loop getContext
+      // call below - see that call's comment for the full rationale on
+      // why we DON'T set `desynchronized: true` here. (TL;DR: it bypasses
+      // the compositor for ~1 frame less latency at the cost of
+      // jittery frame pacing AND broken G-Sync support, which on a
+      // high-refresh-rate VRR monitor reads as visible judder even
+      // though the FPS counter shows the target rate.)
+      const ctx = canvas.getContext("2d");
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       // Force the renderer to rebuild its size-dependent gradient cache.
       renderStateRef.current.cache = undefined;
@@ -668,7 +685,7 @@ export default function Game() {
   //   - audio: fetched + decoded by the prep effect on first user gesture
   //   - canvas/gradients: pre-built by the resize effect's warmup draw
   // So this is now ~mostly synchronous: build the GameState, await fonts
-  // (cheap — already loading from layout), schedule audio, kick countdown.
+  // (cheap - already loading from layout), schedule audio, kick countdown.
   const start = useCallback(async () => {
     setError(null);
     setNewBest(false);
@@ -703,7 +720,7 @@ export default function Game() {
       if (loaded.notes.length === 0) {
         setPhase("idle");
         setError(
-          "This chart has no playable notes for the selected difficulty — try a different mode.",
+          "This chart has no playable notes for the selected difficulty - try a different mode.",
         );
         return;
       }
@@ -716,7 +733,7 @@ export default function Game() {
       }
 
       // Make sure the display font has loaded before we start drawing the
-      // judgment popups + countdown — otherwise the first popup triggers a
+      // judgment popups + countdown - otherwise the first popup triggers a
       // sync font swap and skips a frame.
       if (typeof document !== "undefined" && (document as any).fonts?.ready) {
         try {
@@ -752,13 +769,13 @@ export default function Game() {
       // Schedule the song to begin AFTER the prompt + numbers + silent
       // lead-in. songTime() goes negative across this whole window, so
       // notes (which all live at positive times) stay above the judgment
-      // line — the highway just slides empty until the first beat
+      // line - the highway just slides empty until the first beat
       // actually arrives.
       audio.start(TOTAL_START_DELAY, volume);
 
       // Walk the overlay through prompt → numbers → null in lockstep with
-      // the audio scheduling above. We don't push state every vblank —
-      // only when the visible overlay actually changes — so this is free
+      // the audio scheduling above. We don't push state every vblank -
+      // only when the visible overlay actually changes - so this is free
       // even on cheap hardware.
       const startedAt = performance.now();
       let lastKey = "prompt";
@@ -823,7 +840,7 @@ export default function Game() {
   /**
    * Player accepted the "Resume previous run?" banner.
    *
-   * We don't try to restore mid-song state (offset, score, combo) —
+   * We don't try to restore mid-song state (offset, score, combo) -
    * see `lib/game/resume.ts` for the rationale. We just steer the
    * load effect at the SAME beatmapset they were on, switch the
    * difficulty toggle to match, and let them hit PLAY when ready.
@@ -846,7 +863,7 @@ export default function Game() {
   }, [pendingResume]);
 
   /**
-   * StartCard "↻ new" handler — roll a fresh random song without a
+   * StartCard "↻ new" handler - roll a fresh random song without a
    * full page reload. Mirrors the home page's refresh button: drops
    * chart.ts's session cache (via the ref consumed in the load
    * effect) and bumps the load nonce so the effect actually re-runs
@@ -861,7 +878,7 @@ export default function Game() {
     setLoadNonce((n) => n + 1);
   }, []);
 
-  /** Player tapped "dismiss" on the resume banner — clear it. */
+  /** Player tapped "dismiss" on the resume banner - clear it. */
   const onDismissResume = useCallback(() => {
     clearSoloResume();
     setPendingResume(null);
@@ -880,7 +897,7 @@ export default function Game() {
     setStats(null);
     setSongProgress(0);
     setNewBest(false);
-    // Player explicitly bailed — drop the resume hint so the next
+    // Player explicitly bailed - drop the resume hint so the next
     // mount doesn't re-offer a song they decided against. The
     // `pendingResume` banner state is already null at this point
     // (banner only renders before any run starts), so we just clear
@@ -889,17 +906,17 @@ export default function Game() {
     setPhase("idle");
   }, []);
 
-  // Auto-pause when the tab is hidden OR the window loses focus —
+  // Auto-pause when the tab is hidden OR the window loses focus -
   // otherwise the audio clock keeps running while requestAnimationFrame
   // is throttled to 1Hz, and the game catches up with a giant burst of
   // misses on refocus.
   //
   // Two complementary signals:
   //   - `visibilitychange` fires when the tab is backgrounded
-  //     (switched, browser minimized) — covers the obvious "I alt-
+  //     (switched, browser minimized) - covers the obvious "I alt-
   //     tabbed" case.
   //   - `window.blur` fires when *focus* leaves the window without
-  //     hiding the tab — covers OS notifications stealing focus,
+  //     hiding the tab - covers OS notifications stealing focus,
   //     another window getting clicked, the OS context menu opening
   //     (palm-hits the ContextMenu key, right-click on a trackpad),
   //     etc. Without this signal the player comes back to a burst of
@@ -932,7 +949,7 @@ export default function Game() {
   // through the same pressLane / releaseLane helpers so the engine sees a
   // single, consistent event stream regardless of input source. The helpers
   // are stable (useCallback) and read `phase` via a ref so we don't have
-  // to re-bind every state change — that matters for touch, where the
+  // to re-bind every state change - that matters for touch, where the
   // <TouchLanes> overlay re-renders along with the rest of the canvas
   // container and we don't want to drop pointer captures.
   const phaseRef = useRef<Phase>(phase);
@@ -940,7 +957,7 @@ export default function Game() {
     phaseRef.current = phase;
   }, [phase]);
 
-  // Same pattern as `phaseRef`, but for `chartMode` — the render loop
+  // Same pattern as `phaseRef`, but for `chartMode` - the render loop
   // needs the current mode INSIDE `finishRun` to look up the per-mode
   // best score, but if we put `chartMode` in the loop's dep array the
   // entire rAF / metronome / canvas effect tears down and re-arms every
@@ -957,7 +974,7 @@ export default function Game() {
   // "Latest callback" refs for `pause` / `resume`. Both are useCallback'd
   // with `phase` in their deps, so their identity changes every phase
   // transition. The keyboard listener install (below) is wired ONCE at
-  // mount and reads these via refs — without that the entire keydown
+  // mount and reads these via refs - without that the entire keydown
   // listener would tear down + reattach at the EXACT countdown→playing
   // boundary (i.e. ~2 s before the song becomes audible), which is a
   // documented source of micro-stutter at song onset on slower main
@@ -970,13 +987,13 @@ export default function Game() {
   // KeyboardEvent / PointerEvent that caused the press. Passed through
   // to `audio.inputSongTime()` so we judge against the audio clock at
   // the EXACT key-down moment, not "audio clock when the React handler
-  // happened to run" — which can lag by 1-15 ms under JS load and is
+  // happened to run" - which can lag by 1-15 ms under JS load and is
   // the dominant cause of "feels off sometimes". Touch callers omit
   // it; touch latency dwarfs the dispatch component anyway.
   const pressLane = useCallback((lane: number, eventTimestamp?: number) => {
     const p = phaseRef.current;
     if (p === "paused") return;
-    // Always remember the lane is held — the renderer reads heldRef to
+    // Always remember the lane is held - the renderer reads heldRef to
     // light the gate even during countdown, so the pre-roll feels alive.
     heldRef.current[lane] = true;
     if (p !== "playing") return;
@@ -995,8 +1012,29 @@ export default function Game() {
       });
       audio.playHit(lane, evt.judgment);
     } else {
+      // Empty press - no note landed in the lane's hit window. With
+      // Strict Inputs ON we ALSO ask the engine to classify whether
+      // this looks like spam (no unjudged note within ±SPAM_GRACE in
+      // this lane) vs an honest mistime (a note IS coming up, the
+      // player was just early/late). Spam silently breaks combo (no
+      // popup, no song wobble - the visible combo number dropping
+      // IS the feedback). Honest mistimes go unpenalized exactly
+      // like the OFF code path so a slightly-early panic press near
+      // a real note doesn't tank a long streak.
+      //
+      // We deliberately keep `playEmptyPress` firing in BOTH
+      // branches: it's the same soft tick either way (a satisfying
+      // mechanical click when you press a key, regardless of
+      // whether you scored), and Strict-Inputs handling lives
+      // entirely in the engine state rather than in the audio
+      // surface - see the user's "subtle empty-press tick only"
+      // request and the `markEmptyPress` doc comment for the
+      // rationale.
       renderStateRef.current.laneFlash[lane] = 0.45;
       audio.playEmptyPress();
+      if (strictInputsRef.current) {
+        state.markEmptyPress(lane, songTime);
+      }
     }
   }, []);
 
@@ -1011,7 +1049,7 @@ export default function Game() {
     if (!audio || !state) return;
 
     // If a hold was active in this lane, judge the tail on release.
-    // Same timestamp correction as pressLane — release timing on hold
+    // Same timestamp correction as pressLane - release timing on hold
     // tails is just as sensitive as head presses.
     const tailEvt = state.release(lane, audio.inputSongTime(eventTimestamp));
     if (tailEvt) {
@@ -1025,7 +1063,7 @@ export default function Game() {
     }
   }, []);
 
-  // Global keyboard install — RUNS ONCE for the lifetime of the
+  // Global keyboard install - RUNS ONCE for the lifetime of the
   // component. Previous version listed `[phase, pause, resume,
   // pressLane, releaseLane]` in its dep array, which meant every
   // phase transition (idle→countdown, countdown→playing, etc.)
@@ -1036,7 +1074,7 @@ export default function Game() {
   // reported on slower machines. By reading phase + pause + resume
   // out of refs we keep listener identity stable for the whole run
   // (idle → countdown → playing → paused → resume → results → idle)
-  // — no churn, no surprise frame budget hit at the worst possible
+  // - no churn, no surprise frame budget hit at the worst possible
   // moment. `pressLane` and `releaseLane` are useCallback'd with
   // empty deps and read entirely off refs themselves, so they're
   // safe to capture in the closure once at mount.
@@ -1045,7 +1083,7 @@ export default function Game() {
       const phase = phaseRef.current;
       if (phase !== "playing" && phase !== "countdown" && phase !== "paused")
         return;
-      // Don't hijack key events while a text input or textarea has focus —
+      // Don't hijack key events while a text input or textarea has focus -
       // future-proofs against in-game chat / pause-menu fields without
       // accidentally muting D/F/J/K when the player just clicked a slider.
       if (isEditableTarget(e.target)) return;
@@ -1058,7 +1096,7 @@ export default function Game() {
       // Block the keys that open the browser/OS menu bar on Windows,
       // because every one of them blurs the page and silently strands
       // any held lane keys until the player retaps. The big offender
-      // is `ContextMenu` — the dedicated right-click key between
+      // is `ContextMenu` - the dedicated right-click key between
       // RightAlt and RightCtrl, which palm-hits constantly during
       // fast play. `F10` traditionally activates the menu bar for
       // the same effect. The follow-up `contextmenu` event listener
@@ -1117,7 +1155,7 @@ export default function Game() {
       // event's target is the now-focused input. Skipping this
       // release would leave the hold marked active in `heldRef` and
       // strand the hold note's tail in a "still being held" state
-      // until the player happens to retap that lane — a confusing,
+      // until the player happens to retap that lane - a confusing,
       // long-lived gameplay bug. Releasing is always safe (it's a
       // no-op for unheld lanes) and keeps the input model crisp
       // regardless of focus.
@@ -1133,7 +1171,7 @@ export default function Game() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-    // Empty deps ON PURPOSE — see leading comment. pressLane/releaseLane
+    // Empty deps ON PURPOSE - see leading comment. pressLane/releaseLane
     // are mount-stable (useCallback with []), pause/resume reach us
     // via latest-callback refs, and phase is read from `phaseRef`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1141,7 +1179,7 @@ export default function Game() {
 
   // Block the OS / browser context menu while gameplay is active.
   // Right-click, the keyboard ContextMenu key, AND touch long-press
-  // all funnel through the `contextmenu` event — preventDefault here
+  // all funnel through the `contextmenu` event - preventDefault here
   // keeps the menu from opening (and stealing focus, which silently
   // strands any held lane keys until the player retaps). The keydown
   // handler above blocks ContextMenu / F10 one event earlier on
@@ -1173,15 +1211,42 @@ export default function Game() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // `desynchronized: true` lets the browser present canvas frames
-    // without round-tripping through the page compositor — saves
-    // ~1 frame of input-to-photon latency on most browsers (verified
-    // on Chromium and Firefox; Safari ignores the hint, no penalty).
-    // Free win, applies on every device. We do NOT pass `alpha:
-    // false` because the canvas is intentionally transparent so the
-    // body background can crossfade during the theme transition
-    // (see `drawFrame`'s `clearRect` rationale).
-    const ctx = canvas.getContext("2d", { desynchronized: true });
+    // We INTENTIONALLY use the default ctx options (vsync'd through
+    // the standard browser compositor) instead of opting into
+    // `desynchronized: true`. Earlier work added the desynchronized
+    // hint to shave ~1 frame of input-to-photon latency, but on
+    // high-refresh-rate displays - especially VRR setups (G-Sync /
+    // FreeSync) - the trade-off lost more than it saved:
+    //
+    //   - Desynchronized canvases bypass the compositor and present
+    //     directly. Without compositor pacing, frame intervals drift
+    //     (e.g. on a 200 Hz monitor: 4 ms / 6 ms / 4 ms / 6 ms…)
+    //     even when the rAF loop is hitting its 200 fps target. The
+    //     average is fine but the eye reads the irregular spacing as
+    //     judder, which is exactly what players reported as "feels
+    //     laggy even though the counter says 200 fps".
+    //   - G-Sync / FreeSync only engage on content presented through
+    //     the compositor pipeline. With `desynchronized: true` the
+    //     canvas may skip that pipeline entirely, silently
+    //     downgrading to fixed-refresh-with-tearing instead of
+    //     adaptive-sync-with-no-tearing.
+    //
+    // The compositor IS already vsync'd + triple-buffered (Chrome's
+    // surface flinger / Skia swap chain) - so by going through it
+    // we get smooth frame pacing, no tearing, and full G-Sync
+    // support automatically. The ~5 ms latency tax on a 200 Hz
+    // monitor is imperceptible in a rhythm game (audio is the
+    // timing reference, visuals are feedback - players hit when
+    // they HEAR the note, not when they see it land), and the
+    // AudioContext clock that schedules hits + metronome runs
+    // independently of the render path, so the slight visual delay
+    // doesn't desync anything gameplay-critical.
+    //
+    // `alpha: true` is the implicit default and we want it so the
+    // body background shows through (see drawFrame's clearRect
+    // rationale in lib/game/renderer.ts for the theme-crossfade
+    // detail).
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     let last = performance.now();
@@ -1193,15 +1258,15 @@ export default function Game() {
     // "prev >= 20 && now === 0" inequality) survives the rare frame
     // where combo bounces back to ≥ 1 between rAF reads.
     let lastComboBreakCount = stateRef.current?.stats.comboBreaks ?? 0;
-    // Rolling FPS sample window — frames per ~500ms.
+    // Rolling FPS sample window - frames per ~500ms.
     let fpsAccumFrames = 0;
     let fpsAccumStart = last;
 
     // Drift-corrected pacing for the optional FPS cap. We track the
     // *target wall-clock* of the next frame (`pacedNext`) and only
     // render once the current vblank has reached it. After each
-    // accepted frame we advance by exactly one interval — NOT to
-    // `now` — so the rounding error from "fired one vblank too late"
+    // accepted frame we advance by exactly one interval - NOT to
+    // `now` - so the rounding error from "fired one vblank too late"
     // cancels out the next "one vblank too early" instead of
     // accumulating. Without this, a 60Hz cap on a 200Hz monitor would
     // round to every 4th vblank (= 50 fps), and 30 fps would round to
@@ -1239,7 +1304,7 @@ export default function Game() {
         pacedNext += interval;
         if (pacedNext < now) pacedNext = now + interval;
       } else if (pacedLastLock !== null) {
-        // Lock just turned off — reset the anchor so the next time
+        // Lock just turned off - reset the anchor so the next time
         // someone re-enables a cap it doesn't think it's way behind.
         pacedNext = now;
         pacedLastLock = null;
@@ -1267,7 +1332,7 @@ export default function Game() {
       // listed `phase` in its deps and React would cancel the running
       // rAF + spawn a fresh closure (with reset `last`, `pacedNext`,
       // `lastMissCount`, `lastComboBreakCount`, `fpsAccumStart`) at the EXACT countdown→playing
-      // moment — i.e. the instant the song's first frame fires. That
+      // moment - i.e. the instant the song's first frame fires. That
       // boundary lined up with the audible song onset, which is why
       // players felt a small "stutter" right at song start. With the
       // loop persisting, the very first audio frame is just another
@@ -1277,13 +1342,13 @@ export default function Game() {
       if (state && currentPhase === "playing") {
         state.expireMisses(songTime);
 
-        // Per-miss SFX is silent by design — but we DO fire a subtle
+        // Per-miss SFX is silent by design - but we DO fire a subtle
         // Guitar-Hero-style song distort (45 % dip + light lowpass +
         // 30-cent pitch wobble, ~220 ms) on every miss so the player
         // hears the song itself wobble. The dedicated combo-break cue
         // (with its own deeper duck) fires AFTER this in the same
         // frame and `cancelScheduledValues` inside `duckSong` lets it
-        // override the lighter per-miss duck — exactly what we want.
+        // override the lighter per-miss duck - exactly what we want.
         const misses = state.stats.hits.miss;
         if (misses > lastMissCount) {
           audio?.playMissDistort();
@@ -1297,7 +1362,7 @@ export default function Game() {
 
         // End-of-song detection. Two short-circuited paths:
         //   1. All notes judged (incl. hold tails) AND a 1.5s grace
-        //      window has elapsed past the last note end — gives the
+        //      window has elapsed past the last note end - gives the
         //      player a beat to read their final judgment popup
         //      before the screen swaps to results. The "all judged"
         //      part is checked via the O(1) `notesPlayed` counter
@@ -1310,7 +1375,7 @@ export default function Game() {
         //      judgment helpers increment `notesPlayed` once each,
         //      so the equality mirrors the old array predicate
         //      exactly.
-        //   2. Audio buffer ended naturally — fallback for charts
+        //   2. Audio buffer ended naturally - fallback for charts
         //      whose last note ends well before the audio outro, or
         //      where a player paused mid-song.
         const lastNote = state.notes[state.notes.length - 1];
@@ -1404,7 +1469,7 @@ export default function Game() {
         // can briefly run a hair past `duration` while the audio
         // engine drains the trailing buffer (and is negative during
         // the pre-roll countdown). Either case shouldn't render as a
-        // "negative" or "overflowing" bar — just pin to the rails.
+        // "negative" or "overflowing" bar - just pin to the rails.
         if (songMeta.duration > 0) {
           const frac = songTime / songMeta.duration;
           setSongProgress(frac < 0 ? 0 : frac > 1 ? 1 : frac);
@@ -1417,7 +1482,7 @@ export default function Game() {
 
     function finishRun(state: GameState) {
       const songMeta = songRef.current.meta;
-      // Read the active chart mode off the ref instead of the closure —
+      // Read the active chart mode off the ref instead of the closure -
       // see `chartModeRef` declaration. This is what lets the render
       // loop's effect carry an empty dep array and persist across
       // phase + mode toggles without re-arming the rAF.
@@ -1445,7 +1510,7 @@ export default function Game() {
       });
       setBest(result.best);
       setNewBest(result.improved);
-      // Run finished cleanly — drop the resume hint so a refresh
+      // Run finished cleanly - drop the resume hint so a refresh
       // from the results screen lands on a fresh random song
       // instead of re-offering the one they just played.
       clearSoloResume();
@@ -1539,6 +1604,8 @@ export default function Game() {
             onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
             quality={quality}
             onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+            strictInputs={strictInputs}
+            onToggleStrictInputs={() => setStrictInputs((s) => !s)}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
             songDuration={displayMeta?.duration ?? null}
@@ -1584,6 +1651,8 @@ export default function Game() {
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               quality={quality}
               onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+              strictInputs={strictInputs}
+              onToggleStrictInputs={() => setStrictInputs((s) => !s)}
               songSource={songSource}
               chartMode={chartMode}
               onChangeMode={setChartMode}
@@ -1624,7 +1693,7 @@ export default function Game() {
             {/* Keyboard hint footer. The four arrow keys are rendered
                 with the brutalist <ArrowIcon> SVG (same family used for
                 the osu! external-link chip, lobby return arrows, etc.)
-                instead of the unicode `←↓↑→` glyphs — those render as
+                instead of the unicode `←↓↑→` glyphs - those render as
                 thin, unweighted strokes in most monospace fonts and
                 clash visually with the chunky D F J K letters next to
                 them. The icon inherits `currentColor` so the
@@ -1679,9 +1748,9 @@ export default function Game() {
  */
 /**
  * True when the focused element is a TEXT-editing surface (a real text
- * input, textarea, or contenteditable). Everything else — including the
+ * input, textarea, or contenteditable). Everything else - including the
  * volume slider (`<input type="range">`), the metronome / SFX
- * checkboxes (`<input type="checkbox">`), buttons, selects, etc. — is
+ * checkboxes (`<input type="checkbox">`), buttons, selects, etc. - is
  * NOT treated as editable, even though it's an `<input>`.
  *
  * Why the narrow definition: the lane-key handler short-circuits on
@@ -1691,13 +1760,13 @@ export default function Game() {
  * slider once, focus stays on it, and the very next D press is
  * silently ignored because the handler thinks the player is "typing".
  * Same trap with the SFX / metronome checkboxes. Players reported
- * "I touched a setting and now my key presses don't register" — that
+ * "I touched a setting and now my key presses don't register" - that
  * was the bug. Restricting the predicate to text-bearing inputs lets
  * lane keys flow through whatever non-text control happens to hold
  * focus, while still respecting any actual text field.
  *
- * The remaining concern — that arrow keys with focus on the slider
- * would also tick the slider's value — is handled by the lane
+ * The remaining concern - that arrow keys with focus on the slider
+ * would also tick the slider's value - is handled by the lane
  * handler calling `e.preventDefault()`, which cancels the browser's
  * native default action for `<input type="range">` arrow handling.
  */
@@ -1767,7 +1836,7 @@ function computeAccuracy(stats: PlayerStats): number {
  * solo + multi pause UIs feel like the same surface.
  *
  * Note: this is a "restart the same song from the beginning"
- * affordance — we don't try to recover offset, score, or combo.
+ * affordance - we don't try to recover offset, score, or combo.
  * See `lib/game/resume.ts` for why.
  */
 function ResumeBanner({
@@ -1792,9 +1861,9 @@ function ResumeBanner({
           </p>
           <p
             className="mt-1 truncate font-display text-base font-semibold text-bone-50"
-            title={`${state.artist} — ${state.title}`}
+            title={`${state.artist} - ${state.title}`}
           >
-            {state.artist} — {state.title}
+            {state.artist} - {state.title}
           </p>
           <p className="mt-0.5 font-mono text-[0.7rem] uppercase tracking-widest text-bone-50/60">
             {displayMode(state.mode)} · restart from the beginning
@@ -1824,7 +1893,7 @@ function ResumeBanner({
 // ---------------------------------------------------------------------------
 /**
  * Discreet "settings won't persist" banner. Appears the first time
- * `localStorage` / `sessionStorage` rejects a write — the most common
+ * `localStorage` / `sessionStorage` rejects a write - the most common
  * causes are Safari Private Browsing (which exposes a 0-byte quota),
  * exhausted per-origin storage, or a browser extension that blocks
  * storage. Without this banner those write failures were swallowed
@@ -1832,8 +1901,8 @@ function ResumeBanner({
  * SFX, etc.) was broken; in fact the toggle works for the current
  * session, it just won't be remembered next time.
  *
- * Intentionally less prominent than the resume banner — no accent
- * border, no glow — because the situation is informational, not
+ * Intentionally less prominent than the resume banner - no accent
+ * border, no glow - because the situation is informational, not
  * actionable. Player dismisses with one click.
  */
 function StorageBlockedBanner({ onDismiss }: { onDismiss: () => void }) {
@@ -1849,7 +1918,7 @@ function StorageBlockedBanner({ onDismiss }: { onDismiss: () => void }) {
             settings won&apos;t persist
           </p>
           <p className="mt-1 font-mono text-[0.75rem] text-bone-50/70">
-            Your browser refused a save (private browsing, full storage, or an extension). Toggles still work this session — they just reset on reload.
+            Your browser refused a save (private browsing, full storage, or an extension). Toggles still work this session - they just reset on reload.
           </p>
         </div>
         <button
@@ -1869,12 +1938,12 @@ function StorageBlockedBanner({ onDismiss }: { onDismiss: () => void }) {
  * Compact relative-time formatter used by the per-track stats panel
  * ("best set 2d ago", "last played 3h ago"). Mirrors the style used
  * elsewhere in the app (see `formatRelative` in `ChatPanel.tsx`) so
- * timestamps everywhere read with the same vocabulary. Returns "—"
+ * timestamps everywhere read with the same vocabulary. Returns "-"
  * for missing input so the caller can blindly pass `best.lastPlayedAt`
  * without an extra null guard at the call site.
  */
 function formatStatsAge(at: number | undefined): string {
-  if (!at) return "—";
+  if (!at) return "-";
   const diff = Date.now() - at;
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
@@ -1939,6 +2008,8 @@ function StartCard({
   onCycleFpsLock,
   quality,
   onCycleQuality,
+  strictInputs,
+  onToggleStrictInputs,
   songSource,
   chartMode,
   onChangeMode,
@@ -1955,7 +2026,7 @@ function StartCard({
 }: {
   meta: SongMeta | null;
   onStart: () => void;
-  /** Roll a brand-new random song without leaving the play page —
+  /** Roll a brand-new random song without leaving the play page -
    *  same affordance the home page exposes on its now-playing card,
    *  surfaced here so the player doesn't have to bounce back to /
    *  just to skip a song they don't feel like playing. */
@@ -1964,18 +2035,23 @@ function StartCard({
   error: string | null;
   metronome: boolean;
   onToggleMetronome: () => void;
-  /** Master toggle for hit/miss/release SFX — same setting as the in-game HUD's feedback toggle (key: N). */
+  /** Master toggle for hit/miss/release SFX - same setting as the in-game HUD's feedback toggle (key: N). */
   sfx: boolean;
   onToggleSfx: () => void;
   /** Render frame-rate cap (off / 30 / 60). Same value as the in-game
-   *  HUD's LOCK pill — they share state via the parent so a choice made
+   *  HUD's LOCK pill - they share state via the parent so a choice made
    *  here persists into gameplay and back. */
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
-  /** Same quality preset as the in-game HUD — exposed here so a player
+  /** Same quality preset as the in-game HUD - exposed here so a player
    *  can opt into PERFORMANCE mode before the run even starts. */
   quality: RenderQuality;
   onCycleQuality: () => void;
+  /** Strict Inputs (anti-mash protection) toggle. Mirrors the in-game
+   *  HUD chip - flipping it here vs there is identical (shared parent
+   *  state). Tile renders in the bottom row of the settings grid. */
+  strictInputs: boolean;
+  onToggleStrictInputs: () => void;
   songSource: "osu" | "fallback" | null;
   chartMode: ChartMode;
   onChangeMode: (m: ChartMode) => void;
@@ -1988,13 +2064,13 @@ function StartCard({
   progressMsg: string | null;
   mirror: string | null;
   beatmapsetId: number | null;
-  /** Coarse-pointer device — swap "press D F J K" copy for tap copy and
+  /** Coarse-pointer device - swap "press D F J K" copy for tap copy and
    *  let the player know the on-screen lanes will appear during play. */
   touchOnly: boolean;
 }) {
   const ready = meta !== null;
   const nps =
-    meta && meta.duration > 0 ? (chartLength / meta.duration).toFixed(1) : "—";
+    meta && meta.duration > 0 ? (chartLength / meta.duration).toFixed(1) : "-";
   return (
     <div
       className="brut-card relative w-full max-w-xl overflow-hidden p-6 sm:p-8"
@@ -2009,19 +2085,19 @@ function StartCard({
               // direction without locking the card to one theme.
               //
               // Two layers:
-              //   1. Vertical gradient — heavier wash at the title
+              //   1. Vertical gradient - heavier wash at the title
               //      band (top) and the Start button band (bottom)
               //      where raw text sits directly on the cover,
               //      lighter in the middle 30–70% band where the
               //      inner panels (DIFFICULTY / BEST / METRONOME /
               //      VOLUME) supply their own translucent backing so
               //      the cover can show through between them.
-              //   2. Flat dim across the whole card — a gentle
+              //   2. Flat dim across the whole card - a gentle
               //      contrast floor so bright cover highlights can't
               //      punch through and fight the text/buttons.
               //
               // 404s fall back to the card's own surface from
-              // `.brut-card` — nothing to handle in JS.
+              // `.brut-card` - nothing to handle in JS.
               backgroundImage: `linear-gradient(180deg, rgb(var(--bg) / 0.90) 0%, rgb(var(--bg) / 0.45) 30%, rgb(var(--bg) / 0.45) 70%, rgb(var(--bg) / 0.92) 100%), linear-gradient(rgb(var(--bg) / 0.25), rgb(var(--bg) / 0.25)), url(${meta!.coverUrl})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
@@ -2054,7 +2130,7 @@ function StartCard({
         </div>
         {/* Right cluster: source tag (when ready) + ↻ refresh button.
             Refresh sits on the far right so it's always pinned to the
-            same pixel slot — the player learns "↻ on the right of the
+            same pixel slot - the player learns "↻ on the right of the
             now-playing strip" between the home page and StartCard
             without the affordance dancing around. `loading` is OR'd
             with `!ready` so the button shows its spin state during
@@ -2067,10 +2143,10 @@ function StartCard({
               data-tooltip={
                 mirror
                   ? `Pulled from ${mirror} at runtime`
-                  : "Loaded from a real osu!mania 4K beatmap"
+                  : "Bundled chart used as a fallback when mirrors are unreachable"
               }
             >
-              {mirror ? `via ${mirror}` : "osu! 4K chart"}
+              {mirror ? `via ${mirror}` : "bundled chart"}
             </span>
           )}
           <RefreshSongButton
@@ -2087,7 +2163,7 @@ function StartCard({
             style={
               meta!.coverUrl
                 ? {
-                    // Halo using the page base color — cream glow in
+                    // Halo using the page base color - cream glow in
                     // light mode (lifts the dark title off bright
                     // cover highlights), black glow in dark mode
                     // (same idea, inverted).
@@ -2187,7 +2263,7 @@ function StartCard({
         {/* Picker = 5 fixed Syncle tiers in a single horizontal slider.
             Used to be split across two grid rows (easy/normal/hard +
             insane/expert), which doubled the picker's vertical
-            footprint without adding any information density — and a
+            footprint without adding any information density - and a
             "complex but simple" app shouldn't pay that cost on the
             most-used control. The strip collapses into a static
             5-column row when the StartCard has the room to fit all
@@ -2219,7 +2295,7 @@ function StartCard({
       {/* Tile grid for the pre-game settings panel. On mobile (< sm)
           everything stacks in a single column so each tile gets the
           full width and the captions / chips stay readable on a
-          narrow screen. From `sm` up we switch to the 2x2 layout —
+          narrow screen. From `sm` up we switch to the 2x2 layout -
           top row: FPS Lock cycler on the left, Quality preset on the
           right (the two render-budget knobs paired so the perf
           controls sit at the top of the panel); bottom row:
@@ -2227,13 +2303,13 @@ function StartCard({
           right (the two audible-cue toggles paired). All four tiles
           share the same border / padding / typography treatment so
           they read as one cohesive panel, and each settings tile
-          mirrors the in-game HUD's state — toggling here is the
+          mirrors the in-game HUD's state - toggling here is the
           same as toggling in the HUD chip during play. */}
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {/* Settings tiles. All four (FPS lock, Metronome, Feedback,
             Quality) share the same border / padding / typography
             treatment so they read as one cohesive 2x2 panel, and
-            each setting tile mirrors the in-game HUD's state —
+            each setting tile mirrors the in-game HUD's state -
             toggling here is the same as toggling in the HUD chip
             during play. The full-width "Stats on this track" panel
             below the toggles carries the per-(song, mode) history. */}
@@ -2244,12 +2320,12 @@ function StartCard({
             together at the top of the panel), Metronome / Feedback
             on the bottom row (the two audio-output toggles, also
             paired). */}
-        {/* FPS lock tile — the entire tile is the click target (acts
+        {/* FPS lock tile - the entire tile is the click target (acts
             like the <label> tiles next to it), so clicking anywhere on
-            the card — including the "FPS LOCK" caption — cycles
+            the card - including the "FPS LOCK" caption - cycles
             off → 30 → 60 → off, mirroring the in-game HUD's LOCK pill.
             The right-aligned chip is a styled span (not a real button)
-            specifically so a click on it doesn't double-fire — the
+            specifically so a click on it doesn't double-fire - the
             outer <button> already owns the click. The chip flips to
             the accent color when capped so the active state matches
             the HUD pill exactly. */}
@@ -2259,10 +2335,10 @@ function StartCard({
           className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
           data-tooltip={
             fpsLock == null
-              ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+              ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
               : fpsLock === 30
-                ? "Frame-rate capped at 30 FPS — saves battery on laptops"
-                : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
+                ? "Frame-rate capped at 30 FPS - saves battery on laptops"
+                : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
           }
           aria-label="Cycle render FPS lock"
         >
@@ -2283,7 +2359,7 @@ function StartCard({
             click to cycle off / 30 / 60
           </span>
         </button>
-        {/* Quality preset tile — same affordance vocabulary as the
+        {/* Quality preset tile - same affordance vocabulary as the
             FPS lock tile (whole tile click cycles, right chip flips
             to accent when not on the default value). The default
             ("HIGH") reads in dim text + the alternative ("PERF") in
@@ -2295,8 +2371,8 @@ function StartCard({
           className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
           data-tooltip={
             quality === "high"
-              ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
-              : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
+              ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
+              : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
           }
           aria-label="Cycle render quality preset"
         >
@@ -2356,14 +2432,44 @@ function StartCard({
           </span>
         </label>
 
-        {/* Music volume — full-width slider tucked into the 2x2 toggle
+        {/* Strict Inputs tile - full-width row beneath the 2x2 toggle
+            grid. Lives on its own row (sm:col-span-2) because it's the
+            only GAMEPLAY-rule toggle in this panel - Quality / FPS
+            Lock are render-budget knobs, Metronome / Feedback are
+            audio knobs. Strict Inputs changes how presses are scored,
+            so it deserves its own visual band rather than being
+            shoehorned next to a cosmetic toggle. */}
+        <label
+          className="flex cursor-pointer items-center justify-between gap-3 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 sm:col-span-2"
+          data-tooltip="Press a key with no note coming up = silent combo break (anti-mash)"
+        >
+          <div className="flex flex-col gap-0.5">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Strict inputs
+            </span>
+            <span className="font-mono text-[9.5px] text-bone-50/40">
+              {strictInputs
+                ? "empty presses break combo"
+                : "no penalty for empty presses"}
+            </span>
+          </div>
+          <input
+            type="checkbox"
+            checked={strictInputs}
+            onChange={onToggleStrictInputs}
+            className="h-[1.05rem] w-[1.05rem] accent-accent"
+            aria-label="Toggle strict inputs"
+          />
+        </label>
+
+        {/* Music volume - full-width slider tucked into the 2x2 toggle
             grid as `sm:col-span-2` so it sits IMMEDIATELY under the
             settings tiles (the volume slider is itself a setting,
             and players reach for it in the same "tweak before I
             start" pass as Quality / FPS lock / Metronome). */}
         <div
           className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 sm:col-span-2"
-          data-tooltip="Song playback volume — separate from feedback SFX"
+          data-tooltip="Song playback volume - separate from feedback SFX"
         >
           <div className="flex items-center justify-between gap-3">
             <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
@@ -2386,11 +2492,11 @@ function StartCard({
         </div>
       </div>
 
-      {/* Stats on this track — full-width panel under the settings
+      {/* Stats on this track - full-width panel under the settings
           grid. Replaces the older one-tile "Best on this track"
           summary. Shows the per-(song, mode) high score broken down
           into score / accuracy / max-combo, plus the three "history"
-          stats — when the best was set, how many runs you've played
+          stats - when the best was set, how many runs you've played
           on this chart, and when you last played it. Falls back to a
           single "no runs yet" line when the track has never been
           finished on this difficulty so the panel doesn't look
@@ -2416,7 +2522,7 @@ function StartCard({
           <TrackStatsGrid best={best} />
         ) : (
           <span className="font-mono text-[9.5px] text-bone-50/50">
-            no runs yet — finish a run to start tracking
+            no runs yet - finish a run to start tracking
           </span>
         )}
       </div>
@@ -2443,7 +2549,7 @@ function StartCard({
             {/* Play triangle moved AFTER the label and given the same
                 slide-on-hover treatment as the arrow icons elsewhere
                 (Back / Join room). Wrapped in a span so we can apply
-                a transform — the unicode glyph itself is positionable
+                a transform - the unicode glyph itself is positionable
                 only via its container. `inline-block` is required for
                 translate-x to take effect (transforms are no-ops on
                 inline elements). */}
@@ -2468,7 +2574,7 @@ function StartCard({
  *
  * Style precedence is INTENTIONAL: `!enabled` beats `selected`. While
  * the chart is still loading every tier reports `enabled=false`, but
- * `chartMode` already holds the default (`easy`) — without this
+ * `chartMode` already holds the default (`easy`) - without this
  * ordering the default tier would paint in accent blue and read as
  * "ready to play" before the picker actually has any data.
  */
@@ -2497,7 +2603,7 @@ function ModeButton({
       data-tooltip={
         enabled
           ? // Players asked for the actionable spec (chart density) on
-            // hover instead of the cosmetic intensity rating — the tier
+            // hover instead of the cosmetic intensity rating - the tier
             // name is already on the button label and the stars are
             // visible underneath, so the tooltip's job is to surface
             // the one piece of info the button itself can't show.
@@ -2522,7 +2628,7 @@ function ModeButton({
     >
       <span>{displayMode(mode)}</span>
       {/* Stars are rendered as a fixed 5-slot row (filled vs hollow) so
-          every button is the same width regardless of tier — otherwise
+          every button is the same width regardless of tier - otherwise
           Easy (★) would be visibly narrower than Expert (★★★★★) and
           the picker grid would feel uneven. Disabled tiers fade the
           whole star row further so it doesn't fight the dimmed name
@@ -2540,7 +2646,7 @@ function ModeButton({
 
 /**
  * Compact `EASY` style badge used in the in-game HUD to remind the
- * player which tier they picked at the lobby. Just the tier name —
+ * player which tier they picked at the lobby. Just the tier name -
  * no stars. The rock-meter card is space-tight (sits next to the
  * song title in the same row) and a 5-star strip was eating most of
  * the available width on narrower viewports. Hover/focus title
@@ -2571,7 +2677,7 @@ function DifficultyTag({
   /** Notes-per-second for the active chart, or null pre-load. */
   nps: number | null;
 }) {
-  // Hover surfaces chart density (notes + nps) — same convention as
+  // Hover surfaces chart density (notes + nps) - same convention as
   // the lobby picker. Falls back to the stale "intensity stars"
   // string only if we're somehow asked to render before the chart
   // metadata is available, which keeps the tag useful even in the
@@ -2672,6 +2778,8 @@ function HUD({
   onCycleFpsLock,
   quality,
   onCycleQuality,
+  strictInputs,
+  onToggleStrictInputs,
   sfx,
   onToggleSfx,
   songTitle,
@@ -2691,11 +2799,17 @@ function HUD({
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
-  /** Render quality preset — "high" (full VFX) or "performance"
+  /** Render quality preset - "high" (full VFX) or "performance"
    *  (skip shadow blurs + celebration VFX). Cycled live during a
    *  match; the renderer reads it on the very next frame. */
   quality: RenderQuality;
   onCycleQuality: () => void;
+  /** Strict Inputs - anti-mash protection. When ON, an empty press
+   *  with no nearby note silently breaks combo. Live-toggleable so a
+   *  player can flip it off mid-run if they decide they want
+   *  forgiving classic scoring. */
+  strictInputs: boolean;
+  onToggleStrictInputs: () => void;
   /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
@@ -2721,7 +2835,7 @@ function HUD({
     //     vertical `sm:py-5` keeps the original top inset so the panels
     //     don't ride flush against the canvas top.
     <div className="pointer-events-none absolute inset-x-0 top-0 z-10 mx-auto flex w-full max-w-7xl items-start justify-between gap-2 p-2 sm:gap-3 sm:py-5 sm:px-3">
-      {/* PERFORMANCE card — score + combo + rock meter + hits stats all
+      {/* PERFORMANCE card - score + combo + rock meter + hits stats all
           live here so the left HUD reads as one cohesive "how are you
           doing right now" block. The rock meter (label, bar, hit
           breakdown, pause button) used to sit in the right-hand card,
@@ -2739,11 +2853,11 @@ function HUD({
           (the cards used to grow with their content and creep onto
           the trapezoid edges on wider monitors). */}
       <div className="brut-card-accent flex w-[156px] flex-col gap-2 px-2.5 py-2 sm:w-[220px] sm:gap-2.5 sm:px-3 sm:py-3 lg:w-[244px] xl:w-[268px] xl:gap-3 xl:px-4">
-        {/* Top row keeps the original score+combo split — same
+        {/* Top row keeps the original score+combo split - same
             min-widths, just nested inside the new vertical card so
             the rock meter can stack below. The two columns rely on
             their own typographic weight (big numbers + uppercase
-            labels) to read as separate stats — no rule needed. */}
+            labels) to read as separate stats - no rule needed. */}
         <div className="flex items-stretch gap-2 sm:gap-3 xl:gap-4">
           <div className="min-w-[80px] sm:min-w-[116px] xl:min-w-[132px]">
             <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
@@ -2761,7 +2875,7 @@ function HUD({
               </p>
             )}
           </div>
-          {/* COMBO column is a 1:1 typographic mirror of SCORE — same
+          {/* COMBO column is a 1:1 typographic mirror of SCORE - same
               min-width strategy (just narrower because the values
               are short), same left alignment, same font sizes for
               the label / number / tail rows, same `mt-1.5` rhythm.
@@ -2769,7 +2883,7 @@ function HUD({
               flips to accent once a combo is active, and the `×N`
               multiplier tail is always accent. Keeping every other
               property identical means the two columns read as a
-              matched pair — same beat, same weight, just two
+              matched pair - same beat, same weight, just two
               different stats. */}
           <div className="min-w-[48px] sm:min-w-[68px] xl:min-w-[80px]">
             <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
@@ -2789,7 +2903,7 @@ function HUD({
         </div>
         {/* Rock meter label on the left, difficulty tag on the
             right. The tag tells the player which tier they're
-            actually playing right now — it lives next to the rock
+            actually playing right now - it lives next to the rock
             meter (the live "performance" block) instead of on the
             now-playing strip across the screen, since difficulty
             is part of the gameplay context, not the song
@@ -2797,7 +2911,7 @@ function HUD({
             chip; the chart density (notes / nps) shows on hover.
             The score/combo block above and the rock-meter block
             below are visually separated by the card's `gap-*`
-            alone — no rule needed; the typographic weight of each
+            alone - no rule needed; the typographic weight of each
             section makes the boundary obvious. */}
         <div className="flex items-center justify-between gap-2">
           <p className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
@@ -2813,7 +2927,7 @@ function HUD({
             }
           />
         </div>
-        {/* Health bar — bumped from `h-[0.78rem]` (~12.5 px) to
+        {/* Health bar - bumped from `h-[0.78rem]` (~12.5 px) to
             `h-3.5 sm:h-[1.05rem]` (~14 / 17 px) so it reads as the
             real status indicator of the card instead of a thin
             decorative strip. Same color ramp as before so muscle
@@ -2838,7 +2952,7 @@ function HUD({
         </p>
       </div>
 
-      {/* SETTINGS card — now-playing block on top, then four
+      {/* SETTINGS card - now-playing block on top, then four
           consistently-styled tiles for the player's audio + perf
           knobs (Metronome, Feedback, FPS lock, Volume). All
           tiles share the same brutalist border + dark inner fill +
@@ -2849,19 +2963,19 @@ function HUD({
           there are no one-off `mt-*` overrides to remember. The
           checkbox-style toggles for Metronome and Feedback
           mirror the StartCard tile aesthetic from the pre-game
-          menu — same `<label>` wrap, same accent-colored native
-          checkbox — so the player learns the affordance once and
+          menu - same `<label>` wrap, same accent-colored native
+          checkbox - so the player learns the affordance once and
           recognizes it in both places. */}
       <div className="brut-card flex w-[156px] flex-col gap-2 px-2.5 py-2.5 sm:w-[220px] sm:gap-2.5 sm:px-3.5 sm:py-3.5 lg:w-[244px] xl:w-[268px]">
-        {/* "Now playing" strip — single source of truth for which
+        {/* "Now playing" strip - single source of truth for which
             song is rolling once the StartCard is gone. Title/artist
             truncate via `min-w-0` so the card border stays sharp at
             every width; full text is on hover via `data-tooltip`.
             The bottom border doubles as the divider between this
-            block and the settings tiles below — same vocabulary as
+            block and the settings tiles below - same vocabulary as
             the in-card divider on the left card.
             Each row inside the strip carries its own explicit `mt-*`
-            instead of relying on the parent line-box leading — the
+            instead of relying on the parent line-box leading - the
             previous spacing leaned on browser leading that the
             text-box trim removed, leaving caption/title/artist
             visually glued together. */}
@@ -2870,7 +2984,7 @@ function HUD({
             {/* Top row: "♪ Now playing" caption on the left, the
                 pause button on the right. Pause lives here (rather
                 than next to the rock meter on the left card) so
-                the difficulty tag — which IS gameplay state — can
+                the difficulty tag - which IS gameplay state - can
                 sit on the rock meter side, while pause sits with
                 the song info where the player's eye naturally
                 lands when they want to "stop the song". */}
@@ -2891,11 +3005,11 @@ function HUD({
             {/* Title and artist wrap up to two lines and then
                 ellipsize via `line-clamp-2`. The previous single-line
                 `truncate` aggressively hid most of the song name once
-                the card was capped to a fixed width — two lines are
+                the card was capped to a fixed width - two lines are
                 enough to read most osu! titles in full while keeping
-                the strip compact. The full "Song — Artist" string is
+                the strip compact. The full "Song - Artist" string is
                 always available on hover via the tooltip. */}
-            {/* `pointer-events-auto` is critical — the HUD strip
+            {/* `pointer-events-auto` is critical - the HUD strip
                 wrapper is `pointer-events-none` so it doesn't trap
                 clicks over the highway, which means hover events
                 never land on these <p>s by default. Re-enabling
@@ -2941,7 +3055,7 @@ function HUD({
             )}
           </div>
         )}
-        {/* Metronome tile — `<label>` so clicking anywhere on the
+        {/* Metronome tile - `<label>` so clicking anywhere on the
             tile (caption included) toggles the checkbox. Native
             checkbox uses `accent-accent` for the brand color and
             sits flush right; `pointer-events-auto` is needed
@@ -2978,13 +3092,13 @@ function HUD({
             aria-keyshortcuts="N"
           />
         </label>
-        {/* FPS lock tile — entire tile is the click target (same
+        {/* FPS lock tile - entire tile is the click target (same
             pattern as the StartCard FPS lock tile in the pre-game
             menu). Two-column layout: the left column stacks the
             "FPS LOCK" caption over the live `### fps` readout (so
             the caption and the metric it relates to read top-to-
             bottom), the right column shows the current cap as
-            plain accent / dim text — no chip border, just the
+            plain accent / dim text - no chip border, just the
             value, so the tile feels less busy than the other
             settings rows. */}
         <button
@@ -2993,10 +3107,10 @@ function HUD({
           className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
           data-tooltip={
             fpsLock == null
-              ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+              ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
               : fpsLock === 30
-                ? "Frame-rate capped at 30 FPS — saves battery on laptops"
-                : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
+                ? "Frame-rate capped at 30 FPS - saves battery on laptops"
+                : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
           }
           aria-label="Cycle render FPS lock"
         >
@@ -3005,7 +3119,7 @@ function HUD({
               FPS lock
             </span>
             <span className="font-mono text-[9.2px] tabular-nums tracking-widest text-bone-50/40">
-              {fps || "—"}fps
+              {fps || "-"}fps
             </span>
           </span>
           <span
@@ -3017,21 +3131,21 @@ function HUD({
             {fpsLock == null ? "OFF" : fpsLock}
           </span>
         </button>
-        {/* Quality tile — same affordance vocabulary as the FPS-lock
+        {/* Quality tile - same affordance vocabulary as the FPS-lock
             tile (full-tile click target, left caption / right value).
             The current preset reads in plain accent text instead of a
             chip border so the row visually rhymes with FPS lock above
             it. Toggling cycles HIGH ↔ PERF; the rAF loop picks the
             new value up on its very next frame (no remount, no
-            stutter — same pattern as `fpsLockRef`). */}
+            stutter - same pattern as `fpsLockRef`). */}
         <button
           type="button"
           onClick={onCycleQuality}
           className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
           data-tooltip={
             quality === "high"
-              ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
-              : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
+              ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
+              : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
           }
           aria-label="Cycle render quality preset"
         >
@@ -3050,7 +3164,33 @@ function HUD({
             {quality === "high" ? "HIGH" : "PERF"}
           </span>
         </button>
-        {/* Volume tile — same border / padding / typography as the
+        {/* Strict Inputs HUD chip - anti-mash protection. Lives in the
+            same right-rail settings stack as Metronome / Feedback /
+            FPS / Quality / Vol so the player can flip it without
+            pausing. Same chip vocabulary (border, padding, mono
+            caption) as the toggle rows above. The on/off chip uses
+            the same accent / dim color scheme as Quality so "ON"
+            (the protective default) reads as the active state. */}
+        <label
+          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
+          data-tooltip={
+            strictInputs
+              ? "ON · empty press with no nearby note silently breaks combo (anti-mash)"
+              : "OFF · empty presses are free"
+          }
+        >
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+            Strict
+          </span>
+          <input
+            type="checkbox"
+            checked={strictInputs}
+            onChange={onToggleStrictInputs}
+            className="h-[14px] w-[14px] cursor-pointer accent-accent"
+            aria-label="Toggle strict inputs (anti-mash)"
+          />
+        </label>
+        {/* Volume tile - same border / padding / typography as the
             toggle tiles so it visually belongs to the same row of
             settings. The "VOL" caption + slider + percentage live
             on one line; `min-w-0` on the slider is required because
@@ -3059,7 +3199,7 @@ function HUD({
             tile on the narrow mobile card. */}
         <div
           className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Song playback volume — separate from feedback SFX"
+          data-tooltip="Song playback volume - separate from feedback SFX"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             vol
@@ -3099,7 +3239,7 @@ function PauseCard({
         ❚❚
       </h2>
       <p className="mt-4 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
-        Audio is suspended — take your time
+        Audio is suspended - take your time
       </p>
       <div className="mt-7 grid grid-cols-2 gap-3">
         <button onClick={onResume} className="brut-btn-accent px-4 py-3">
@@ -3127,7 +3267,7 @@ function PauseCard({
  *   1. When the card fits, it should be perfectly centered.
  *   2. When the card is taller than the available area (mid-laptop heights,
  *      DevTools open, mobile landscape), `items-center` would push the top
- *      of the card past the parent's top edge — and because <main> uses
+ *      of the card past the parent's top edge - and because <main> uses
  *      overflow-hidden the overflow doesn't scroll, it just *clips* and
  *      visually crosses over the header. Bug we hit on ~720px tall viewports.
  *
@@ -3193,7 +3333,7 @@ function ResultsCard({
       </p>
       <div className="mt-2 flex items-baseline justify-between gap-3">
         {/* `min-w-0 flex-1` lets `truncate` actually engage inside the
-            flex row — without it, long beatmap titles push the grade
+            flex row - without it, long beatmap titles push the grade
             glyph off the card or wrap onto a second line and shove the
             grade down with them. The full title still surfaces on
             hover via `data-tooltip` so nothing is lost. */}

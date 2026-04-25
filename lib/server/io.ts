@@ -87,7 +87,7 @@ const INACTIVITY_TTL_MS = 30 * 60_000;
  * their download/decode finishes (see `tryStartCountdown` forced-start
  * branch and `MultiGame.tsx` schedule effect's negative-`delayMs`
  * seek). If NOBODY is ready, the room bounces back to `lobby` instead.
- * Slow loaders are NEVER kicked — that was the old behaviour, replaced
+ * Slow loaders are NEVER kicked - that was the old behaviour, replaced
  * with late-join in the v2 multiplayer pass.
  */
 const LOADING_DEADLINE_MS = 30_000;
@@ -98,7 +98,7 @@ const LOADING_DEADLINE_MS = 30_000;
  * that aborts the queued start. The actual `_doStartLoading` only runs
  * once this elapses without a `host:cancelStart`.
  *
- * Kept short so it doesn't feel laggy — the goal is "yes I really
+ * Kept short so it doesn't feel laggy - the goal is "yes I really
  * meant Start, here's a moment to abort", not "load anything in
  * advance". Anything ≥3 s gives a clear 3-2-1 cadence; less and the
  * cancel affordance is too tight to actually click.
@@ -120,14 +120,14 @@ const SCOREBOARD_TICK_MS = 200;
 /**
  * TTL on per-room search cache entries. Mirrors typically reindex on the
  * order of minutes, and a host browsing pages of one query rarely takes
- * longer than a couple of minutes — so 5 min strikes the balance between
+ * longer than a couple of minutes - so 5 min strikes the balance between
  * "fresh enough" and "actually saves the upstream a request".
  */
 const SEARCH_CACHE_TTL_MS = 5 * 60_000;
 /**
  * Capacity of the per-room search-cache LRU. Each entry is at most
  * SEARCH_PAGE_SIZE (50) catalog items × ~80-120 bytes ≈ 5 KB, so 32
- * entries caps memory at ~160 KB per room — trivial. Past 32 distinct
+ * entries caps memory at ~160 KB per room - trivial. Past 32 distinct
  * (query, page) tuples we evict oldest-first.
  */
 const SEARCH_CACHE_MAX_ENTRIES = 32;
@@ -143,7 +143,7 @@ interface InternalPlayer {
   isHost: boolean;
   joinedAt: number;
   ready: boolean;
-  /** Lobby-level "ready to play" flag — see PlayerSnapshot doc. */
+  /** Lobby-level "ready to play" flag - see PlayerSnapshot doc. */
   lobbyReady: boolean;
   /** Host-set chat silence flag. */
   muted: boolean;
@@ -154,14 +154,14 @@ interface InternalPlayer {
   /**
    * Sliding window of recent chat send timestamps (ms). Used to enforce
    * CHAT_RATE_LIMIT per CHAT_RATE_WINDOW_MS without allocating a new
-   * structure per message — we just push + filter on every send.
+   * structure per message - we just push + filter on every send.
    */
   chatTimestamps: number[];
   /**
    * Wall-clock of the most recently ACCEPTED `client:scoreUpdate`. Used
    * to enforce `SCORE_UPDATE_MIN_INTERVAL_MS` so a malicious client can't
    * flood `applyScoreUpdate` faster than the honest 5 Hz throttle. A
-   * single number is enough — we don't care about a rolling window for
+   * single number is enough - we don't care about a rolling window for
    * scores, just "was the last accepted packet too recent."
    */
   lastScoreUpdateAt: number;
@@ -173,13 +173,13 @@ interface InternalPlayer {
    *   - Created at `false` (joining lands you in the lobby).
    *   - Flipped to `true` for every connected player on
    *     `startLoading`. That includes players who weren't
-   *     `lobbyReady` — pressing Start grabs everyone.
+   *     `lobbyReady` - pressing Start grabs everyone.
    *   - Flipped back to `false` for every player on
    *     `transitionToLobby` (results → lobby, host:cancelMatch).
    *   - Flipped to `false` mid-match by `room:leaveMatch` (player
    *     opts out via the in-match menu's "Leave" button). Idempotent.
    *   - NEW players who join via `joinRoom` while the room is past
-   *     the lobby phase start at `false` — they see the lobby with
+   *     the lobby phase start at `false` - they see the lobby with
    *     a "match in progress" indicator instead of being silently
    *     dropped into a half-played song.
    *   - Survives disconnect/reconnect inside the slot TTL: the
@@ -221,6 +221,14 @@ interface InternalRoom {
   prestartMode: ChartMode | null;
   /** Pending timer that calls `_doStartLoading`. Cleared on cancel. */
   prestartTimer: NodeJS.Timeout | null;
+  /**
+   * Match-wide Strict Inputs (anti-mash) flag - host-controlled,
+   * applies uniformly to every player. See `RoomSnapshot.strictInputs`
+   * for full semantics. Mirrored on every snapshot. Initialized to
+   * `true` on room creation (matching the SP default) and only ever
+   * mutates through `setRoomStrictInputs` (host + lobby phase only).
+   */
+  strictInputs: boolean;
   /** Rolling chat backlog, oldest first, capped at MAX_CHAT_HISTORY. */
   chat: ChatMessage[];
   /** Monotonically-incrementing chat message id (room-scoped). */
@@ -228,7 +236,7 @@ interface InternalRoom {
   catalog: CatalogItem[] | null;
   catalogFetchedAt: number | null;
   /**
-   * Per-room LRU cache of paginated catalog pages — both text-search
+   * Per-room LRU cache of paginated catalog pages - both text-search
    * AND no-query browse share this map. Keys are prefix-tagged to keep
    * the two views in their own namespaces:
    *   - `s|${normalizedQuery}|${page}` for text search
@@ -241,7 +249,7 @@ interface InternalRoom {
    * Bounded by SEARCH_CACHE_MAX_ENTRIES so a host bouncing between
    * dozens of queries / pages can't unbounded-grow the room object.
    * TTL is enforced lazily on read (no background sweep needed) so a
-   * stale entry just gets re-fetched on next access — matches the
+   * stale entry just gets re-fetched on next access - matches the
    * "5-minute freshness window" the upstream mirrors update on.
    */
   searchCache: Map<
@@ -267,7 +275,7 @@ interface InternalRoom {
    * room is still in "playing" by then, `forceTransitionToResults`
    * synthesises a `final` from each unfinished player's last `live`
    * snapshot and flips the room to "results" so the results screen
-   * ALWAYS shows up — even if a `client:finished` packet from one of
+   * ALWAYS shows up - even if a `client:finished` packet from one of
    * the clients was lost, the chart never loaded for them, their tab
    * froze, etc. Without this timer the room would otherwise stay in
    * "playing" forever and nobody (not even players who cleanly
@@ -280,7 +288,7 @@ interface InternalRoom {
    * Wall-clock handle for the countdown→playing flip. Scheduled by
    * `tryStartCountdown` to fire at `room.startsAt`. Tracked here so
    * `closeRoom` (and any other forced exit from `countdown`) can
-   * cancel it — without that, an inactivity-close or all-disconnect
+   * cancel it - without that, an inactivity-close or all-disconnect
    * during the 5s countdown lead-in would still queue a callback that
    * fires later and emits `phase:playing` to a `room:CODE` channel
    * with no live members. Harmless in practice, but it leaves the
@@ -326,7 +334,7 @@ function emptyLive(): LiveScore {
     notesPlayed: 0,
     totalNotes: 0,
     hits: { perfect: 0, great: 0, good: 0, miss: 0 },
-    // Server-side mirror of the client's initial rock meter — starts
+    // Server-side mirror of the client's initial rock meter - starts
     // empty so the lobby/loading snapshot doesn't broadcast a fake 100%
     // bar before the player has hit a single note. Live updates via
     // `player:stats` overwrite this almost immediately once the chart
@@ -384,9 +392,9 @@ class RoomRegistry {
 
   /**
    * Reset the room's inactivity timer. Called from every fan-out helper
-   * (`emitSnapshot`, `emitScoreboard`) so any real interaction — host
+   * (`emitSnapshot`, `emitScoreboard`) so any real interaction - host
    * picks a song, a player marks ready, a score update streams in,
-   * someone joins or leaves — keeps the room alive. A room that goes
+   * someone joins or leaves - keeps the room alive. A room that goes
    * `INACTIVITY_TTL_MS` without a bump is force-closed.
    */
   private bumpActivity(room: InternalRoom): void {
@@ -472,6 +480,7 @@ class RoomRegistry {
       prestartEndsAt: room.prestartEndsAt,
       players,
       chat: room.chat,
+      strictInputs: room.strictInputs,
     };
   }
 
@@ -487,12 +496,12 @@ class RoomRegistry {
     return {
       code: room.code,
       name: room.name,
-      hostName: host?.name ?? "—",
+      hostName: host?.name ?? "-",
       playerCount: room.players.size,
       maxPlayers: MAX_PLAYERS_PER_ROOM,
       phase: room.phase,
       selectedSong: room.selectedSong
-        ? `${room.selectedSong.artist} — ${room.selectedSong.title}`
+        ? `${room.selectedSong.artist} - ${room.selectedSong.title}`
         : null,
       createdAt: room.createdAt,
     };
@@ -557,7 +566,7 @@ class RoomRegistry {
     // navigating away from a previous room), evict that slot first so
     // the prior room doesn't end up with an orphaned, perpetually-
     // "online" ghost player. Without this, repeated create/join
-    // bouncing leaves stacks of zombie slots in old rooms — the bug
+    // bouncing leaves stacks of zombie slots in old rooms - the bug
     // visible in the screenshot where "santi" appeared three times in
     // the same room.
     this.releaseSocketSlot(socketId);
@@ -579,6 +588,10 @@ class RoomRegistry {
       prestartEndsAt: null,
       prestartMode: null,
       prestartTimer: null,
+      // Match-wide anti-mash policy - defaults ON to match the SP
+      // default. Host can flip via `host:setStrictInputs` while in
+      // the lobby phase.
+      strictInputs: true,
       chat: [],
       nextChatId: 1,
       catalog: null,
@@ -607,7 +620,7 @@ class RoomRegistry {
       graceTimer: null,
       chatTimestamps: [],
       lastScoreUpdateAt: 0,
-      // Brand-new room — definitionally in lobby phase, so the
+      // Brand-new room - definitionally in lobby phase, so the
       // host is "in lobby". `inMatch` flips to true when they
       // press Start; for now they're a lobby participant.
       inMatch: false,
@@ -629,7 +642,7 @@ class RoomRegistry {
     }
     // Same anti-zombie precaution as createRoom: free any prior slot
     // this socket was holding before claiming a fresh one. Crucially
-    // this also handles the "joined the same room twice" case — a
+    // this also handles the "joined the same room twice" case - a
     // stale player from a previous join attempt with this exact socket
     // gets evicted before we add a brand-new player, instead of
     // accumulating duplicates.
@@ -657,7 +670,7 @@ class RoomRegistry {
       // Late-join routing: if the room is already past the lobby,
       // this player wasn't in the match when the host pressed Start.
       // They get the lobby UI with a "match in progress" indicator
-      // — *not* dropped into a half-played song. They can still
+      // - *not* dropped into a half-played song. They can still
       // chat / change settings / wait for the next round. When the
       // room cycles back to lobby, this flag stays false but is
       // ignored (lobby phase routes everyone to the Lobby anyway).
@@ -674,7 +687,7 @@ class RoomRegistry {
     if (!p) {
       throw new RoomError(
         "SESSION_GONE",
-        "Your seat was reclaimed — rejoin as a new player",
+        "Your seat was reclaimed - rejoin as a new player",
       );
     }
     // If this same socket was already pointed at a DIFFERENT slot
@@ -693,7 +706,7 @@ class RoomRegistry {
     // If some OTHER live socket is currently bound to this seat (e.g.
     // a duplicate tab racing to rejoin with the same sessionId), drop
     // that mapping so the new socket cleanly owns the seat. We do
-    // *not* disconnect the old socket — Socket.IO will emit to
+    // *not* disconnect the old socket - Socket.IO will emit to
     // whichever socket is currently in the room channel, and the new
     // socket re-joins below.
     if (p.socketId && p.socketId !== socketId) {
@@ -741,7 +754,7 @@ class RoomRegistry {
     }, PLAYER_GRACE_MS);
     // If this player was the only one we were still waiting on to
     // finish, re-evaluate the room phase immediately instead of
-    // waiting out the full grace window — `checkAllFinished` only
+    // waiting out the full grace window - `checkAllFinished` only
     // counts CONNECTED players, so the moment they go offline the
     // remaining connected set may already be 100% finished.
     if (room.phase === "playing") this.checkAllFinished(room);
@@ -756,7 +769,7 @@ class RoomRegistry {
     if (p.graceTimer) clearTimeout(p.graceTimer);
     // Drop any socketIndex entries pointing at this seat. Previously
     // only handleDisconnect() did this, which meant an explicit
-    // `room:leave` left a dangling index entry — the same socket then
+    // `room:leave` left a dangling index entry - the same socket then
     // could end up mapped to a non-existent session, confusing every
     // subsequent action.
     if (p.socketId) this.socketIndex.delete(p.socketId);
@@ -767,7 +780,7 @@ class RoomRegistry {
     // bail, leave it as a public listing zombie" attack pattern. We
     // intentionally do NOT close mid-match (loading/countdown/playing)
     // so a host's network blip during a song doesn't kill everyone's
-    // run — the standard host-promotion path still applies there.
+    // run - the standard host-promotion path still applies there.
     const wasHost = room.hostId === sessionId;
     if (wasHost && (room.phase === "lobby" || room.phase === "results")) {
       this.emitNotice(
@@ -779,7 +792,7 @@ class RoomRegistry {
         room,
         reason === "leave"
           ? "Host closed the room"
-          : "Host disconnected — room closed",
+          : "Host disconnected - room closed",
       );
       return;
     }
@@ -806,7 +819,7 @@ class RoomRegistry {
    * all timers, clear socket indexes, and remove the room from the
    * registry. Used by the host-leaves-lobby rule and the inactivity
    * timer. Each player gets a `room:kicked` so the client can show a
-   * polite "room closed" splash and redirect home — same UX as a real
+   * polite "room closed" splash and redirect home - same UX as a real
    * kick, just with a different reason string.
    */
   private closeRoom(room: InternalRoom, reason: string): void {
@@ -898,7 +911,7 @@ class RoomRegistry {
    * Host-only room rename. Mirrors the create-time sanitization rules
    * (same `sanitizeRoomName` helper, same length cap) so a renamed room
    * can never end up with a title the create form wouldn't accept.
-   * Empty input is rejected silently — a misclick shouldn't be able to
+   * Empty input is rejected silently - a misclick shouldn't be able to
    * wipe a room's identity in the public browser.
    */
   setRoomName(code: string, sessionId: string, raw: unknown): void {
@@ -928,6 +941,27 @@ class RoomRegistry {
     this.emitSnapshot(code);
   }
 
+  /**
+   * Host-only match-wide Strict Inputs toggle. Locked to the lobby
+   * phase so the policy can't be moved out from under players in the
+   * middle of a song (allowing it mid-match would let a host flip
+   * combo-breakers on at the end of the chart and tank everyone's
+   * scores). No-op when the value already matches; that keeps a
+   * misclick or stale client echo from churning a snapshot. Strict
+   * boolean coercion via `!!raw` so a wonky payload (truthy string,
+   * 0/1) still lands on a clean boolean.
+   */
+  setRoomStrictInputs(code: string, sessionId: string, raw: unknown): void {
+    const room = this.rooms.get(code);
+    if (!room) return;
+    if (room.hostId !== sessionId) return;
+    if (room.phase !== "lobby") return;
+    const next = !!raw;
+    if (room.strictInputs === next) return;
+    room.strictInputs = next;
+    this.emitSnapshot(code);
+  }
+
   setSong(code: string, sessionId: string, song: unknown): void {
     const room = this.rooms.get(code);
     if (!room) throw new RoomError("ROOM_NOT_FOUND", "Room not found");
@@ -944,7 +978,7 @@ class RoomRegistry {
     // `durationSec` is optional on SongRef (added after launch). Validate
     // it as a finite, positive integer in a sane range so a malicious or
     // stale client can't smuggle NaN / Infinity / a junk number through
-    // — the lobby formatter would render garbage. Anything weird → drop
+    // - the lobby formatter would render garbage. Anything weird → drop
     // the field; UI falls back to the mirror name like before.
     const rawDuration =
       typeof s.durationSec === "number" ? s.durationSec : undefined;
@@ -962,7 +996,7 @@ class RoomRegistry {
       source: String(s.source ?? "host").slice(0, 32),
       ...(durationSec !== undefined ? { durationSec } : {}),
     };
-    // Picking a fresh song invalidates the room's ready quorum — any
+    // Picking a fresh song invalidates the room's ready quorum - any
     // pre-clicked "I'm ready" was for the previous selection. Clearing
     // here keeps the host's "everyone ready" indicator honest: every
     // player has to re-affirm they want THIS song before the host's
@@ -977,7 +1011,7 @@ class RoomRegistry {
    * canonical record of "what the host currently has highlighted" for
    * future server-side checks (e.g. validating that the picked tier is
    * available on the chosen song). The host still has to explicitly
-   * click "Start match" to begin loading — there's no auto-start path
+   * click "Start match" to begin loading - there's no auto-start path
    * that consumes this.
    */
   setMode(code: string, sessionId: string, mode: unknown): void {
@@ -995,7 +1029,7 @@ class RoomRegistry {
       return;
     }
     room.selectedMode = mode;
-    // No snapshot emit — mode is host-local UI state most of the time
+    // No snapshot emit - mode is host-local UI state most of the time
     // (the host's own picker is what's authoritative). We don't want a
     // fan-out on every difficulty button click.
   }
@@ -1015,12 +1049,12 @@ class RoomRegistry {
    *
    * `query` is normalized (trimmed, lowercased, internal whitespace
    * collapsed) so trivially-different inputs like "  ABBA  " and
-   * "abba" share a single cache slot — the upstream mirrors are
+   * "abba" share a single cache slot - the upstream mirrors are
    * case-insensitive anyway, so this is a pure cache-hit-rate win.
    *
    * Cache eviction:
    *   - Stale entries (older than SEARCH_CACHE_TTL_MS) are skipped on
-   *     read and the result re-fetched. No background sweep — the next
+   *     read and the result re-fetched. No background sweep - the next
    *     read on a stale key will simply overwrite it.
    *   - Capacity-driven LRU: when inserting past
    *     SEARCH_CACHE_MAX_ENTRIES, drop the oldest-inserted entry.
@@ -1134,7 +1168,7 @@ class RoomRegistry {
    * Host-clicked "Start": validates the request, queues the
    * pre-start countdown, and schedules `_doStartLoading` to run
    * once the timer elapses. The room stays in `lobby` for the
-   * duration of the countdown — we only flip into `loading` when
+   * duration of the countdown - we only flip into `loading` when
    * the timer actually fires (or never, if the host cancels).
    *
    * Idempotent: a duplicate `host:start` while a start is already
@@ -1156,7 +1190,7 @@ class RoomRegistry {
     ) {
       throw new RoomError("BAD_MODE", "Invalid difficulty");
     }
-    // Already queued — bail without disturbing the existing timer so
+    // Already queued - bail without disturbing the existing timer so
     // a double-click can't push the countdown back or re-fire snapshots.
     if (room.prestartEndsAt !== null) return;
     room.prestartMode = mode;
@@ -1226,7 +1260,7 @@ class RoomRegistry {
     room.songStartedAt = null;
     for (const p of room.players.values()) {
       p.ready = false;
-      // Lobby-ready is the gate INTO loading — once we're in loading
+      // Lobby-ready is the gate INTO loading - once we're in loading
       // it's served its purpose and the next return-to-lobby starts
       // every player at "not ready" again.
       p.lobbyReady = false;
@@ -1234,7 +1268,7 @@ class RoomRegistry {
       p.final = null;
       // Pull every CONNECTED player into the match. Disconnected
       // slots (still alive within their TTL) keep their previous
-      // value — if they were `inMatch=true` from a prior round
+      // value - if they were `inMatch=true` from a prior round
       // they'd reconnect into the loading screen, but practically
       // we just reset both rounds back to a clean false→true
       // transition for everyone here. Players who join AFTER this
@@ -1307,7 +1341,7 @@ class RoomRegistry {
    *     seek offset on their schedule effect (`now - songStartedAt`
    *     yields the chart position everyone else is at, since their
    *     locally-suspended AudioContexts froze for the same window).
-   * Existing connected clients don't need any timestamp adjustment —
+   * Existing connected clients don't need any timestamp adjustment -
    * their `audio.resume()` call un-suspends an AudioContext that
    * froze `ctx.currentTime`, so `songTime()` continues seamlessly.
    *
@@ -1334,7 +1368,7 @@ class RoomRegistry {
   /**
    * Host-only: hard-cancel an in-progress (countdown / playing /
    * paused) match and bounce everyone back to the lobby. No standings
-   * are recorded — players see the lobby, not the results screen.
+   * are recorded - players see the lobby, not the results screen.
    *
    * Lives alongside `cancelLoading` (loading-phase escape hatch) and
    * `hostReturnToLobby` (results-phase escape hatch); together they
@@ -1365,7 +1399,7 @@ class RoomRegistry {
    * the Lobby (which renders a "match in progress" indicator while
    * the rest of the room keeps playing).
    *
-   * Idempotent and safe to call from any phase — only does anything
+   * Idempotent and safe to call from any phase - only does anything
    * useful while the room is past the lobby. The host is NOT allowed
    * to leave their own match this way (they'd orphan the room
    * controls); they have to use `host:cancelMatch` to wind it down.
@@ -1378,7 +1412,7 @@ class RoomRegistry {
     const room = this.rooms.get(code);
     if (!room) return;
     // Lobby is a no-op (everyone's already in lobby). Results phase
-    // also no-ops — at that point the participant should be on the
+    // also no-ops - at that point the participant should be on the
     // results screen, and a "leave" button there already exists via
     // the "back to lobby" CTA which transitions the whole room.
     if (
@@ -1389,12 +1423,12 @@ class RoomRegistry {
       return;
     }
     if (room.hostId === sessionId) {
-      // Hosts have a different escape hatch — cancelMatch — that
+      // Hosts have a different escape hatch - cancelMatch - that
       // ends the match for everyone instead of orphaning the room
       // with no host in it.
       throw new RoomError(
         "HOST_CANT_LEAVE",
-        "Host can't leave the match — cancel it instead",
+        "Host can't leave the match - cancel it instead",
       );
     }
     const p = room.players.get(sessionId);
@@ -1404,7 +1438,7 @@ class RoomRegistry {
     // Their `live` row stays on the scoreboard so the lobby's
     // compact scoreboard for late-joiners + leavers still reflects
     // who was in the match (and the client can grey-out the row
-    // visually if it wants). We do NOT zero `live` here — that
+    // visually if it wants). We do NOT zero `live` here - that
     // happens on the next `transitionToLobby`.
     this.emitSnapshot(code);
     // Re-check the gates: if this player was the lone hold-out
@@ -1435,7 +1469,7 @@ class RoomRegistry {
     // Only emit the load-failed notice while we're actually in the
     // loading phase. The client effect runs in async `.then()/.catch()`
     // chains that resolve *after* the phase may have flipped to
-    // countdown, playing, results, or even back to lobby — for slow
+    // countdown, playing, results, or even back to lobby - for slow
     // loaders that's exactly the late-join path. Without this guard a
     // straggler whose download finally errored 40s after the song
     // already started would emit a misleading room-wide "couldn't
@@ -1451,7 +1485,7 @@ class RoomRegistry {
   }
 
   private checkAllReady(room: InternalRoom): void {
-    // Only count match participants — late-joiners (`inMatch=false`)
+    // Only count match participants - late-joiners (`inMatch=false`)
     // never run the loading screen and so never call `client:ready`,
     // so including them would keep the all-ready gate permanently
     // stuck and force the loading deadline to expire on every round
@@ -1499,7 +1533,7 @@ class RoomRegistry {
         this.emitNotice(
           room.code,
           "info",
-          `Starting without ${names} — they can join in late`,
+          `Starting without ${names} - they can join in late`,
         );
       }
     }
@@ -1593,7 +1627,7 @@ class RoomRegistry {
       // server-known live values into a final shape. notesPlayed /
       // totalNotes / hits are zero-default when the player never
       // submitted a single score update (e.g. chart load failure),
-      // which is exactly what we want — the standings row will read
+      // which is exactly what we want - the standings row will read
       // "didn't play" instead of inventing fake hits.
       p.final = {
         score: p.live.score,
@@ -1613,7 +1647,7 @@ class RoomRegistry {
     if (!room || room.phase !== "playing") return;
     // Drop score updates while the host has the match paused. Honest
     // clients won't emit during a pause anyway (their AudioContext is
-    // suspended, so songTime() — and therefore the score signature —
+    // suspended, so songTime() - and therefore the score signature -
     // freezes), but a hostile or out-of-sync client could keep sending
     // and pollute the scoreboard while the room is frozen. Resuming
     // re-opens the gate without any extra work.
@@ -1629,7 +1663,7 @@ class RoomRegistry {
     // belt-and-braces against a tampered build.
     if (!p.inMatch) return;
     // Per-player rate limit. The honest client throttles to 5 Hz
-    // (~200 ms cadence — see `MultiGame.tsx` `lastScoreSentSigRef`),
+    // (~200 ms cadence - see `MultiGame.tsx` `lastScoreSentSigRef`),
     // so a 100 ms floor still admits real traffic with jitter
     // headroom while silently dropping a malicious flood. Without
     // this gate, a hostile client could fire `client:scoreUpdate`
@@ -1666,7 +1700,7 @@ class RoomRegistry {
     if (!room) return;
     // Anti-cheat: only accept `client:finished` while the song is
     // ACTUALLY playing. The previous `phase === "countdown"` carve-out
-    // was a leaderboard exploit — a malicious client could submit a
+    // was a leaderboard exploit - a malicious client could submit a
     // forged `final` (with score / combo clamped at the upper bounds
     // below, so still a "fake high score") BEFORE the song even
     // started, locking it in `p.final`. Standings (`standingsOf`)
@@ -1684,7 +1718,7 @@ class RoomRegistry {
     const p = room.players.get(sessionId);
     if (!p) return;
     // Same anti-spoof guard as `applyScoreUpdate`. Late-joiners +
-    // leavers can't legitimately reach end-of-song — they aren't
+    // leavers can't legitimately reach end-of-song - they aren't
     // even running the chart locally.
     if (!p.inMatch) return;
     const final = raw as Partial<FinalStats> | null;
@@ -1708,7 +1742,7 @@ class RoomRegistry {
 
   private checkAllFinished(room: InternalRoom): void {
     if (room.phase !== "playing") return;
-    // Only count match participants — late-joiners + leavers
+    // Only count match participants - late-joiners + leavers
     // (`inMatch=false`) are sitting in the lobby with the
     // match-in-progress indicator and never submit a `final` payload,
     // so including them would leave the gate permanently open and
@@ -1721,7 +1755,7 @@ class RoomRegistry {
   }
 
   private transitionToResults(room: InternalRoom): void {
-    // Disarm the safety net the moment we flip — whether this was a
+    // Disarm the safety net the moment we flip - whether this was a
     // clean "everyone finished" transition or the safety net itself
     // firing, we don't want a stale timer left behind that could fire
     // again after the room has already moved on (results → lobby →
@@ -1797,7 +1831,7 @@ class RoomRegistry {
     p.lobbyReady = next;
     this.emitSnapshot(code);
     // Note: there is intentionally NO auto-start here. By design, the
-    // host always has to click "Start match" themselves — the all-ready
+    // host always has to click "Start match" themselves - the all-ready
     // signal in the lobby UI just tells them they can do so without
     // overriding anyone. This was changed back from auto-start because
     // hosts wanted explicit control over the start moment (e.g. to
@@ -1872,7 +1906,7 @@ class RoomRegistry {
     if (!text) return;
     // Sliding-window rate limit. Filter timestamps older than the
     // window, then check against CHAT_RATE_LIMIT. A spammer hitting
-    // the cap is silently dropped — no error event so they can't
+    // the cap is silently dropped - no error event so they can't
     // probe the limiter for timing leaks.
     const now = Date.now();
     p.chatTimestamps = p.chatTimestamps.filter(
@@ -1896,7 +1930,7 @@ class RoomRegistry {
     room.chat.push(msg);
     if (room.chat.length > MAX_CHAT_HISTORY) {
       // Drop the oldest in-place rather than slicing for a fresh array
-      // on every message — splice mutates and keeps the same reference,
+      // on every message - splice mutates and keeps the same reference,
       // which lets React diffs use the cap-bounded list as a stable
       // identity signal across tics.
       room.chat.splice(0, room.chat.length - MAX_CHAT_HISTORY);
@@ -1985,6 +2019,24 @@ class RoomRegistry {
 
   hasPlayer(code: string, sessionId: string): boolean {
     return !!this.rooms.get(code)?.players.get(sessionId);
+  }
+
+  /**
+   * Returns `true` only when the player exists in the room AND their
+   * previous socket has dropped (i.e. they're inside the disconnect
+   * grace window). The `room:rejoin` handler uses this to decide
+   * whether to emit a "reconnected" system notice - without the
+   * gate, every fresh page mount on `/multi/[code]` emits a bogus
+   * "reconnected" right after the initial `${name} joined`, because
+   * the page's `useRoomSocket` always re-runs the rejoin path on
+   * connect when a stored session exists (even if that session was
+   * written 200 ms earlier by the join action and the player never
+   * actually went offline). Returns `false` if the player doesn't
+   * exist (caller should handle that as a hard error elsewhere).
+   */
+  isPlayerOffline(code: string, sessionId: string): boolean {
+    const p = this.rooms.get(code)?.players.get(sessionId);
+    return !!p && p.socketId === null;
   }
 }
 
@@ -2081,10 +2133,24 @@ export function wireSocketServer(io: IO): void {
         if (typeof payload?.sessionId !== "string") {
           throw new RoomError("BAD_SESSION", "Missing session id");
         }
+        // Capture liveness BEFORE the rejoin (which clears socketId
+        // → new socketId atomically). A "real" reconnect means the
+        // player's previous socket had dropped - that's the case we
+        // want to surface as a "reconnected" system notice so the
+        // rest of the room knows they're back. A no-op rejoin (e.g.
+        // the page mounting on /multi/[code] right after the initial
+        // /multi join wrote the session 200 ms ago) finds the socket
+        // still alive and shouldn't print anything; printing
+        // "reconnected" there is a phantom that confused players
+        // every single first connection. The first-time "joined"
+        // notice is owned by the `room:join` handler above.
+        const wasOffline = reg.isPlayerOffline(code, payload.sessionId);
         const p = reg.rejoin(code, payload.sessionId, socket.id);
         socket.join(`room:${code}`);
         ack?.(ackOk({ code }));
-        reg.emitNotice(code, "info", `${p.name} reconnected`);
+        if (wasOffline) {
+          reg.emitNotice(code, "info", `${p.name} reconnected`);
+        }
         reg.emitSnapshot(code);
       } catch (e) {
         ack?.(ackErr(e));
@@ -2116,6 +2182,12 @@ export function wireSocketServer(io: IO): void {
       reg.setRoomVisibility(ref.code, ref.sessionId, payload?.visibility);
     });
 
+    socket.on("host:setStrictInputs", (payload) => {
+      const ref = reg.refOf(socket.id);
+      if (!ref) return;
+      reg.setRoomStrictInputs(ref.code, ref.sessionId, payload?.strictInputs);
+    });
+
     /* ---- catalog ---- */
 
     socket.on("host:catalogRequest", async (payload, ack) => {
@@ -2145,7 +2217,7 @@ export function wireSocketServer(io: IO): void {
         const ref = reg.refOf(socket.id);
         if (!ref) throw new RoomError("NOT_IN_ROOM", "Not in a room");
         // Same host-only gate as `host:catalogRequest` /
-        // `host:catalogSearch` — every browse page that misses the
+        // `host:catalogSearch` - every browse page that misses the
         // cache hits a real mirror, so guests must not be able to
         // trigger them or they could exhaust the room's mirror
         // quota with a tight loop.

@@ -1,7 +1,7 @@
 /**
  * Inline script that runs BEFORE React hydrates. Reads the persisted theme
  * from localStorage and writes it to <html data-theme> so the first paint
- * already uses the right colors — no flash of dark/light.
+ * already uses the right colors - no flash of dark/light.
  *
  * Lives in its own file (NOT marked "use client") so the server component
  * `app/layout.tsx` can import it without dragging the ThemeProvider's

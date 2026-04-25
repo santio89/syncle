@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * component or fires after the user has clicked again.
  *
  * Tolerates clipboard API absence (insecure context, ancient
- * browsers, server-rendered) by silently no-op'ing — clipboard is a
+ * browsers, server-rendered) by silently no-op'ing - clipboard is a
  * nice-to-have on a "click to copy" affordance, not a critical
  * path. Failed writes also no-op to keep the UI honest (no false
  * "copied" toast when nothing actually copied).
@@ -38,7 +38,7 @@ export function useCopyToClipboard(timeoutMs = 1500) {
           timerRef.current = setTimeout(() => setCopied(false), timeoutMs);
         })
         .catch(() => {
-          // Permission denied or write blocked — leave `copied` false
+          // Permission denied or write blocked - leave `copied` false
           // so the caller doesn't show a misleading success toast.
         });
     },

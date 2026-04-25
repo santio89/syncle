@@ -34,7 +34,7 @@ const SEARCH_SOURCES: SearchSource[] = [
   },
   {
     // Same osu!-v2 response shape as nerinyan, so normalize() works
-    // unchanged. We already use catboy as a download mirror — wiring up
+    // unchanged. We already use catboy as a download mirror - wiring up
     // its search side gives us 3-way redundancy without a new schema.
     name: "catboy.best",
     url: (page, ps) =>
@@ -58,7 +58,7 @@ const FETCH_TIMEOUT_MS = 8_000;
 const MAX_CATALOG_ITEMS = 100;
 // Hard cap on consecutive pages walked per source before giving up.
 // Protects against a sparse mirror or a malformed page that never
-// contributes new items — without this we could spin forever fetching
+// contributes new items - without this we could spin forever fetching
 // duplicates of the same `beatmapsetId`s.
 const MAX_PAGES_PER_SOURCE = 6;
 
@@ -127,7 +127,7 @@ export async function fetchCatalog(): Promise<CatalogItem[]> {
           if (items.length >= MAX_CATALOG_ITEMS) break;
         }
         if (items.length === before) {
-          // No new items from this page — either entirely duplicates
+          // No new items from this page - either entirely duplicates
           // or all filtered out. Two such pages in a row means the
           // remaining offset window isn't going to contribute, so cut
           // losses and either return what we have or fall through.
@@ -141,7 +141,7 @@ export async function fetchCatalog(): Promise<CatalogItem[]> {
           err?.name === "AbortError" ? "timeout" : err?.message ?? String(err);
         errors.push(`${src.name} p${page}: ${msg}`);
         // Network error mid-walk: bail to the next mirror rather than
-        // retrying — the per-page timeout is already 8 s, retrying
+        // retrying - the per-page timeout is already 8 s, retrying
         // here would push the host's perceived "loading catalog" wait
         // past 30 s.
         break;
@@ -212,7 +212,7 @@ export const SEARCH_MAX_PAGES = 20;
  * Max pages a no-query browse may walk. Higher than SEARCH_MAX_PAGES
  * because browse-mode pagination is the primary discovery surface
  * (without it, a host who doesn't know what to search for can only
- * see the most-recently-ranked 50 sets) — letting them go ~5 000 sets
+ * see the most-recently-ranked 50 sets) - letting them go ~5 000 sets
  * deep covers most of the practical "I'll know it when I see it"
  * range without inviting infinite scrolling against the upstream.
  */
@@ -224,11 +224,11 @@ export const BROWSE_MAX_PAGES = 100;
  *
  * Why this exists:
  *   Without filtering, one upstream page (50 sets) ≈ one logical
- *   page — the host clicks Next, we ask the mirror for the next 50,
+ *   page - the host clicks Next, we ask the mirror for the next 50,
  *   show them. Done.
  *
  *   With filtering (e.g. only "easy"), only a fraction of those 50
- *   sets ship the requested tier — typically 15-40 %, sometimes
+ *   sets ship the requested tier - typically 15-40 %, sometimes
  *   single digits for rarer tiers like Expert. So a naive 1:1 mapping
  *   leaves the host staring at half-empty lists (5-10 rows where
  *   they expect ~50) and clicking Next over and over to see more
@@ -270,7 +270,7 @@ const BUCKET_FILTER_PAGE_BLOCK = 4;
  * next pagination stays consistent (page-N+1 must show "the next
  * slice of what page-N showed", which only holds within a single
  * mirror's view of the world). Caller is responsible for picking
- * the source — typically by trying the source list in order and
+ * the source - typically by trying the source list in order and
  * locking to the first one that returns a successful first
  * sub-page.
  *
@@ -279,11 +279,11 @@ const BUCKET_FILTER_PAGE_BLOCK = 4;
  *   - `hasMore`: true iff the LAST walked sub-page returned a full
  *     upstream slice (`sets.length >= pageSize`). That's the same
  *     "is there probably more" heuristic we use unfiltered, just
- *     applied to the last sub-page in the block — if it was full,
+ *     applied to the last sub-page in the block - if it was full,
  *     the next block likely has more rows; if it was partial, we've
  *     hit the end of the mirror's view for this query.
  *
- * Re-throws iff the FIRST sub-page errors — that means this mirror
+ * Re-throws iff the FIRST sub-page errors - that means this mirror
  * gave us nothing usable, so the caller should fall through to the
  * next mirror. A mid-walk error (sub-page 2+) is swallowed: we keep
  * whatever rows the earlier sub-pages already produced and mark
@@ -345,7 +345,7 @@ async function walkBucketFilteredBlock(opts: {
  * Sort orders we expose for the no-query browse view. The mirror
  * implementations differ in detail (some accept `sort=ranked_desc`,
  * others infer ordering from `s=ranked` alone) but every value here
- * is a no-op-safe parameter on every mirror — the worst case is the
+ * is a no-op-safe parameter on every mirror - the worst case is the
  * mirror ignores it and you get its default ordering, which for the
  * `s=ranked / status=1` filter we always pass is "most recently
  * ranked first" everywhere we tested.
@@ -424,21 +424,21 @@ export interface SearchCatalogResult {
  *     so the UI never sees a row it can't actually load.
  *
  * Caveats worth knowing:
- *   - Different mirrors index differently — searching "spectre" on
+ *   - Different mirrors index differently - searching "spectre" on
  *     nerinyan vs catboy can return different sets in different
  *     orders. Locking to one mirror per call sidesteps this within
  *     a single browse session.
  *   - `hasMore` is a *heuristic*. A mirror returning exactly `pageSize`
  *     items can still be the last page if that page is full. The UI
  *     should disable Next on a subsequent empty page rather than
- *     blindly trusting the flag — same way GitHub/Reddit handle it.
+ *     blindly trusting the flag - same way GitHub/Reddit handle it.
  */
 export async function searchCatalogPage(opts: {
   query: string;
   page: number;
   pageSize?: number;
   /**
-   * Optional Syncle bucket filter — when set, the returned `items` are
+   * Optional Syncle bucket filter - when set, the returned `items` are
    * restricted to sets whose `availableBuckets` includes this tier.
    *
    * When this is set, we walk a BLOCK of `BUCKET_FILTER_PAGE_BLOCK`
@@ -450,7 +450,7 @@ export async function searchCatalogPage(opts: {
    *   logical page N → upstream pages [N*BLOCK, N*BLOCK+BLOCK-1]
    *
    * `hasMore` under filter reflects "is there a next BLOCK", not "is
-   * the current upstream sub-page full" — i.e. it's true iff the LAST
+   * the current upstream sub-page full" - i.e. it's true iff the LAST
    * sub-page we walked came back full at the upstream level.
    */
   bucket?: ChartMode;
@@ -522,7 +522,7 @@ export async function searchCatalogPage(opts: {
         items.push(item);
       }
       // Treat a 200-OK with zero raw rows as a definitive "no results"
-      // for THIS mirror — return immediately rather than falling
+      // for THIS mirror - return immediately rather than falling
       // through, so the UI can render an honest empty state instead of
       // pulling identical empty pages from the next two mirrors.
       const upstreamWasEmpty = sets.length === 0;
@@ -550,7 +550,7 @@ export async function searchCatalogPage(opts: {
  * Fetch ONE page of the no-query browse view.
  *
  * Mechanically identical to `searchCatalogPage` (mirror fan-out, dedupe,
- * 4K filter via `normalize`, hasMore heuristic) — but with no `q=` and
+ * 4K filter via `normalize`, hasMore heuristic) - but with no `q=` and
  * an explicit sort order baked in. Default `ranked_desc` matches the
  * host's most common intent when opening the browser ("show me what's
  * new"). Mirrors are tried in fixed order so pagination consistency
@@ -562,7 +562,7 @@ export async function browseCatalogPage(opts: {
   pageSize?: number;
   sort?: BrowseSort;
   /**
-   * Optional Syncle bucket filter — same semantics as
+   * Optional Syncle bucket filter - same semantics as
    * `searchCatalogPage.bucket`. When set, walks a BLOCK of upstream
    * pages per logical page so the post-filter slice is large enough
    * to actually fill the host's list.
@@ -691,7 +691,7 @@ function normalize(raw: any, source: string): CatalogItem | null {
   //
   // Field-name caveat: the modern osu! API v2 (and every mirror that
   // proxies it: nerinyan.moe, osu.direct, catboy.best) uses the
-  // PLURAL v2 names — `count_circles`, `count_sliders`,
+  // PLURAL v2 names - `count_circles`, `count_sliders`,
   // `count_spinners`. The legacy v1 API used the SINGULAR
   // `count_normal`, `count_slider`, `count_spinner`. We accept both
   // shapes (v2 first, v1 fallback) so any mirror's response normalizes
@@ -701,7 +701,7 @@ function normalize(raw: any, source: string): CatalogItem | null {
   // the field name fix).
   //
   // When a diff exposes neither count shape, `assignBucket` falls
-  // back to mapper-name classification (see the function's doc) —
+  // back to mapper-name classification (see the function's doc) -
   // strictly better than the previous behavior of dumping everything
   // into Easy, since the mapper's "Hard"/"Insane"/"Lunatic" naming is
   // a strong signal even without note counts.
@@ -717,8 +717,8 @@ function normalize(raw: any, source: string): CatalogItem | null {
     const spinners = Number(b?.count_spinners ?? b?.count_spinner ?? 0);
     const counts = circles + sliders + spinners;
     const dur = Number(b?.hit_length ?? b?.total_length ?? 0);
-    // We ALWAYS try to bucket — even when counts/duration are missing
-    // — because `assignBucket` handles the no-density case via the
+    // We ALWAYS try to bucket - even when counts/duration are missing
+    // - because `assignBucket` handles the no-density case via the
     // mapper name. We just pass `0` as nps in that fallback path,
     // which the function reads as "trust the name only".
     const nps =

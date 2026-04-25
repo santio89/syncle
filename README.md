@@ -2,7 +2,7 @@
 
 4K rhythm game. Random song. Endless retries.
 
-> **Status: v0.3** — single-player + multiplayer rooms (Socket.IO).
+> **Status: v0.3** - single-player + multiplayer rooms (Socket.IO).
 
 ## Stack
 
@@ -18,7 +18,7 @@ npm run dev
 
 Opens on http://localhost:3000. `npm run dev` runs Next.js + the
 Socket.IO server on the same port via a custom `tsx watch server.ts`
-— no separate compile step.
+- no separate compile step.
 
 For a production-style local run:
 
@@ -28,7 +28,7 @@ npm start
 ```
 
 The recommended deploy is **Vercel** (Next.js) + **Render** (Socket.IO
-service) — see `render.yaml` and `vercel.json` for the wiring.
+service) - see `render.yaml` and `vercel.json` for the wiring.
 
 ## Controls
 
@@ -47,32 +47,32 @@ service) — see `render.yaml` and `vercel.json` for the wiring.
 
 Up to 8 players race the same chart in real time. The flow is:
 
-1. **Create or join** — `/multi` opens the lobby; one player creates a
+1. **Create or join** - `/multi` opens the lobby; one player creates a
    room (gets a 4-letter code), the others join via the code or a
    shared link (`/multi/<code>`).
-2. **Pick a song** — the host rolls a random chart from the same osu!
-   mirrors solo uses; everyone else votes ready when they've finished
-   downloading + decoding it. While the loading screen is up
+2. **Pick a song** - the host rolls a random chart from the same
+   beatmap mirrors solo uses; everyone else votes ready when they've
+   finished downloading + decoding it. While the loading screen is up
    (`components/multi/LoadingScreen.tsx`), `MultiGame` runs an audio-
    graph + renderer pre-warm pass (see the `prep` effect in
    `components/multi/MultiGame.tsx`) so the first frame after the
    countdown is jank-free for every player, not just the host.
-3. **Race** — server sends a synchronized 3-2-1 countdown
+3. **Race** - server sends a synchronized 3-2-1 countdown
    (`PrestartOverlay`), then each client runs the chart locally and
    broadcasts judgment events. The server fans them out at a fixed
    tick (`lib/server/io.ts`, `emitSnapshot`), so per-player CPU is the
    same as solo.
-4. **Settle** — final scores show in `ResultsScreen`. Players can
+4. **Settle** - final scores show in `ResultsScreen`. Players can
    rematch the same chart or re-roll.
 
 Architecture notes:
 
 - **Transport**: Socket.IO 4, both Next.js and the WS server share
   the same port via `server.ts`. Rooms live in-memory on the server
-  (no DB) — eviction is timer-based, see `lib/server/io.ts`.
+  (no DB) - eviction is timer-based, see `lib/server/io.ts`.
 - **Authority model**: scores are computed client-side and the
   server simply fans them out. This is a casual party game, not a
-  leaderboard — the trade-off is honesty (a determined client can
+  leaderboard - the trade-off is honesty (a determined client can
   cheat) for ~zero server CPU and a tiny bandwidth budget.
 - **Disconnect handling**: a dropped client keeps their slot for
   60 s (`PLAYER_GRACE_MS` in `lib/server/io.ts`) so a refresh or
@@ -88,8 +88,8 @@ state machine is in `lib/server/io.ts`.
 
 ## Adding a fallback song
 
-The runtime picks a random ranked osu!mania 4K beatmap from the public
-mirrors on every refresh. Bundled `public/songs/<slug>/` folders are
-the offline fallback when every mirror is unreachable. See
+The runtime picks a random ranked 4K beatmap from public mirrors on
+every refresh. Bundled `public/songs/<slug>/` folders are the offline
+fallback when every mirror is unreachable. See
 [`public/songs/README.md`](./public/songs/README.md) for how to add
 one with `npm run fetch-song`.

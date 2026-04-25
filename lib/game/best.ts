@@ -1,11 +1,11 @@
 // Per-song, per-difficulty lifetime high-score tracking.
 //
-// Syncle is "random song every refresh, endless retries — push your best".
+// Syncle is "random song every refresh, endless retries - push your best".
 // Each (songId, mode) pair persists its own all-time best in localStorage.
 // Once a Firestore-backed leaderboard ships, the same shape will sync up
 // with the cloud copy (`saveBestIfHigher` becomes a `await sync()` call).
 //
-// Data is a tiny JSON blob — no PII, fully local. Readers tolerate any
+// Data is a tiny JSON blob - no PII, fully local. Readers tolerate any
 // shape; on a parse error we just treat it as "no best yet".
 
 import { ChartMode } from "./chart";
@@ -23,10 +23,10 @@ export interface RunBest {
   /**
    * Per-track aggregates updated on every finished run (not just on a new
    * best). Optional so older saved blobs that predate these fields still
-   * load — readers should `?? 0` / `?? at` accordingly.
+   * load - readers should `?? 0` / `?? at` accordingly.
    *
-   * `runs`         — total finished runs on this (song, mode) combo.
-   * `lastPlayedAt` — wall-clock timestamp (ms) of the most recent run.
+   * `runs`         - total finished runs on this (song, mode) combo.
+   * `lastPlayedAt` - wall-clock timestamp (ms) of the most recent run.
    */
   runs?: number;
   lastPlayedAt?: number;
@@ -60,7 +60,7 @@ export interface SaveResult {
 
 /**
  * Save `candidate` for `key`. The per-track aggregates (`runs`,
- * `lastPlayedAt`) are ALWAYS bumped — they reflect "you played this track
+ * `lastPlayedAt`) are ALWAYS bumped - they reflect "you played this track
  * again" regardless of whether you topped your high. The score-bearing
  * fields (`score`, `accuracy`, `maxCombo`, `at`) are only promoted when
  * the candidate actually beat the previous best.
@@ -90,7 +90,7 @@ export function saveBestIfHigher(
     try {
       window.localStorage.setItem(key, JSON.stringify(next));
     } catch {
-      /* storage full / disabled — best-effort only */
+      /* storage full / disabled - best-effort only */
     }
   }
   return { best: next, improved };

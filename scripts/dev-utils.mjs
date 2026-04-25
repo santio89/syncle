@@ -9,7 +9,7 @@ import net from "node:net";
 
 /**
  * Hosts to probe. Next binds dual-stack on Windows (::), so we have to make
- * sure the port is free on BOTH IPv4 and IPv6 — otherwise `EADDRINUSE`
+ * sure the port is free on BOTH IPv4 and IPv6 - otherwise `EADDRINUSE`
  * surprises us when we hand the port to Next.
  */
 const PROBE_HOSTS = ["0.0.0.0", "::"];

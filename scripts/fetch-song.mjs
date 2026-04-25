@@ -4,12 +4,12 @@
  * + the matching .osu chart, and drop them under public/songs/.
  *
  * Use this to add a new LOCAL FALLBACK song. The runtime now picks a fresh
- * random ranked mania chart from public mirrors on every page load — local
+ * random ranked mania chart from public mirrors on every page load - local
  * songs only kick in when every mirror is unreachable. After downloading,
  * register the song by adding an entry to `LOCAL_FALLBACKS` in
  * `lib/game/chart.ts`.
  *
- * No external deps — uses fetch + a tiny built-in ZIP reader powered by
+ * No external deps - uses fetch + a tiny built-in ZIP reader powered by
  * node:zlib. The .osz format is just a renamed ZIP.
  *
  * Usage:
@@ -21,9 +21,9 @@
  *   npm run fetch-song -- 552674
  *   npm run fetch-song -- 552674 "Hard"
  *
- * Mirrors used (in order — falls through on failure):
+ * Mirrors used (in order - falls through on failure):
  *   - https://api.nerinyan.moe   (modern, fast, has search)
- *   - https://catboy.best         (Mino — older but very stable)
+ *   - https://catboy.best         (Mino - older but very stable)
  *
  * Both are public re-hosts of the official osu! beatmaps. No login needed,
  * no client install. They serve the exact same .osz bytes osu! does.
@@ -80,7 +80,7 @@ function readZip(buf) {
   return {
     names: () => entries.map((e) => e.name),
     read(name) {
-      // Allow case-insensitive lookups — AudioFilename in .osu is sometimes
+      // Allow case-insensitive lookups - AudioFilename in .osu is sometimes
       // a different case from the actual filename in the archive.
       const e = entries.find((x) => x.name === name)
             ?? entries.find((x) => x.name.toLowerCase() === name.toLowerCase());
@@ -101,7 +101,7 @@ function readZip(buf) {
 }
 
 // ---------------------------------------------------------------------------
-// .osu metadata extraction (no chart parsing — we just need the headers).
+// .osu metadata extraction (no chart parsing - we just need the headers).
 // ---------------------------------------------------------------------------
 
 function parseOsuMeta(text) {
@@ -157,7 +157,7 @@ async function searchMirror(query) {
  * (NeriNyan in particular goes spotty under load) doesn't hang us forever.
  */
 async function downloadOsz(id) {
-  // catboy.best first — measured fastest + most reliable as of testing.
+  // catboy.best first - measured fastest + most reliable as of testing.
   // The trailing "n" on catboy = "no video" variant, much smaller download.
   // NeriNyan as fallback (it can intermittently return 0-byte responses).
   const urls = [
@@ -179,7 +179,7 @@ async function downloadOsz(id) {
       // Sanity check: a real .osz is at minimum ~50KB (audio dominates).
       // Some mirrors return 200 with an empty body when an asset is missing.
       if (buf.length < 10_000) {
-        console.log(`empty (${buf.length} bytes) — skipping`);
+        console.log(`empty (${buf.length} bytes) - skipping`);
         continue;
       }
       console.log(`${(buf.length / 1024 / 1024).toFixed(1)} MB ok`);
@@ -212,7 +212,7 @@ async function cmdSearch(query) {
     if (fourK.length === 0) continue;
     printed++;
     console.log(
-      `  [${String(s.id).padStart(7)}]  ${s.artist} — ${s.title}`,
+      `  [${String(s.id).padStart(7)}]  ${s.artist} - ${s.title}`,
     );
     for (const b of fourK.slice(0, 4)) {
       const stars = (b.difficulty_rating ?? 0).toFixed(2);
@@ -220,7 +220,7 @@ async function cmdSearch(query) {
     }
   }
   if (printed === 0) {
-    console.log("  (no 4K mania charts in the top results — try a different query)");
+    console.log("  (no 4K mania charts in the top results - try a different query)");
     return;
   }
   console.log(`\nInstall one:  npm run fetch-song -- <id> [diff-name]`);
@@ -287,7 +287,7 @@ async function cmdInstall(id, diffSubstr) {
   writeFileSync(join(outDir, chartOut), zip.read(pick.name));
 
   console.log(`\n✓ Installed: public/songs/${slug}/`);
-  console.log(`  ${pick.meta.artist} — ${pick.meta.title}  [${pick.meta.version}]`);
+  console.log(`  ${pick.meta.artist} - ${pick.meta.title}  [${pick.meta.version}]`);
   console.log(`  ${audioOut}  (${(audioBytes.length / 1024 / 1024).toFixed(1)} MB)`);
   console.log(`  ${chartOut}  (${pick.text.length} bytes)\n`);
 
@@ -310,7 +310,7 @@ async function cmdInstall(id, diffSubstr) {
       ).replace(/\n/g, "\n  "),
   );
   console.log(
-    "\nReminder: random remote picks are the default — local fallbacks only " +
+    "\nReminder: random remote picks are the default - local fallbacks only " +
       "kick in when every public mirror is unreachable.\n",
   );
 }

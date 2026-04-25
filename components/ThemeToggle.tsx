@@ -7,7 +7,7 @@ import { useTheme } from "./ThemeProvider";
  * the crossfade + rotate using --ease-theme so the two states are perfectly
  * in sync with the page-wide color transition triggered by the provider.
  *
- * The visible icon is whichever theme you'd switch TO — clicking on the sun
+ * The visible icon is whichever theme you'd switch TO - clicking on the sun
  * goes to dark, clicking on the moon goes to light. This is the convention
  * used by GitHub, Vercel, Linear, etc.
  */
@@ -27,11 +27,11 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
       // distinct beats instead of mashing onto one row.
       data-tooltip={`Switch to\n${next} mode`}
     >
-      {/* Sun — visible when theme === light (i.e. clicking switches AWAY from sun → dark) */}
+      {/* Sun - visible when theme === light (i.e. clicking switches AWAY from sun → dark) */}
       <span className="theme-toggle__icon theme-toggle__icon--sun" aria-hidden="true">
         <SunIcon />
       </span>
-      {/* Moon — visible when theme === dark */}
+      {/* Moon - visible when theme === dark */}
       <span className="theme-toggle__icon theme-toggle__icon--moon" aria-hidden="true">
         <MoonIcon />
       </span>
@@ -60,7 +60,7 @@ function SunIcon({ size = 19 }: { size?: number }) {
       aria-hidden="true"
     >
       <circle cx="12" cy="12" r="4" />
-      {/* Eight rays at 45° intervals — gives the icon a more even silhouette
+      {/* Eight rays at 45° intervals - gives the icon a more even silhouette
        *  than the typical four-ray sun and reads better at 18px. */}
       <line x1="12" y1="2"  x2="12" y2="5" />
       <line x1="12" y1="19" x2="12" y2="22" />

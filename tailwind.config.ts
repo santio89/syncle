@@ -5,7 +5,7 @@ import type { Config } from "tailwindcss";
  * (e.g. `text-bone-50/70`) automatically swaps when [data-theme] flips.
  *
  * The `<alpha-value>` token is Tailwind's substitution for the alpha
- * modifier — `text-bone-50/70` becomes `rgb(var(--fg) / 0.7)`.
+ * modifier - `text-bone-50/70` becomes `rgb(var(--fg) / 0.7)`.
  *
  * Class-name semantics (kept stable so we didn't have to touch every JSX):
  *   bone-50  → primary foreground (text + borders on the page background)
@@ -29,7 +29,7 @@ const config: Config = {
           900: cssVar("--bg"),
           800: cssVar("--bg-2"),
           700: cssVar("--bg-3"),
-          // Static neutrals (legacy shades, not theme-swapped — only used
+          // Static neutrals (legacy shades, not theme-swapped - only used
           // in a couple of isolated places that benefit from a fixed tone).
           600: "#181c25",
           500: "#252a36",

@@ -10,7 +10,7 @@ import {
 } from "react";
 
 /**
- * Theme name. `system` isn't exposed yet — could be added later by reading
+ * Theme name. `system` isn't exposed yet - could be added later by reading
  * `prefers-color-scheme` and listening to its `change` event. For now the
  * toggle is binary so the UI stays predictable.
  */
@@ -21,7 +21,7 @@ const DEFAULT_THEME: Theme = "dark";
 /**
  * The class added to <html> for the duration of a theme swap. Scoped here
  * (not in `*` selector globally) so transitions don't fire on every hover
- * or first paint — only when the user actually toggles. Matches a class
+ * or first paint - only when the user actually toggles. Matches a class
  * defined in globals.css.
  */
 const TRANSITION_CLASS = "theme-transitioning";
@@ -49,7 +49,7 @@ function readStoredTheme(): Theme {
     const v = window.localStorage.getItem(STORAGE_KEY);
     if (v === "light" || v === "dark") return v;
   } catch {
-    /* localStorage blocked (Safari private mode etc.) — fall through. */
+    /* localStorage blocked (Safari private mode etc.) - fall through. */
   }
   return DEFAULT_THEME;
 }
@@ -58,7 +58,7 @@ function readStoredTheme(): Theme {
  * Provider mounted at the root. Reads the persisted theme on mount, syncs
  * the `data-theme` attribute on <html>, and exposes a context API.
  *
- * The initial paint is handled by the inline script in app/layout.tsx —
+ * The initial paint is handled by the inline script in app/layout.tsx -
  * by the time React hydrates, <html> already has the right attribute.
  */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -89,7 +89,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     try {
       window.localStorage.setItem(STORAGE_KEY, next);
     } catch {
-      /* ignore — we still update in-memory state */
+      /* ignore - we still update in-memory state */
     }
   }, []);
 

@@ -87,7 +87,7 @@ export function ChatPanel({
       onSend(text);
       setDraft("");
       // Sending a message snaps us back to live, even if we'd been
-      // reading history — most chat apps behave the same way and it's
+      // reading history - most chat apps behave the same way and it's
       // the obvious user intent (you spoke; you want to see the reply).
       stuckBottomRef.current = true;
     },
@@ -140,7 +140,7 @@ export function ChatPanel({
           ░ Chat
         </p>
         <span className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/40">
-          {chat.length === 0 ? "—" : `${chat.length} ${chat.length === 1 ? "msg" : "msgs"}`}
+          {chat.length === 0 ? "-" : `${chat.length} ${chat.length === 1 ? "msg" : "msgs"}`}
         </span>
       </div>
 
@@ -152,7 +152,7 @@ export function ChatPanel({
         // fixed `h-[36rem]`), but on lg+ the wrapper itself is
         // flex-sized and the parent column may be short enough
         // (e.g. 720p) that 8rem of body PLUS chrome PLUS input
-        // would overflow the allotted slice — which would push the
+        // would overflow the allotted slice - which would push the
         // input below the fold and make it unclickable, the exact
         // bug we're fixing. `lg:min-h-[3rem]` keeps the area large
         // enough to show ≥ 1 message comfortably while letting the

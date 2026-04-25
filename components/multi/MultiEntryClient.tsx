@@ -355,7 +355,7 @@ function CreatePane({
 }: {
   roomName: string;
   onRoomName: (n: string) => void;
-  /** Live display name from the parent — used to compose a friendly
+  /** Live display name from the parent - used to compose a friendly
    *  placeholder for the optional room-name field. */
   displayName: string;
   visibility: "public" | "private";
@@ -708,7 +708,7 @@ function PublicRoomRow({
     : full
       ? "Room is full"
       : inProgress
-        ? `Match in progress — you'll join the lobby and wait for the next round`
+        ? `Match in progress - you'll join the lobby and wait for the next round`
         : "Join this room";
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-2 border-bone-50/15 px-3 py-2 transition-colors hover:border-accent/60">

@@ -1,7 +1,7 @@
 /**
  * Wire protocol shared by the Socket.IO server (`server.mjs` + `lib/server/`)
- * and every browser client. Keep this file 100% type-only — no runtime code,
- * no Node-only imports — so it can be bundled into the browser.
+ * and every browser client. Keep this file 100% type-only - no runtime code,
+ * no Node-only imports - so it can be bundled into the browser.
  *
  * Naming conventions:
  *   - `client:*`  → fired by a browser, handled on the server
@@ -24,7 +24,7 @@ export type RoomPhase = "lobby" | "loading" | "countdown" | "playing" | "results
 /**
  * Room visibility:
  *   - "public":  shows up in the room browser, anyone with the URL can join
- *   - "private": code-only — never appears in the public listing
+ *   - "private": code-only - never appears in the public listing
  *
  * Both flavors still use the same 6-char code internally; the distinction
  * is purely about discoverability. Mirrors the public/private convention
@@ -40,7 +40,7 @@ export interface SongRef {
   source: string;
   /**
    * Track duration in WHOLE seconds. Optional because the field was
-   * added after launch — old servers, manually-crafted SongRefs, and
+   * added after launch - old servers, manually-crafted SongRefs, and
    * cached snapshots may omit it. Sourced from the longest 4K mania
    * difficulty's `total_length` in the search-mirror response, which
    * matches what the audio engine reports once the .osz is decoded.
@@ -99,7 +99,7 @@ export interface PublicRoomEntry {
   playerCount: number;
   maxPlayers: number;
   phase: RoomPhase;
-  /** Title — artist of the currently selected song, if any. */
+  /** Title - artist of the currently selected song, if any. */
   selectedSong: string | null;
   createdAt: number;
 }
@@ -149,7 +149,7 @@ export interface PlayerSnapshot {
    * they can see how many players are willing to start; the server
    * does NOT auto-start on all-ready (that would surprise the host
    * mid-conversation). The host always has to click "Start match"
-   * themselves — see `setLobbyReady` in `lib/server/io.ts` for the
+   * themselves - see `setLobbyReady` in `lib/server/io.ts` for the
    * deliberate no-op around auto-start.
    */
   lobbyReady: boolean;
@@ -183,7 +183,7 @@ export interface PlayerSnapshot {
    * is in lobby; the flag is only meaningful during a match). Set
    * to `true` for every connected player on `startLoading`. Reset
    * to `false` for everyone on `transitionToLobby`. Survives
-   * disconnect/reconnect inside the slot TTL — that's how a
+   * disconnect/reconnect inside the slot TTL - that's how a
    * mid-song refresh continues the run instead of dropping the
    * player into the lobby.
    */
@@ -194,7 +194,7 @@ export interface RoomSnapshot {
   code: string;
   /** Host-chosen room title shown in the browser + lobby header. */
   name: string;
-  /** Discoverability — see RoomVisibility doc. */
+  /** Discoverability - see RoomVisibility doc. */
   visibility: RoomVisibility;
   hostId: string;
   phase: RoomPhase;
@@ -225,7 +225,7 @@ export interface RoomSnapshot {
    * while the match is running. Set to `Date.now()` by `host:pauseMatch`
    * during the `playing` phase; cleared by `host:resumeMatch`. Drives
    * the per-client `audio.pause()` / `audio.resume()` toggle and the
-   * room-wide "PAUSED — waiting for host" overlay; also frozen on the
+   * room-wide "PAUSED - waiting for host" overlay; also frozen on the
    * scoreboard so peer scores don't churn while play is suspended.
    */
   pausedAt: number | null;
@@ -233,7 +233,7 @@ export interface RoomSnapshot {
    * Wall-clock ms when the lobby pre-start countdown finishes (and the
    * server flips into the loading phase). `null` whenever no start is
    * queued. Set by `host:start` for a brief 3s "starting in 3, 2, 1…"
-   * grace window — every client renders a centered countdown overlay
+   * grace window - every client renders a centered countdown overlay
    * during that window, the host gets a Cancel button, and the actual
    * `startLoading` only fires once the timer elapses without a
    * `host:cancelStart`. Reset to `null` on cancel, on the natural
@@ -243,6 +243,30 @@ export interface RoomSnapshot {
   players: PlayerSnapshot[];
   /** Rolling chat backlog (server-trimmed to MAX_CHAT_HISTORY). */
   chat: ChatMessage[];
+  /**
+   * Match-wide Strict Inputs (anti-mash) flag. Host-controlled - only
+   * the host can flip it via `host:setStrictInputs`, and the value
+   * applies uniformly to every player in the room. When ON, an empty
+   * key press in a lane that has NO unjudged note within ±SPAM_GRACE
+   * silently breaks the player's combo (no MISS popup, no song wobble
+   * - the dropping combo number is the only feedback). Honest mistimes
+   * near a real note remain unpenalized either way.
+   *
+   * Why match-wide rather than per-player:
+   *   - Multiplayer is a head-to-head competitive surface; if one
+   *     player can mash with no penalty while another self-imposes
+   *     Strict, the matchup isn't apples-to-apples. Hosts control the
+   *     ruleset for fairness.
+   *   - Mirrors how competitive rhythm games (osu!mania,
+   *     beatmania IIDX) treat input policy as a room-wide setting,
+   *     not a per-player toggle.
+   *
+   * Defaults to `true` server-side (matching the SP default) so a
+   * fresh room is anti-mash by default. Optional on the wire for
+   * backwards-compat with snapshots emitted before this field landed
+   * - clients should treat `undefined` as `true`.
+   */
+  strictInputs?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -284,7 +308,7 @@ export interface ClientToServerEvents {
     ack: (res: AckResult<{ code: string }>) => void,
   ) => void;
 
-  /** Hard leave — server removes the player and broadcasts. */
+  /** Hard leave - server removes the player and broadcasts. */
   "room:leave": () => void;
 
   "room:setName": (payload: { name: string }) => void;
@@ -292,7 +316,7 @@ export interface ClientToServerEvents {
   /**
    * Toggle this player's lobby-ready flag. Allowed in the lobby phase
    * only (silently ignored otherwise). Purely advisory: the server
-   * does NOT auto-start on all-ready — the host always clicks "Start
+   * does NOT auto-start on all-ready - the host always clicks "Start
    * match" themselves. See `PlayerSnapshot.lobbyReady` for the
    * rationale (we intentionally don't surprise the host mid-chat).
    */
@@ -302,7 +326,7 @@ export interface ClientToServerEvents {
    * Any player can send everyone back to the lobby from the results
    * screen. The server transitions the whole room and the requester
    * stays in their seat. Players who've already left (router push to
-   * /) are evicted on disconnect grace as usual. Idempotent — multiple
+   * /) are evicted on disconnect grace as usual. Idempotent - multiple
    * clicks during the same results phase produce a single transition.
    */
   "room:returnToLobby": () => void;
@@ -312,7 +336,7 @@ export interface ClientToServerEvents {
    * match. Server flips `players[me].inMatch = false`, keeps the
    * player in the room, and broadcasts a fresh snapshot. The client
    * re-routes from the match UI to the Lobby (with a "match in
-   * progress" indicator) on the next snapshot. Idempotent — calling
+   * progress" indicator) on the next snapshot. Idempotent - calling
    * during lobby/results phases or when already out of the match
    * silently no-ops. Hosts can't leave the match this way; they
    * have to use `host:cancelMatch` to end it for everyone.
@@ -359,6 +383,15 @@ export interface ClientToServerEvents {
    */
   "host:setVisibility": (payload: { visibility: RoomVisibility }) => void;
 
+  /**
+   * Host-only: flip the room's match-wide Strict Inputs (anti-mash)
+   * setting. Validated lobby-phase only server-side so the policy
+   * can't be moved out from under players mid-match. Broadcasts a
+   * fresh snapshot so every client picks up the new value before the
+   * next round starts. No-op when the value already matches.
+   */
+  "host:setStrictInputs": (payload: { strictInputs: boolean }) => void;
+
   /** Host-only: kick a player out of the room. Cannot kick yourself. */
   "host:kick": (payload: { sessionId: string }) => void;
 
@@ -377,7 +410,7 @@ export interface ClientToServerEvents {
    * Distinct from `host:catalogRequest` (one-shot random discovery)
    * and `host:catalogSearch` (text query). Use this to walk the
    * full ranked-mania pool page-by-page with an explicit sort
-   * order — the default in the lobby UI when the search input is
+   * order - the default in the lobby UI when the search input is
    * empty.
    *
    * Server-cached per room with the same 5-min TTL as search; pass
@@ -428,7 +461,7 @@ export interface ClientToServerEvents {
    * session and a casual host doesn't burn the upstream mirrors with
    * duplicate traffic.
    *
-   * `hasMore` is a heuristic ("upstream returned a full page") — see
+   * `hasMore` is a heuristic ("upstream returned a full page") - see
    * SearchCatalogResult on the server for why it's not exact. UI should
    * show Next on `true` and disable on `false` rather than treating it
    * as a guarantee.
@@ -438,7 +471,7 @@ export interface ClientToServerEvents {
       query: string;
       page: number;
       /**
-       * Optional Syncle bucket filter — same semantics as
+       * Optional Syncle bucket filter - same semantics as
        * `host:catalogBrowse.bucket`. Server post-filters the search
        * results page to sets that include this tier. Undefined =
        * unfiltered.
@@ -470,7 +503,7 @@ export interface ClientToServerEvents {
 
   /**
    * Host-only: queue the match start. The server does NOT flip into
-   * the loading phase immediately — it stamps `RoomSnapshot.prestartEndsAt`
+   * the loading phase immediately - it stamps `RoomSnapshot.prestartEndsAt`
    * with `Date.now() + PRESTART_COUNTDOWN_MS`, broadcasts a snapshot,
    * and schedules the actual `startLoading` to fire when that timestamp
    * elapses. During the window every client renders a centered "starting
@@ -520,7 +553,7 @@ export interface ClientToServerEvents {
   /**
    * Host-only: end an in-progress (playing / countdown / paused)
    * match early and return everyone to the lobby. Unlike the
-   * lobby/results back-to-room flow, this is destructive — no
+   * lobby/results back-to-room flow, this is destructive - no
    * standings are recorded. Used as the "I made a mistake / wrong
    * chart / need to leave" escape hatch from the host's pause menu.
    */
@@ -563,7 +596,7 @@ export interface ServerToClientEvents {
   /** Cheap broadcast used at high tick rates (5 Hz scoreboard updates). */
   "room:scoreboard": (payload: ScoreboardEntry[]) => void;
 
-  /** Phase transitions broken out for ergonomics — clients can also infer
+  /** Phase transitions broken out for ergonomics - clients can also infer
    *  these from snapshot.phase changes, but explicit events are nicer. */
   "phase:lobby": () => void;
   "phase:loading": (payload: {
@@ -608,7 +641,7 @@ export interface ServerToClientEvents {
   "chat:message": (payload: ChatMessage) => void;
 
   /**
-   * Hard kick — the kicked player gets this then their socket leaves
+   * Hard kick - the kicked player gets this then their socket leaves
    * the room. Lets the client show a polite "You were kicked from the
    * room" splash before redirecting, instead of looking like a crash.
    */
@@ -663,7 +696,7 @@ export const MAX_PLAYERS_PER_ROOM = 50;
 export const NAME_MAX_LEN = 20;
 /** Room display name (shown in browser + lobby header). */
 export const ROOM_NAME_MAX_LEN = 40;
-/** Single chat message length cap. Tuned to 240 — enough for a sentence
+/** Single chat message length cap. Tuned to 240 - enough for a sentence
  *  or short reaction without becoming a wall of text in the panel. */
 export const CHAT_MAX_LEN = 240;
 /** Server keeps the last N chat messages per room and includes them in
@@ -680,7 +713,7 @@ export const CHAT_RATE_WINDOW_MS = 8_000;
  * per ~200 ms), so a 100 ms floor still passes legitimate traffic with
  * jitter headroom while silently dropping a malicious flood that would
  * otherwise CPU-tax `applyScoreUpdate` and the per-room scoreboard
- * scheduler. Dropped packets are NOT acked or echoed — the spammer just
+ * scheduler. Dropped packets are NOT acked or echoed - the spammer just
  * sees their writes fail to land.
  */
 export const SCORE_UPDATE_MIN_INTERVAL_MS = 100;
@@ -694,12 +727,12 @@ export const SCORE_UPDATE_MIN_INTERVAL_MS = 100;
  * begins, before the 3 / 2 / 1 numbers. Three seconds gives the
  * player time to register that the match is starting, shift focus
  * from the lobby UI to the canvas, and settle into a "hands on the
- * keys" stance — all before any cognitive load from the numbers.
+ * keys" stance - all before any cognitive load from the numbers.
  */
 export const MATCH_INTRO_PROMPT_MS = 3_000;
 /**
  * Visible "3 / 2 / 1" overlay duration. The countdown overlay is what
- * the player actually reads — it should match what they see in solo
+ * the player actually reads - it should match what they see in solo
  * (3 s) so the muscle memory carries over.
  */
 export const MATCH_OVERLAY_MS = 3_000;
@@ -712,7 +745,7 @@ export const MATCH_OVERLAY_MS = 3_000;
 export const MATCH_LEAD_IN_MS = 2_000;
 /**
  * Total wall-clock delay between the server entering the `countdown`
- * phase and the audio actually playing — i.e. how far in the future
+ * phase and the audio actually playing - i.e. how far in the future
  * `room.startsAt` is set. Sum of every visible / silent stage:
  *
  *   "Get ready..."  →  3 / 2 / 1  →  silent lead-in  →  audio
@@ -731,8 +764,8 @@ export const MATCH_COUNTDOWN_LEAD_MS =
  * GUARANTEE a results screen even if a player's `client:finished` event
  * never arrives (chart load failure, frozen tab, lost websocket frame,
  * client crashed mid-song, etc.). Without this grace the room would
- * stay stuck in "playing" forever and nobody — not even players who
- * cleanly finished — would ever see their final standings.
+ * stay stuck in "playing" forever and nobody - not even players who
+ * cleanly finished - would ever see their final standings.
  *
  * 12 s is the budget for: last-note judgment window (~1 s) + a generous
  * round-trip margin for the slowest connected client to send their
@@ -771,7 +804,7 @@ export function sanitizeName(raw: unknown): string {
 }
 
 /**
- * Same hygiene as sanitizeName but with a longer cap — room titles need
+ * Same hygiene as sanitizeName but with a longer cap - room titles need
  * room to breathe ("Friday night brain melt" is 22 chars and still
  * tight). Empty string after sanitization → caller picks a fallback
  * (e.g. "$NICKNAME's room").

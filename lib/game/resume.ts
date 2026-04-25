@@ -1,40 +1,40 @@
 /**
- * Solo run resume state — sessionStorage shim that lets a player who
+ * Solo run resume state - sessionStorage shim that lets a player who
  * accidentally refreshes the page mid-song pick the same song back up
  * with one click instead of having to roll a fresh random chart.
  *
  * Scope decisions:
  *
- *   - **Session, not local** — `sessionStorage` (not `localStorage`)
+ *   - **Session, not local** - `sessionStorage` (not `localStorage`)
  *     so the resume state goes away when the player closes the tab
  *     entirely. We only want to recover from accidental refreshes /
  *     navigation away within the same browsing session; carrying a
  *     "you were playing X yesterday" prompt across days would be
  *     noise.
  *
- *   - **Song + mode + savedAt only** — we deliberately do NOT
+ *   - **Song + mode + savedAt only** - we deliberately do NOT
  *     persist the player's mid-song stats (score, combo, hits) or
  *     the audio offset. Restoring those faithfully would require
  *     reconstructing the GameState's internal cursor, replaying
  *     hold-note tail logic, and seeking the audio buffer to a
- *     half-played frame — each of which has subtle ways to drift
+ *     half-played frame - each of which has subtle ways to drift
  *     out of sync that are very hard to debug.
  *
  *     Instead we save just enough to reload the SAME song at the
  *     SAME difficulty from the start. The player gets a one-click
  *     re-attempt instead of being kicked back to a brand-new
- *     random song. That's the actual UX win — preserving the run
+ *     random song. That's the actual UX win - preserving the run
  *     state to the note is a stretch goal we explicitly punt on
  *     to keep the implementation simple and bug-free.
  *
- *   - **TTL** — 30 minutes. Long enough to cover an accidental
+ *   - **TTL** - 30 minutes. Long enough to cover an accidental
  *     refresh, a quick brb, or a transient network issue; short
  *     enough that a player who comes back hours later isn't
  *     prompted with a stale offer. Saved-at timestamp lets us
  *     filter without polluting `sessionStorage` with a separate
  *     expiration cron.
  *
- *   - **Multiplayer, not solo** — multiplayer rejoin is handled
+ *   - **Multiplayer, not solo** - multiplayer rejoin is handled
  *     server-side via the session TTL inside the room registry
  *     (a refreshed player reattaches to their slot and the page's
  *     loading effect re-fetches the chart on its own). This file
@@ -54,7 +54,7 @@ const KEY = "syncle.solo.resume";
 
 /**
  * Bumped whenever the on-disk shape changes. Loader returns null
- * for any payload whose version doesn't match — stale records get
+ * for any payload whose version doesn't match - stale records get
  * silently discarded instead of crashing the resume UI.
  */
 const VERSION = 1;
@@ -71,7 +71,7 @@ export interface SoloResumeState {
   version: typeof VERSION;
   /**
    * Beatmapset ID of the chart that was being played. Resolved via
-   * `loadSongById` on resume — bypasses the random `loadSong`
+   * `loadSongById` on resume - bypasses the random `loadSong`
    * pool so we always come back to THIS song.
    */
   beatmapsetId: number;
@@ -79,7 +79,7 @@ export interface SoloResumeState {
   mode: ChartMode;
   /**
    * Display-only metadata so the resume banner can show
-   * "Resume <artist> — <title>?" without first re-fetching the
+   * "Resume <artist> - <title>?" without first re-fetching the
    * chart. Saved at the same time as the run starts so it's
    * cheap to keep around.
    */
@@ -101,10 +101,10 @@ function hasStorage(): boolean {
 
 /**
  * Persist the resume state. Called from inside the play loop on a
- * coarse cadence (~once per second is plenty — the saved record
+ * coarse cadence (~once per second is plenty - the saved record
  * carries no time-sensitive data so high-frequency writes are
  * pure overhead). Returns silently on storage failure (quota
- * exceeded, private mode restrictions, etc.) — resume is a
+ * exceeded, private mode restrictions, etc.) - resume is a
  * convenience feature, not a correctness requirement, and a
  * crashed write should never crash the game.
  */
@@ -174,7 +174,7 @@ export function loadSoloResume(): SoloResumeState | null {
  * Drop the resume record. Called when the player explicitly
  * dismisses the resume prompt, when they finish a run cleanly
  * (no point offering to resume a song they already completed),
- * or when they "Give up" (same reasoning — they actively chose
+ * or when they "Give up" (same reasoning - they actively chose
  * to exit the run).
  */
 export function clearSoloResume(): void {

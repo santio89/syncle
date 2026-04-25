@@ -14,17 +14,17 @@ import { useCallback, useRef, useState } from "react";
  *   - Pointer Events cover mouse + touch + pen, so the same component
  *     handles desktop click, phone tap, stylus, and hybrid touchscreen
  *     laptops. `pressLane` / `releaseLane` are the SAME callbacks the
- *     keyboard handler invokes — i.e. clicking a column is exactly
+ *     keyboard handler invokes - i.e. clicking a column is exactly
  *     equivalent to a keypress, including hold-note semantics.
  *
- * Why the per-pointer lane map (`pointerLaneRef`) — multi-touch correctness:
+ * Why the per-pointer lane map (`pointerLaneRef`) - multi-touch correctness:
  *   We track which lane each pointerId pressed. On pointerup/cancel/leave
  *   we look the lane back up by pointerId and release THAT specific lane.
  *   Without the map, a finger that drifts across columns or a browser that
  *   loses pointer capture would release the wrong lane, leaving a hold
  *   note stranded as "still held" forever. The map is also what guarantees
  *   that touching lane 1 with one finger and lane 3 with another only
- *   highlights / releases each lane independently — the fix for the
+ *   highlights / releases each lane independently - the fix for the
  *   "all lanes light up at once" bug some browsers exhibited with the
  *   previous CSS `:active`-driven highlight (multi-touch + WebKit
  *   sometimes propagates `:active` across siblings until every finger
@@ -61,7 +61,7 @@ export default function TouchLanes({
   const colors = ["#ff3b6b", "#ffd23f", "#3dff8a", "#3da9ff"];
 
   // Which lanes are currently held. Drives the React-controlled
-  // highlight tint — replaces the old CSS `:active` approach which
+  // highlight tint - replaces the old CSS `:active` approach which
   // misbehaved across siblings on multi-touch in WebKit.
   const [pressed, setPressed] = useState<boolean[]>([
     false,
@@ -79,7 +79,7 @@ export default function TouchLanes({
 
   const press = useCallback(
     (lane: number, pointerId: number, target: HTMLElement) => {
-      // If this pointer is already mapped (rare — repeated pointerdown
+      // If this pointer is already mapped (rare - repeated pointerdown
       // without an intervening up), release the old lane first to keep
       // the engine state honest.
       const prev = pointerLaneRef.current.get(pointerId);
@@ -151,7 +151,7 @@ export default function TouchLanes({
             role="button"
             aria-label={`Lane ${lane + 1}`}
             // tabIndex omitted so the lanes never enter the keyboard
-            // focus order — they're a touch / click affordance, not a
+            // focus order - they're a touch / click affordance, not a
             // keyboard one (the keys D/F/J/K and arrows are the
             // keyboard contract for lane input).
             className="pointer-events-auto relative h-full w-full border-t-2"

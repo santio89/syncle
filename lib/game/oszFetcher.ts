@@ -6,7 +6,7 @@
  * GitHub Release. The same bytes the official osu! game would download are
  * pulled from a public mirror, unzipped in-memory in the user's browser,
  * the 4K mania chart is extracted, and the audio is handed off to the
- * AudioEngine as raw bytes — no network roundtrip back to our origin.
+ * AudioEngine as raw bytes - no network roundtrip back to our origin.
  *
  * Why it's safe-ish: every mirror we use sets `Access-Control-Allow-Origin: *`
  * and does not require auth. We try them in order and fail over silently.
@@ -34,9 +34,9 @@ export interface OszMeta {
 }
 
 export interface ExtractedSong {
-  /** The .osu chart text — feed straight into `parseOsu()`. */
+  /** The .osu chart text - feed straight into `parseOsu()`. */
   chartText: string;
-  /** Raw audio bytes — feed into `AudioEngine.loadFromBytes()`. */
+  /** Raw audio bytes - feed into `AudioEngine.loadFromBytes()`. */
   audioBytes: ArrayBuffer;
   /** Extracted metadata so the UI can show "what just got picked". */
   meta: OszMeta;
@@ -50,7 +50,7 @@ export interface ExtractedSong {
 export interface ExtractedChart {
   /** Original `.osu` filename inside the zip (for debugging). */
   name: string;
-  /** Raw chart text — feed straight into `parseOsu()`. */
+  /** Raw chart text - feed straight into `parseOsu()`. */
   chartText: string;
   /** Headers parsed from the chart text. */
   meta: OszMeta;
@@ -63,7 +63,7 @@ export interface ExtractedChart {
  */
 export interface ExtractedSongFull {
   charts: ExtractedChart[];
-  /** Raw audio bytes — feed into AudioEngine.loadFromBytes. */
+  /** Raw audio bytes - feed into AudioEngine.loadFromBytes. */
   audioBytes: ArrayBuffer;
   /** Filename of the audio file we extracted from the zip. */
   audioName: string;
@@ -210,7 +210,7 @@ function readZip(buf: ArrayBuffer): ZipReader {
 /**
  * Inflate a raw DEFLATE stream using the built-in DecompressionStream API.
  * Available in all current browsers (Chrome 80+, Firefox 113+, Safari 16.4+).
- * Zero dependencies — no fflate, no jszip.
+ * Zero dependencies - no fflate, no jszip.
  */
 async function inflateRaw(deflated: Uint8Array): Promise<Uint8Array> {
   const ds = new DecompressionStream("deflate-raw");
@@ -220,7 +220,7 @@ async function inflateRaw(deflated: Uint8Array): Promise<Uint8Array> {
 }
 
 // ---------------------------------------------------------------------------
-// .osu metadata extraction (just headers — we don't parse the chart here)
+// .osu metadata extraction (just headers - we don't parse the chart here)
 // ---------------------------------------------------------------------------
 
 function parseOsuMeta(text: string): OszMeta {
@@ -258,7 +258,7 @@ function parseOsuMeta(text: string): OszMeta {
  * under a known property) of beatmapset objects with `id` + `beatmaps[]`.
  *
  * We try them in order. For randomness we hit a random page within a wide
- * window — page * pageSize ≈ how many ranked-mania sets we'll roll across.
+ * window - page * pageSize ≈ how many ranked-mania sets we'll roll across.
  */
 const SEARCH_SOURCES: Array<{
   name: string;
@@ -281,7 +281,7 @@ const SEARCH_SOURCES: Array<{
   },
   {
     // catboy.best exposes the same osu!-v2 response shape as nerinyan,
-    // and we already use it as a download mirror — adding it here gives
+    // and we already use it as a download mirror - adding it here gives
     // search a 3rd anonymous CORS-enabled source for free, with zero
     // schema work (the `pick.id`/`beatmaps[]`/`status` extraction below
     // applies unchanged).
@@ -303,7 +303,7 @@ const SEARCH_TIMEOUT_MS = 8_000;
 
 export interface RandomBeatmapPick {
   beatmapsetId: number;
-  /** Loose hint — actual title comes from the parsed .osu later. */
+  /** Loose hint - actual title comes from the parsed .osu later. */
   title?: string;
   artist?: string;
   /**
@@ -315,7 +315,7 @@ export interface RandomBeatmapPick {
   /**
    * Beatmapset moderation status: "ranked" | "loved" | "qualified" |
    * "approved" | "graveyard" | "wip" | "pending". Search APIs filter by
-   * status before returning to us, so this echoes what we asked for —
+   * status before returning to us, so this echoes what we asked for -
    * but storing it lets the UI surface "RANKED" / "LOVED" badges
    * without a second round trip. Undefined for local songs.
    */
@@ -329,7 +329,7 @@ export interface RandomBeatmapPick {
  * results to "has at least one 4K mania difficulty" so we don't waste a
  * 5+ MB download on a beatmapset that fetchAndExtract would reject.
  *
- * Throws if all sources are unreachable or none returned a 4K candidate —
+ * Throws if all sources are unreachable or none returned a 4K candidate -
  * caller should fall back to a local song.
  */
 export async function pickRandomManiaBeatmapsetId(
@@ -337,7 +337,7 @@ export async function pickRandomManiaBeatmapsetId(
 ): Promise<RandomBeatmapPick> {
   const errors: string[] = [];
   // Shuffle source order so a slow mirror doesn't always go first across
-  // sessions — keeps load distribution rough and fairness across mirrors.
+  // sessions - keeps load distribution rough and fairness across mirrors.
   const sources = [...SEARCH_SOURCES].sort(() => Math.random() - 0.5);
 
   for (const src of sources) {
@@ -482,7 +482,7 @@ export async function fetchAndExtract(
 
 /**
  * Like `fetchAndExtract` but returns *every* 4K mania chart in the .osz
- * plus the shared audio. The download is the same single .osz request —
+ * plus the shared audio. The download is the same single .osz request -
  * mapper-made difficulties are already inside it, no extra network cost.
  *
  * Use this when you want to expose the mapper's actual difficulty curve

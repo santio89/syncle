@@ -70,7 +70,7 @@ export default function MultiEntryPage() {
     <main className="relative min-h-screen overflow-hidden">
       {/* Padding kept in lockstep with the homepage / /play / room
           headers (px-4 sm:px-6 py-3) so the 38×38 icon-btn row
-          produces the same overall header height on every page —
+          produces the same overall header height on every page -
           previously this header was ~8px taller than the rest at
           sm:py-4 and ~16px wider on the sides at sm:px-8. */}
       <header className="relative z-10 flex items-center justify-between gap-3 border-b-2 border-bone-50/15 px-4 py-3 sm:px-6">

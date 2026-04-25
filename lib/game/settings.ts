@@ -7,7 +7,7 @@
 
 const VOL_KEY = "syncle.volume";
 // Default music volume on first launch (when no persisted value is found).
-// 0.5 = 50% — half of the perceptually-tapered slider, which lands at
+// 0.5 = 50% - half of the perceptually-tapered slider, which lands at
 // roughly 44% perceived loudness with the song bus's quadratic curve
 // and ~70% perceived on the SFX bus's gentler square-root curve. This
 // is the "polite default": loud enough that a brand-new player hears
@@ -21,15 +21,25 @@ const FPS_LOCK_KEY = "syncle.fpsLock";
 const SFX_KEY = "syncle.sfx";
 const DEFAULT_SFX = true;
 const METRONOME_KEY = "syncle.metronome";
-// Off by default — most players treat the metronome as a learning aid
+// Off by default - most players treat the metronome as a learning aid
 // for unfamiliar tracks rather than a permanent gameplay layer, and a
 // surprise click on every beat the first time the app loads reads as a
 // bug instead of a feature. Players who want it can flip it on from
 // the StartCard / HUD / Lobby tile (key: M); the choice persists in
 // `METRONOME_KEY` across sessions.
 const DEFAULT_METRONOME = false;
+const STRICT_INPUTS_KEY = "syncle.strictInputs";
+// On by default - without it, players who panic-mash all four lanes
+// at high frequency get rewarded with perfect/great judgments because
+// every press lands within the generous (±160 ms) "good" window of
+// SOME note in SOME lane. This converts spam into a silent combo
+// break (see `GameState.markEmptyPress`), which preserves the
+// "honest mistime is fine" feel while making bad-faith mash visibly
+// cost the player. Players who want classic osu!mania scoring (no
+// penalty for unrelated taps) can flip it off in the settings tile.
+const DEFAULT_STRICT_INPUTS = true;
 const QUALITY_KEY = "syncle.quality";
-// High (Quality) is the default — the canvas is tuned to look its
+// High (Quality) is the default - the canvas is tuned to look its
 // best with the full VFX reel (particles, shockwaves, glow halos,
 // milestone vignette, lane-gate anticipation), and modern GPUs
 // (including integrated ones on recent laptops) handle it cleanly.
@@ -39,11 +49,11 @@ const QUALITY_KEY = "syncle.quality";
 const DEFAULT_QUALITY: RenderQuality = "high";
 
 /* -----------------------------------------------------------------------
- * Storage-health signal — fires the first time a settings / resume /
+ * Storage-health signal - fires the first time a settings / resume /
  * best-score write fails (quota exceeded, private mode, etc.). Components
  * can subscribe via `onStorageFailure` to surface a single discreet
  * "settings won't persist" toast so the player isn't silently surprised
- * later. Idempotent per session — we don't spam the listener after the
+ * later. Idempotent per session - we don't spam the listener after the
  * first failure since every subsequent save attempt would re-fire it.
  * ------------------------------------------------------------------- */
 
@@ -52,7 +62,7 @@ const storageFailureListeners = new Set<() => void>();
 
 /**
  * Record a localStorage / sessionStorage write failure. Safe to call
- * from any try/catch arm — first call notifies listeners, subsequent
+ * from any try/catch arm - first call notifies listeners, subsequent
  * calls are no-ops for the rest of the session.
  */
 export function reportStorageFailure(): void {
@@ -62,7 +72,7 @@ export function reportStorageFailure(): void {
     try {
       cb();
     } catch {
-      /* swallow — listener errors must not poison sibling listeners */
+      /* swallow - listener errors must not poison sibling listeners */
     }
   }
 }
@@ -96,7 +106,7 @@ export function hasStorageFailed(): boolean {
 /**
  * Optional render-loop frame-rate cap.
  *
- * - `null`  → uncapped (one draw per vblank — 60Hz on most monitors,
+ * - `null`  → uncapped (one draw per vblank - 60Hz on most monitors,
  *             144/200/240 Hz on high-refresh displays).
  * - `30/60` → render at most that many frames per second. The rAF loop
  *             still wakes every vblank but skips the draw call until the
@@ -155,10 +165,10 @@ export function saveFpsLock(v: FpsLock): void {
  *                     shadowBlur are also disabled (the most
  *                     fillrate-expensive operations on the highway).
  *                     Notes, hold trails, judgment line, and beat
- *                     dot are still drawn — gameplay reads identical,
+ *                     dot are still drawn - gameplay reads identical,
  *                     just without the celebratory polish.
  *
- * Live-applied via `RenderOptions.quality` — the renderer's hot
+ * Live-applied via `RenderOptions.quality` - the renderer's hot
  * paths gate the heavy effects on this flag without re-allocating
  * any state, so toggling the setting mid-match takes effect on the
  * next frame.
@@ -219,7 +229,7 @@ export function saveVolume(v: number): void {
  * Input sound effects toggle. When `false`, the engine suppresses
  * hit / miss / release / combo-milestone SFX (and the song's "duck"
  * cue that fires on a miss). The metronome and song playback itself
- * are deliberately NOT affected — those have their own controls and
+ * are deliberately NOT affected - those have their own controls and
  * silencing them here would surprise the player.
  */
 export function loadSfx(): boolean {
@@ -243,7 +253,7 @@ export function saveSfx(on: boolean): void {
 }
 
 /**
- * Metronome (audible click track on every beat) toggle. Local only —
+ * Metronome (audible click track on every beat) toggle. Local only -
  * never affects other players in multiplayer. Mirrored into the
  * AudioEngine via `setMetronome` when the React state changes.
  */
@@ -262,6 +272,47 @@ export function saveMetronome(on: boolean): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(METRONOME_KEY, on ? "1" : "0");
+  } catch {
+    reportStorageFailure();
+  }
+}
+
+/**
+ * Strict Inputs (anti-mash protection) toggle.
+ *
+ * When ON: an empty key press with NO unjudged note in the same lane
+ * within ±TIMING.spamGrace (~220 ms) silently breaks the player's
+ * combo and applies a small health drop. No on-screen MISS popup, no
+ * song wobble - the combo number visibly dropping is the entire
+ * feedback. This makes panic-mashing all four lanes a net negative
+ * even on charts with wide hit windows, while leaving honest
+ * early/late presses (note actually approaching) completely
+ * unpenalized.
+ *
+ * When OFF: empty presses are silently ignored and play only the
+ * existing soft "tick" SFX - the legacy osu!mania-style behavior. No
+ * combo / health / score impact whatsoever.
+ *
+ * Local-only setting (mirrors Quality / FPS Lock / Metronome) - never
+ * synced over the multiplayer wire. Two players in the same room can
+ * run different Strict Inputs modes; each player's own engine
+ * applies their own preference to their own inputs.
+ */
+export function loadStrictInputs(): boolean {
+  if (typeof window === "undefined") return DEFAULT_STRICT_INPUTS;
+  try {
+    const raw = window.localStorage.getItem(STRICT_INPUTS_KEY);
+    if (raw == null) return DEFAULT_STRICT_INPUTS;
+    return raw === "1" || raw === "true" || raw === "on";
+  } catch {
+    return DEFAULT_STRICT_INPUTS;
+  }
+}
+
+export function saveStrictInputs(on: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STRICT_INPUTS_KEY, on ? "1" : "0");
   } catch {
     reportStorageFailure();
   }

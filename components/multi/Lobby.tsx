@@ -19,17 +19,17 @@
  *        Match-in-progress pane (live scoreboard + playing song +
  *        progress) depending on `phase` + `isHost`.
  *      - Wider column because the song catalog table is the largest
- *        single piece of content in the lobby — gets the full column
+ *        single piece of content in the lobby - gets the full column
  *        height so 12+ rows are visible at 1080p without scrolling.
  *      - Per-player settings (volume / metronome / SFX / FPS lock /
  *        quality) are reachable via the "settings" text-button in
- *        the roster card (modal overlay) — used to live as an
+ *        the roster card (modal overlay) - used to live as an
  *        always-visible card pinned above the pane on this column,
  *        but at common 1080p layouts that card was crowding both
  *        the catalog scroller and the roster.
  *
  * Start contract:
- *   - The host always clicks "Start match" themselves — there is no
+ *   - The host always clicks "Start match" themselves - there is no
  *     auto-start. The all-ready quorum bar is purely informational; it
  *     tells the host "you can start now without overriding anyone",
  *     but the actual moment of starting is a deliberate host action so
@@ -86,7 +86,7 @@ import {
 
 import { ChatPanel } from "./ChatPanel";
 
-// Single horizontal slider — see HostPane render. Used to be split
+// Single horizontal slider - see HostPane render. Used to be split
 // across two grid rows (easy/normal/hard + insane/expert) but the
 // stacked layout was eating ~2x the vertical space the picker
 // actually needs, which made the lobby card grow taller than the
@@ -126,19 +126,19 @@ export function Lobby({
   // the scroller, density, "muted" / "ready" pills, online-dim style,
   // etc. can be exercised against realistic data shapes.
   //
-  // Disabled by default — `MOCK_ROSTER_SIZE = 0` short-circuits the
+  // Disabled by default - `MOCK_ROSTER_SIZE = 0` short-circuits the
   // useMemo to an empty array and `displaySnapshot` aliases straight
   // to `snapshot` (zero allocation, zero behavior change).
   //
   // To re-enable for testing, change MOCK_ROSTER_SIZE to a target
   // count (e.g. 50 to test a near-full room, 12 to test "just past
   // the chat-cohabit threshold", etc). The mock players:
-  //   • are NEVER sent over the wire — this is a pure render-time
+  //   • are NEVER sent over the wire - this is a pure render-time
   //     prepend on `snapshot.players`, scoped to this component
   //     instance, invisible to the server and to other clients.
   //   • have synthetic ids prefixed `mock-` so host actions
   //     (`actions.kick(id)` / `actions.mute(id)`) emit to the
-  //     server but the server ignores them — see the user-facing
+  //     server but the server ignores them - see the user-facing
   //     note in `RosterRow`'s host-action buttons.
   //   • randomize ready / muted / in-match / online flags via cheap
   //     modulo arithmetic so the roster shows visual variety
@@ -225,7 +225,7 @@ export function Lobby({
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
-    // Narrower column on the LEFT (roster + chat — fixed-width
+    // Narrower column on the LEFT (roster + chat - fixed-width
     // social panel). Wider column on the RIGHT for settings + the
     // host pane, since the song catalog table is the single biggest
     // chunk of content in the lobby (filter input + 10+ rows of
@@ -237,7 +237,7 @@ export function Lobby({
     // catalog / chat) instead of letting any one card push the
     // whole page into a scroll state. On smaller breakpoints the
     // grid collapses to a single column and the page scrolls
-    // naturally — appropriate for phones / tablets where
+    // naturally - appropriate for phones / tablets where
     // everything stacks vertically anyway.
     <div className="grid grid-cols-1 gap-6 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(280px,1fr)_minmax(0,1.4fr)]">
       {/* Left column: roster on top, chat below. Both cards share
@@ -258,14 +258,14 @@ export function Lobby({
         />
         {/* Chat wrapper:
             - Mobile / tablet (`< lg`): fixed `h-[36rem]` so the
-              input doesn't drift off-screen on a long chat — the
+              input doesn't drift off-screen on a long chat - the
               page scrolls to reach it and the inner scroller
               handles message overflow.
             - Desktop (`lg+`): `flex-1` (default `flex-grow:1`)
               against the roster's `[flex-grow:2]` → chat takes
               ~1/3 of the column, roster ~2/3. At 1080p that
               lands ≈ 19.5rem chat, which comfortably shows the
-              header, ~5 messages of body, and the input — fixing
+              header, ~5 messages of body, and the input - fixing
               the bug where chat input was getting clipped below
               the fold by an over-eager 30rem roster. We KEEP a
               `lg:min-h-[14rem]` floor so chat never squeezes
@@ -275,7 +275,7 @@ export function Lobby({
               chrome, the roster's internal scroller absorbs it.
               The inner messages area inside ChatPanel auto-
               scrolls to the bottom on new messages and pauses
-              auto-scroll while you're reading history — so the
+              auto-scroll while you're reading history - so the
               full server backlog (capped at MAX_CHAT_HISTORY =
               100) is always reachable by scrolling inside the
               panel. */}
@@ -293,14 +293,14 @@ export function Lobby({
           per-player settings panel that used to live pinned above
           this pane was promoted to a modal (PlayerSettingsModal,
           rendered at the Lobby root below) and triggered from the
-          roster's "settings" text-button — that frees ~22rem of
+          roster's "settings" text-button - that frees ~22rem of
           vertical space for the catalog scroller, which was the
           single biggest content-density win at common 1080p
           layouts.
 
           The pane is a three-way switch between host pane, guest
           pane, and match-in-progress watcher pane. The watcher pane
-          wins whenever the room is past the lobby — even for the
+          wins whenever the room is past the lobby - even for the
           host (who only ends up here in the unusual case of being
           a late-joiner who got promoted on the original host's
           disconnect). The host can't restart anything mid-match
@@ -332,7 +332,7 @@ export function Lobby({
         )}
       </div>
 
-      {/* Per-player settings modal — z-50 overlay, opened via the
+      {/* Per-player settings modal - z-50 overlay, opened via the
           "settings" text-button in the roster card. Mounted at the
           Lobby root (rather than inside PlayerRoster) so it stacks
           cleanly above every column without being constrained by
@@ -341,6 +341,10 @@ export function Lobby({
       <PlayerSettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        isHost={isHost}
+        roomStrictInputs={snapshot.strictInputs ?? true}
+        roomPhase={snapshot.phase}
+        onSetStrictInputs={isHost ? actions.setStrictInputs : undefined}
       />
     </div>
   );
@@ -383,7 +387,7 @@ function PlayerRoster({
   return (
     // Roster card claims a 2x share of the left column on lg+ (chat
     // takes 1x via its own `lg:flex-1`), so the two cards split
-    // available height roughly 2:1 — at 1080p that yields ≈ 39rem
+    // available height roughly 2:1 - at 1080p that yields ≈ 39rem
     // roster + ≈ 19.5rem chat, which keeps ~10 player rows visible
     // and a clickable chat with ~5 messages of body. `lg:min-h-0` +
     // `lg:basis-0` make the flex distribution clean (parent decides
@@ -400,14 +404,14 @@ function PlayerRoster({
         </span>
       </div>
 
-      {/* Rename Player strip — sits DIRECTLY under the PLAYERS header
+      {/* Rename Player strip - sits DIRECTLY under the PLAYERS header
           so the user's "personal identity" control lands at the very
           top of the card (the spot the user looks first when
           orienting "what's mine here?"). When clicked, the strip
           swaps to an inline rename input + save button so the edit
           happens in place, no modal hop. The Settings text-button
           that used to share this row has moved to the right-hand
-          controls box (next to the copy-code button) — it's a
+          controls box (next to the copy-code button) - it's a
           different concept (audio / FPS / quality preferences) from
           rename (identity) and never really belonged in the same
           strip. Stays mounted regardless of match phase because
@@ -452,7 +456,7 @@ function PlayerRoster({
               cap with `max-h-[30rem]` so a near-full 50-player
               room doesn't push the quorum + mark-ready footer off-
               screen on phones / tablets.
-            • On lg+ (no page scroll — page is `overflow-hidden`,
+            • On lg+ (no page scroll - page is `overflow-hidden`,
               each card owns its own scroller) we drop the cap and
               flex into the card's available height. The CARD itself
               gets a 2x flex share of the column (see the wrapper
@@ -465,7 +469,7 @@ function PlayerRoster({
               30rem cap was the root cause of the chat input getting
               clipped below the fold).
           The internal scrollbar lives flush against the card's
-          right edge — symmetric with the host pane's catalog
+          right edge - symmetric with the host pane's catalog
           scroller. `pr-1` keeps the scrollbar thumb from sitting
           flush against the row borders. */}
       <ul className="mt-3 max-h-[30rem] space-y-1.5 overflow-y-auto pr-1 lg:max-h-none lg:min-h-0 lg:flex-1">
@@ -485,7 +489,7 @@ function PlayerRoster({
           followed by the Mark Ready button that affects it. The
           two are visually paired (`space-y-3` between them only)
           so the user reads "0 / 2 ready", drops their eye one row,
-          and hits the action that changes it — zero scanning. Both
+          and hits the action that changes it - zero scanning. Both
           are gated on `!matchInProgress` because:
             - the quorum is meaningless once the match is live
               (everyone in the match was pulled in at start time;
@@ -520,13 +524,13 @@ function PlayerRoster({
  * action that changes it are visually paired. Factored into its own
  * component so the styling (saturated accent button + 6px shadow,
  * with a desaturated mirror-state when not yet ready) lives in one
- * place — the same control swings between two opposite intents
+ * place - the same control swings between two opposite intents
  * (mark / un-mark) and the "saturate vs desaturate the same shape"
  * pattern reads as a toggle, not a swap between two different
  * buttons.
  *
- * Tooltip copy adapts to the current state — "click to un-ready"
- * vs "mark yourself ready so the host knows you're set" — because a
+ * Tooltip copy adapts to the current state - "click to un-ready"
+ * vs "mark yourself ready so the host knows you're set" - because a
  * single static tooltip would feel misleading on the toggled-on
  * state.
  */
@@ -540,7 +544,7 @@ function MarkReadyButton({
   return (
     <button
       onClick={() => onToggle(!me.lobbyReady)}
-      // Brutalist lift on hover, slam on click — same shape the
+      // Brutalist lift on hover, slam on click - same shape the
       // `.brut-btn-accent` global uses, just inlined because this
       // button needs a 6 px shadow (vs. brut-btn's 4 px) AND a
       // dual color treatment (saturated when ready, attenuated when
@@ -574,7 +578,7 @@ function MarkReadyButton({
  * Compact settings panel mirroring the single-player StartCard's
  * settings strip (FPS lock + Metronome + Feedback as a tile row,
  * Quality + Music volume in their own tiles below). Rendered as a
- * centered modal overlay — opened via the "Settings" text-button
+ * centered modal overlay - opened via the "Settings" text-button
  * next to the copy-code button in the right-hand controls box
  * (HostPane / GuestPane header). Used to live as an always-on card
  * pinned above the host pane, but the screen real estate it
@@ -584,7 +588,7 @@ function MarkReadyButton({
  *
  * Why per-player and self-contained:
  *   - These are LOCAL preferences, not room state. They never get sent
- *     over the wire — every player adjusts their own and they take
+ *     over the wire - every player adjusts their own and they take
  *     effect for them only. So the modal has no `actions` prop and no
  *     callbacks back into the lobby; it just reads / writes the same
  *     `lib/game/settings` localStorage keys the single-player Game.tsx
@@ -592,7 +596,7 @@ function MarkReadyButton({
  *   - When the match starts, MultiGame's useState initialisers call
  *     loadVolume() / loadMetronome() / loadSfx() / loadFpsLock() on
  *     mount, so any nudge made in the lobby is automatically picked
- *     up — no protocol round-trip needed.
+ *     up - no protocol round-trip needed.
  *   - Visual style matches the single-player StartCard exactly (same
  *     tile borders, captions, accent colors, slider treatment) so a
  *     player who knows the solo settings panel feels at home here
@@ -606,15 +610,36 @@ function MarkReadyButton({
  *     audio.ts perceivedToGain) so the number on screen matches the
  *     mental model the player has from solo play.
  *   - Closing the modal (ESC, click-outside, ✕ button) does NOT
- *     revert anything — every change has already been written; the
+ *     revert anything - every change has already been written; the
  *     close just dismisses the overlay.
  */
 function PlayerSettingsModal({
   open,
   onClose,
+  isHost,
+  roomStrictInputs,
+  roomPhase,
+  onSetStrictInputs,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Whether the local player owns the room. Drives Strict Inputs
+   *  editability - only the host can flip the match-wide policy. */
+  isHost: boolean;
+  /** Current room-state Strict Inputs flag. Source of truth - never
+   *  mirrored into local component state, so a host's toggle reflects
+   *  the round-trip echo from the server (no optimistic state churn
+   *  fighting the snapshot). */
+  roomStrictInputs: boolean;
+  /** Current room phase. Server only accepts Strict Inputs flips
+   *  during `lobby`; outside that the host's checkbox locks down too
+   *  (parent passes `onSetStrictInputs={undefined}`), but the caption
+   *  uses this to explain WHY it's locked. */
+  roomPhase: RoomSnapshot["phase"];
+  /** Provided only when `isHost` AND a flip is legal in the current
+   *  phase. `undefined` → the Strict Inputs row renders read-only with
+   *  a "set by host" caption. */
+  onSetStrictInputs?: (next: boolean) => void;
 }) {
   const [volume, setVolumeState] = useState<number>(loadVolume);
   const [metronome, setMetronomeState] = useState<boolean>(loadMetronome);
@@ -622,7 +647,7 @@ function PlayerSettingsModal({
   const [fpsLock, setFpsLockState] = useState<FpsLock>(loadFpsLock);
   const [quality, setQualityState] = useState<RenderQuality>(loadRenderQuality);
 
-  // Live-save handlers — persist on every change so closing the lobby
+  // Live-save handlers - persist on every change so closing the lobby
   // tab without a final "save" still keeps the player's choices.
   const onVolume = useCallback((v: number) => {
     setVolumeState(v);
@@ -656,8 +681,73 @@ function PlayerSettingsModal({
       return next;
     });
   }, []);
+  // Host-side handler for the match-wide Strict Inputs toggle. We
+  // purposefully DON'T mirror the value into local component state or
+  // localStorage - the room snapshot is the source of truth, so the
+  // checkbox renders directly off `roomStrictInputs` and reflects the
+  // server's echo on the next snapshot tick. Letting a remembered
+  // local preference override the snapshot value would silently undo
+  // the host's chosen room policy on the next mount, which is exactly
+  // the surprise we're trying to avoid (also why the SP-style
+  // saveStrictInputs persistence isn't called here).
+  const onHostToggleStrictInputs = useCallback(
+    (next: boolean) => {
+      onSetStrictInputs?.(next);
+    },
+    [onSetStrictInputs],
+  );
 
-  // ESC closes the modal — capture phase + stopImmediatePropagation
+  // Transient "host-locked" hint shown when a non-host player clicks
+  // the Strict Inputs checkbox. UX rationale: we want guests to SEE
+  // the same checkbox the host sees (it's the universal "settings
+  // toggle" affordance - hiding it makes the row look like a
+  // half-built tile), but obviously we can't let them flip it. The
+  // hover-tooltip on the row already explains the policy ("Match-wide
+  // - set by host. Currently ON."), but hover doesn't fire on touch
+  // and isn't an interaction beat - clicking is. So we attach an
+  // immediate, click-driven hint that pops up next to the checkbox
+  // ("Only the host can change this") and fades out on its own. Two
+  // notes:
+  //   - Re-clicking inside the dwell window resets the timer instead
+  //     of re-mounting the bubble - feels less twitchy than blink-
+  //     restarting on every tap.
+  //   - The timer is cleared on unmount AND on modal close so we
+  //     never leak a setTimeout into a closed-modal state where it
+  //     would set a flag nobody can see anyway.
+  const [showHostLockHint, setShowHostLockHint] = useState(false);
+  const hostLockHintTimerRef = useRef<number | null>(null);
+  const flashHostLockHint = useCallback(() => {
+    setShowHostLockHint(true);
+    if (hostLockHintTimerRef.current != null) {
+      window.clearTimeout(hostLockHintTimerRef.current);
+    }
+    // 2400 ms ≈ long enough to read a 5-word hint comfortably,
+    // short enough that an absent-minded second click feels like
+    // it dismisses the bubble before the next interaction.
+    hostLockHintTimerRef.current = window.setTimeout(() => {
+      setShowHostLockHint(false);
+      hostLockHintTimerRef.current = null;
+    }, 2400);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (hostLockHintTimerRef.current != null) {
+        window.clearTimeout(hostLockHintTimerRef.current);
+        hostLockHintTimerRef.current = null;
+      }
+    };
+  }, []);
+  useEffect(() => {
+    if (!open) {
+      setShowHostLockHint(false);
+      if (hostLockHintTimerRef.current != null) {
+        window.clearTimeout(hostLockHintTimerRef.current);
+        hostLockHintTimerRef.current = null;
+      }
+    }
+  }, [open]);
+
+  // ESC closes the modal - capture phase + stopImmediatePropagation
   // so a page-level ESC handler (e.g. LeaveGuardProvider) doesn't ALSO
   // fire on the same keypress and trigger an unrelated leave prompt
   // when the user just wanted to dismiss settings. Wired via effect
@@ -680,7 +770,7 @@ function PlayerSettingsModal({
 
   // Mount-vs-visible split so the overlay can fade IN on open and
   // fade OUT on close instead of popping in / out:
-  //   • `mounted` controls DOM presence — true while open OR while a
+  //   • `mounted` controls DOM presence - true while open OR while a
   //     close transition is still running. When false the modal is
   //     completely unmounted (no listeners, no layout cost).
   //   • `visible` drives the opacity / transform classes. On open we
@@ -692,14 +782,14 @@ function PlayerSettingsModal({
   //     to the "out" classes immediately and defer the unmount by
   //     the transition duration so the fade-out plays through.
   // Bumped from 150ms → 220ms after user feedback that the transition
-  // wasn't perceptible — at 150ms with a ~1.5% scale change the
+  // wasn't perceptible - at 150ms with a ~1.5% scale change the
   // browser blinked the modal on/off too quickly to register as
   // motion. 220ms is still well inside "fast" (under the 250ms
   // threshold where users start perceiving lag) but long enough that
   // the eye actually catches the fade + scale lift. Scale range
   // also widened (0.985 → 0.96) and a 4px upward slide added so the
   // panel reads as "settling into place" rather than just blinking.
-  // The duration constant (FADE_MS) is the SINGLE source of truth —
+  // The duration constant (FADE_MS) is the SINGLE source of truth -
   // it's used in both the Tailwind `duration-[…]` class and the
   // setTimeout below; keep them in sync if you change it.
   const FADE_MS = 220;
@@ -709,7 +799,7 @@ function PlayerSettingsModal({
     if (open) {
       setMounted(true);
       // Double-rAF: first frame commits the initial "out" classes to
-      // the layout, second frame swaps to the "in" classes — this is
+      // the layout, second frame swaps to the "in" classes - this is
       // the canonical workaround for the case where React batches the
       // mount + class flip into the same frame and the browser elides
       // the transition. A single rAF works MOST of the time but
@@ -745,7 +835,7 @@ function PlayerSettingsModal({
     // The overlay (backdrop) does a pure opacity fade. The inner card
     // pairs an opacity fade with a small scale lift (0.96 → 1) AND a
     // 4px upward slide so the panel reads as deliberately settling
-    // into place — at 220ms the motion is clearly perceptible
+    // into place - at 220ms the motion is clearly perceptible
     // without slowing the user down. The `will-change-[opacity,transform]`
     // hint promotes the card to its own compositor layer for the
     // duration so the transition is GPU-driven and stays smooth even
@@ -763,7 +853,16 @@ function PlayerSettingsModal({
       }}
     >
       <div
-        className={`brut-card flex w-full max-w-md flex-col p-5 sm:p-6 transition-[opacity,transform] duration-[220ms] ease-out will-change-[opacity,transform] ${
+        // Width sized for the 2×2 settings grid: at `max-w-md` (28rem)
+        // each tile is ~13rem wide and the "HIGH = full vfx · PERF =
+        // no vfx" caption wraps to two lines on desktop, which makes
+        // the grid look uneven against the single-line captions on
+        // its neighbors. `max-w-2xl` (42rem) gives each tile ~19rem
+        // - comfortably enough room for every existing caption to
+        // stay on one line, with headroom for future copy without
+        // re-tuning. Still phone-friendly (collapses to a single
+        // column on `<sm` via the inner grid).
+        className={`brut-card flex w-full max-w-2xl flex-col p-5 sm:p-6 transition-[opacity,transform] duration-[220ms] ease-out will-change-[opacity,transform] ${
           visible
             ? "opacity-100 scale-100 translate-y-0"
             : "opacity-0 scale-[0.96] translate-y-1"
@@ -786,12 +885,12 @@ function PlayerSettingsModal({
         </div>
 
       {/* 2×2 settings grid: FPS lock + Quality on top, Metronome +
-          Feedback below — same ordering as the single-player
+          Feedback below - same ordering as the single-player
           StartCard so the two surfaces read as one product. All four
           tiles share the same width / height and dressing (border,
           padding, label-row + caption-row) so the grid reads as a
           uniform block. On narrow widths it collapses to a single
-          column — keyboard / touch targets stay a comfortable size
+          column - keyboard / touch targets stay a comfortable size
           all the way down to phone widths. */}
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <button
@@ -800,10 +899,10 @@ function PlayerSettingsModal({
           className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
           data-tooltip={
             fpsLock == null
-              ? "Frame-rate uncapped — cap to 30 / 60 FPS to save battery"
+              ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
               : fpsLock === 30
-                ? "Frame-rate capped at 30 FPS — saves battery on laptops"
-                : "Frame-rate capped at 60 FPS — matches a typical monitor refresh"
+                ? "Frame-rate capped at 30 FPS - saves battery on laptops"
+                : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
           }
           aria-label="Cycle render FPS lock"
         >
@@ -831,8 +930,8 @@ function PlayerSettingsModal({
           className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
           data-tooltip={
             quality === "high"
-              ? "HIGH — full VFX: shadow glows, particles, shockwaves, milestone vignette"
-              : "PERFORMANCE — VFX disabled for steady frame rate on weaker GPUs"
+              ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
+              : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
           }
           aria-label="Cycle render quality preset"
         >
@@ -899,13 +998,139 @@ function PlayerSettingsModal({
         </label>
       </div>
 
-      {/* Volume tile sits on its own row at full width — the slider
+      {/* Strict Inputs tile - match-wide anti-mash policy. Host owns
+          the toggle (server enforces lobby-phase + host-only flips).
+          Non-hosts see the SAME checkbox affordance the host sees -
+          earlier we hid it behind an ON/OFF text chip, but that made
+          the row look like a half-built tile and confused players
+          into thinking the setting was unavailable rather than
+          policy-locked. Now everyone gets the checkbox; guest clicks
+          are intercepted (preventDefault stops the toggle) and pop a
+          short "Only the host can change this" callout next to the
+          checkbox so the click is acknowledged AND the rule is
+          stated. Same `<label>` wrapper for both roles - keeps the
+          row tappable end-to-end and means the click handler fires
+          identically whether the user clicks the checkbox or the
+          surrounding text. */}
+      {(() => {
+        const editable = isHost && !!onSetStrictInputs;
+        // Caption mirrors the SP StartCard exactly ("empty presses
+        // break combo" / "no penalty for empty presses") so guests
+        // see the SAME state-of-the-rule wording they're used to
+        // from solo play. The host-attribution beat ("set by host")
+        // already lives in three other places on this row:
+        //   - the title suffix `· match-wide`
+        //   - the hover tooltip on the wrapper
+        //   - the click-flash "Only the host can change this" hint
+        // ...so duplicating it as the caption was redundant *and*
+        // hid the actual ON/OFF state from non-hosts. The only time
+        // the caption deviates is when the host themselves can't
+        // flip it because the match has already started, where the
+        // caption explains WHY the checkbox isn't responding.
+        const lockedReason =
+          isHost && roomPhase !== "lobby"
+            ? "Locked mid-match - change in the lobby."
+            : null;
+        const tooltip = editable
+          ? "Press a key with no note coming up = silent combo break (anti-mash). Match-wide."
+          : `Match-wide · ${
+              isHost
+                ? "lobby-only setting"
+                : "set by host"
+            }. Currently ${roomStrictInputs ? "ON" : "OFF"}.`;
+        return (
+          <label
+            className={`relative mt-2 flex items-center justify-between gap-3 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 ${
+              editable ? "cursor-pointer" : "cursor-not-allowed"
+            }`}
+            data-tooltip={tooltip}
+          >
+            <div className="flex flex-col gap-0.5">
+              <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+                Strict inputs
+                <span className="ml-2 text-bone-50/35">· match-wide</span>
+              </span>
+              <span className="font-mono text-[9.5px] text-bone-50/40">
+                {lockedReason
+                  ? lockedReason
+                  : roomStrictInputs
+                    ? "empty presses break combo"
+                    : "no penalty for empty presses"}
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={roomStrictInputs}
+              // Controlled checkbox needs an `onChange` to silence
+              // React's warning even when the value can't change.
+              // The actual gating happens in `onClick` via
+              // preventDefault, which fires before `onChange` and
+              // cancels the implicit toggle for guests.
+              onChange={
+                editable
+                  ? (e) => onHostToggleStrictInputs(e.target.checked)
+                  : () => {}
+              }
+              onClick={
+                editable
+                  ? undefined
+                  : (e) => {
+                      // preventDefault on the click halts the native
+                      // toggle (and stops onChange from firing) for
+                      // BOTH a direct checkbox click and a click on
+                      // the surrounding `<label>` text - labels
+                      // dispatch a synthetic click on the associated
+                      // input, which we intercept here.
+                      e.preventDefault();
+                      flashHostLockHint();
+                    }
+              }
+              readOnly={!editable}
+              className={`h-[1.05rem] w-[1.05rem] accent-accent ${
+                editable ? "cursor-pointer" : "cursor-not-allowed"
+              }`}
+              aria-label={
+                editable
+                  ? "Toggle match-wide strict inputs"
+                  : "Match-wide strict inputs (host-controlled)"
+              }
+            />
+            {/* Host-lock hint - pops out above the checkbox when a
+                guest tries to flip it. We rebuild the brut-tooltip
+                visual language inline (border-2 border-accent /
+                bg-ink-900 / accent text / mono uppercase tracking)
+                rather than reusing the `.brut-tooltip` class because
+                that class is `position: fixed` for the document-wide
+                portal flow - here we want it absolutely anchored to
+                THIS specific checkbox so the connection between
+                click and message is unambiguous. `pointer-events:
+                none` so the bubble can't intercept the next click.
+                `aria-live="polite"` makes screen readers announce
+                the hint when it appears (the visual fade alone
+                wouldn't reach AT users). Mounted only for non-hosts
+                so we don't add invisible DOM to the host's row. */}
+            {!editable && (
+              <span
+                role="status"
+                aria-live="polite"
+                className={`pointer-events-none absolute right-2 -top-2 -translate-y-full whitespace-nowrap border-2 border-accent bg-ink-900 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-accent shadow-[3px_3px_0_0_rgb(var(--shadow))] transition-opacity duration-200 ${
+                  showHostLockHint ? "opacity-100" : "opacity-0"
+                }`}
+              >
+                Only the host can change this
+              </span>
+            )}
+          </label>
+        );
+      })()}
+
+      {/* Volume tile sits on its own row at full width - the slider
           needs the horizontal real estate to be precise, and pairing
           it with the percentage readout in the header line keeps the
           control compact while still showing the live value. */}
       <div
         className="mt-2 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-        data-tooltip="Song playback volume — separate from feedback SFX"
+        data-tooltip="Song playback volume - separate from feedback SFX"
       >
         <div className="flex items-center justify-between gap-3">
           <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
@@ -942,7 +1167,7 @@ function ReadyQuorumBar({
 }) {
   if (total === 0) return null;
   const pct = Math.round((ready / total) * 100);
-  // No `mt-*` here — outer spacing is owned by the caller (the
+  // No `mt-*` here - outer spacing is owned by the caller (the
   // PlayerRoster footer wraps this in a `space-y-4` divider block
   // and tunes the top padding to mirror `space-y-2` below).
   // Baking a top margin in here would compound with the caller's
@@ -986,7 +1211,7 @@ function RosterRow({
   // for keyboard / touch. They're omitted entirely on the host's own
   // row (hosts don't kick or mute themselves).
   const showHostActions = iAmHost && !player.isHost;
-  // During a match, the dot's "ready" semantic stops applying — what
+  // During a match, the dot's "ready" semantic stops applying - what
   // the watcher actually wants to know is "is this person playing
   // right now, or are they here in the lobby with me?". We light the
   // dot accent for in-match players and dim it for in-lobby players,
@@ -1009,7 +1234,7 @@ function RosterRow({
         : "Watching from the lobby"
       : player.lobbyReady
         ? "Ready"
-        : "Online — not ready";
+        : "Online · not ready";
   return (
     <li className="group flex items-center gap-2 border-2 border-bone-50/10 px-3 py-2">
       <span
@@ -1021,7 +1246,7 @@ function RosterRow({
           player.online ? "text-bone-50/90" : "text-bone-50/40"
         }`}
       >
-        {player.name || "—"}
+        {player.name || "-"}
         {isMe && (
           <span className="ml-1 font-mono text-[9.5px] uppercase tracking-widest text-accent">
             you
@@ -1029,7 +1254,7 @@ function RosterRow({
         )}
       </span>
 
-      {/* Status pills (mute, ready/in-match, host) — small, uppercase,
+      {/* Status pills (mute, ready/in-match, host) - small, uppercase,
           mono. While a match is in progress we swap the lobby-only
           "ready" pill for an "in match" pill so the watcher sees, at
           a glance, who they're spectating vs who else is sitting in
@@ -1166,7 +1391,7 @@ function HostPane({
   actions: RoomActions;
   code: string;
   allReady: boolean;
-  /** Opens the per-player settings modal — wired here so the
+  /** Opens the per-player settings modal - wired here so the
    *  "Settings" text-button next to the copy-code button can fire
    *  it. State + handler live in the Lobby parent. */
   onOpenSettings: () => void;
@@ -1178,12 +1403,12 @@ function HostPane({
   // Array.filter against a 100-item random slice) to make the new
   // behavior explicit at call sites.
   const [query, setQuery] = useState("");
-  // Debounced copy of `query` — the input updates per-keystroke for
+  // Debounced copy of `query` - the input updates per-keystroke for
   // snappy UI feedback, but we only fire upstream requests when the
   // user pauses typing for ~300 ms. Without this the host typing
   // "spectre" would fire 7 mirror requests; with it, exactly 1.
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  // Difficulty filter — when set, both browse and search results are
+  // Difficulty filter - when set, both browse and search results are
   // restricted to sets that ship the chosen Syncle bucket. `null` =
   // unfiltered (default; matches the pre-filter behavior). Wired into
   // both fetch effects via the `bucket` field on the action and into
@@ -1194,7 +1419,7 @@ function HostPane({
   // Browse-mode state (no query, paginated by ranked_desc by default).
   // The `browseRefreshTick` int is bumped by the ↻ button to force a
   // re-fetch of the current page even if React would otherwise skip
-  // it (no other dep changed) — also tells the effect to send
+  // it (no other dep changed) - also tells the effect to send
   // `refresh: true` upstream so the server bypasses its 5-min cache.
   const [browsePage, setBrowsePage] = useState(0);
   const [browseRefreshTick, setBrowseRefreshTick] = useState(0);
@@ -1211,12 +1436,12 @@ function HostPane({
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchSource, setSearchSource] = useState<string | null>(null);
-  // Monotonic request id — debounced typing guarantees only the latest
+  // Monotonic request id - debounced typing guarantees only the latest
   // (query, page) pair gets to update React state. Without this, a
   // slow page-1 response could land AFTER the user has already
   // navigated to page 2, overwriting newer results with stale ones.
   const searchReqId = useRef(0);
-  // Setter wrapper used by every difficulty chip — toggles the active
+  // Setter wrapper used by every difficulty chip - toggles the active
   // filter AND resets both pagination cursors. Old page indices are
   // meaningless across a filter change (page 5 of unfiltered "newest
   // ranked" is rarely page 5 of "newest ranked with an Easy"), so
@@ -1228,12 +1453,12 @@ function HostPane({
   }, []);
   // The "starting" state is now driven entirely by the server snapshot
   // (`prestartEndsAt !== null`). The 3 s prestart countdown overlay
-  // doubles as the click debounce — between click and next snapshot the
+  // doubles as the click debounce - between click and next snapshot the
   // server is idempotent on `host:start`, so we don't need a local
   // optimistic flag. See PRESTART_COUNTDOWN_MS in `lib/server/io.ts`.
   const starting = snapshot.prestartEndsAt !== null;
 
-  // Per-song probe — see previous comment block.
+  // Per-song probe - see previous comment block.
   const [modeProbe, setModeProbe] = useState<ModeAvailability | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -1242,7 +1467,7 @@ function HostPane({
   // Browse-mode fetch. Fires whenever `browsePage` changes (Prev/Next)
   // OR when `browseRefreshTick` is bumped by the ↻ button. The refresh
   // tick also flips the upstream `refresh` flag so the server bypasses
-  // its 5-min cache for that page — without it, ↻ inside the TTL
+  // its 5-min cache for that page - without it, ↻ inside the TTL
   // window would just re-render the same cached payload and feel
   // broken to the host.
   useEffect(() => {
@@ -1261,7 +1486,7 @@ function HostPane({
           setBrowseResults([]);
           setBrowseHasMore(false);
           setBrowseSource(null);
-          setBrowseError("Failed to load catalog — try again.");
+          setBrowseError("Failed to load catalog - try again.");
           return;
         }
         setBrowseResults(res.items);
@@ -1285,7 +1510,7 @@ function HostPane({
   // Typing debounce. 300 ms was tuned from feel:
   // shorter than that and a normal-pace typist still fires 2-3 mid-
   // word requests; longer and feels laggy after the user has clearly
-  // stopped. Reset `searchPage` to 0 whenever the query changes —
+  // stopped. Reset `searchPage` to 0 whenever the query changes -
   // paging always starts at the top of a new query.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1316,14 +1541,14 @@ function HostPane({
         ...(bucketFilter ? { bucket: bucketFilter } : {}),
       })
       .then((res) => {
-        // Stale response — the user typed (or paged) past this
+        // Stale response - the user typed (or paged) past this
         // request before it landed. Drop it without touching state.
         if (reqId !== searchReqId.current) return;
         if (!res) {
           setSearchResults([]);
           setSearchHasMore(false);
           setSearchSource(null);
-          setSearchError("Search failed — try again.");
+          setSearchError("Search failed - try again.");
           return;
         }
         setSearchResults(res.items);
@@ -1345,7 +1570,7 @@ function HostPane({
   }, [debouncedQuery, searchPage, bucketFilter, actions]);
 
   // Source of truth for the rendered list. Search mode (non-empty
-  // debounced query) shows ONLY upstream search results — there's no
+  // debounced query) shows ONLY upstream search results - there's no
   // client-side filtering of the browse view because the user already
   // told us what they're looking for. Browse mode (empty query) shows
   // the paginated browse slice (newest ranked first by default).
@@ -1410,7 +1635,7 @@ function HostPane({
           <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             ░ Host controls
           </p>
-          {/* Room name + visibility badge sits where the H3 used to be —
+          {/* Room name + visibility badge sits where the H3 used to be -
               still tells the host what they're managing, but now also
               communicates whether other people can find this room. The
               host gets a small "edit" affordance so they can rebrand
@@ -1427,7 +1652,7 @@ function HostPane({
         </div>
         {/* Right-hand "personal tools" cluster: Settings text-button +
             copy-code button. Settings opens the per-player audio /
-            FPS / quality modal — moved here from the players card's
+            FPS / quality modal - moved here from the players card's
             bottom strip so it sits next to the OTHER infrequent
             personal action (copy-code) rather than next to the
             frequent identity action (rename). The two are paired
@@ -1497,15 +1722,15 @@ function HostPane({
         {selected ? (
           <p
             className="mt-0.5 truncate font-mono text-[0.92rem]"
-            data-tooltip={`${selected.artist} — ${selected.title}`}
+            data-tooltip={`${selected.artist} - ${selected.title}`}
           >
             <span className="text-accent/65">{selected.artist}</span>{" "}
-            <span className="text-accent/40">—</span>{" "}
+            <span className="text-accent/40">-</span>{" "}
             <span className="font-bold text-accent">{selected.title}</span>
           </p>
         ) : (
           <p className="mt-0.5 font-mono text-[0.92rem] text-accent/45">
-            nothing yet — pick from the catalog below
+            nothing yet - pick from the catalog below
           </p>
         )}
       </div>
@@ -1518,7 +1743,7 @@ function HostPane({
             input becomes a true text query against the upstream
             mirrors with pagination underneath the list.
           The single input drives both modes so the host doesn't
-          need a separate "search vs filter" toggle — typing IS the
+          need a separate "search vs filter" toggle - typing IS the
           mode switch. */}
       <div className="mt-4 flex items-center gap-2">
         <input
@@ -1551,7 +1776,7 @@ function HostPane({
           - "All" leaves the catalog unfiltered (server returns the
             mirror's full page; the host can browse anything).
           - Each tier chip post-filters the upstream page server-side
-            to sets that ship that Syncle bucket — so a host who only
+            to sets that ship that Syncle bucket - so a host who only
             wants Easy songs can scope the entire catalog without
             opening individual sets to check.
           The chips intentionally use the same accent palette as the
@@ -1605,7 +1830,7 @@ function HostPane({
             `flex-1` lets the catalog absorb whatever vertical
             space remains in the host pane after the header,
             selected box, filter row, difficulty grid, and Start
-            button — typically a much larger window than 24rem,
+            button - typically a much larger window than 24rem,
             which means more rows visible without scrolling.
           `min-h-[10rem]` keeps the loading / empty states from
           collapsing the table to nothing. */}
@@ -1633,7 +1858,7 @@ function HostPane({
         )}
         {!inSearchMode && browseLoading && browseResults === null && (
           <p className="p-3 font-mono text-[0.79rem] text-bone-50/50">
-            Fetching osu!mania 4K candidates…
+            Fetching 4K beatmap candidates…
           </p>
         )}
         {/* Empty states. Each branch tells the host what to DO next
@@ -1646,13 +1871,13 @@ function HostPane({
             <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
               {searchPage === 0
                 ? `No 4K mania tracks found for “${debouncedQuery}”.`
-                : "No more results on this page — try Prev."}
+                : "No more results on this page - try Prev."}
             </p>
           ) : (
             <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
               {browsePage === 0
-                ? "No tracks available — try refreshing."
-                : "No more results on this page — try Prev."}
+                ? "No tracks available - try refreshing."
+                : "No more results on this page - try Prev."}
             </p>
           ))}
         <ul>
@@ -1668,13 +1893,13 @@ function HostPane({
                 >
                   <span className="min-w-0 truncate">
                     <span className="text-bone-50/55">{c.artist}</span>{" "}
-                    <span className="text-bone-50">— {c.title}</span>
+                    <span className="text-bone-50">- {c.title}</span>
                   </span>
                   {/* Right column: difficulty range chip (when the
                       server computed `availableBuckets` for this set)
                       followed by track length. The range chip
                       replaces the old "ranked / loved / qualified"
-                      moderation badge — every player asks "what
+                      moderation badge - every player asks "what
                       difficulties does this song have?" before they
                       ask "is this set ranked?", so the row leads with
                       the answer they actually want.
@@ -1711,13 +1936,13 @@ function HostPane({
         </ul>
       </div>
 
-      {/* Pagination — visible in both modes. Browse defaults to
+      {/* Pagination - visible in both modes. Browse defaults to
           ranked_desc (newest ranked first), so Prev/Next walks back
           through ranked history. In search mode the same controls
           paginate over text-query results.
           The middle label tells the host WHICH view they're looking
           at (page number + the active mode tag + the mirror that
-          served this page). The mirror tag is diagnostic — useful
+          served this page). The mirror tag is diagnostic - useful
           when results look weird, since different mirrors can
           disagree on ordering for the same query. */}
       <div className="mt-2 flex items-center justify-between gap-2 font-mono text-[0.7rem] text-bone-50/55">
@@ -1849,7 +2074,7 @@ function HostPane({
  * name keeps the previous name (we just don't emit) and the visibility
  * enum is locked to the two literal strings, so a stale client can't
  * smuggle a junk value through. We also fire the two events
- * conditionally — only when the value actually changed — to avoid
+ * conditionally - only when the value actually changed - to avoid
  * pointless snapshot churn for "open editor / press save without
  * touching anything".
  */
@@ -2019,8 +2244,8 @@ function VisibilityBadge({
       }`}
       data-tooltip={
         isPublic
-          ? "Public — appears in the room browser"
-          : "Private — only people with the code can join"
+          ? "Public · appears in the room browser"
+          : "Private · only people with the code can join"
       }
     >
       {isPublic ? "● public" : "○ private"}
@@ -2039,7 +2264,7 @@ function firstAvailableMode(modes: ModeAvailability): ChartMode {
  * `m:ss` formatter for catalog row track lengths. Mirrors
  * `formatDuration` in MultiGame.tsx / Game.tsx (kept local rather
  * than imported to avoid pulling Game.tsx into the lobby bundle).
- * Defensive about junk input — the catalog payload comes from a
+ * Defensive about junk input - the catalog payload comes from a
  * 3rd-party search mirror, so any non-finite or negative number
  * collapses to `"0:00"` instead of throwing or rendering `"NaN:NaN"`.
  */
@@ -2069,7 +2294,7 @@ function HostModeButton({
   // Tier is only "available" when there's actually a song queued AND
   // the probe came back saying this tier is shipped. Without a
   // selected song there's nothing to play at any difficulty, so every
-  // button is disabled until the host picks something — used to
+  // button is disabled until the host picks something - used to
   // default to "all enabled, click to set the mode I'll use later"
   // which read as "this tier exists for the song" and was confusing
   // when nothing was selected.
@@ -2084,7 +2309,7 @@ function HostModeButton({
         ? `This song doesn't ship a ${displayMode(mode)} difficulty.`
         : undefined;
   const stars = modeStars(mode);
-  // Density tooltip mirrors the single-player picker — players asked
+  // Density tooltip mirrors the single-player picker - players asked
   // to see "X notes · Y nps" instead of the cosmetic intensity rating
   // (the tier name + ★ ramp are already rendered on the button).
   const noteCount = probe?.noteCounts[mode] ?? 0;
@@ -2129,21 +2354,21 @@ function HostModeButton({
  * Renders the right-column card while THIS client is sitting in the
  * lobby but the rest of the room is past the lobby phase (loading /
  * countdown / playing / results). Replaces both the host and guest
- * panes — see the dispatch in `Lobby` for the rationale.
+ * panes - see the dispatch in `Lobby` for the rationale.
  *
  * Layout:
  *   1. Header with "Match in progress" + a phase pill (loading /
  *      countdown / playing / results) so the watcher knows where
  *      the room currently is.
- *   2. Selected song row (artist — title) so the watcher can see
+ *   2. Selected song row (artist - title) so the watcher can see
  *      what's being played without checking another panel.
- *   3. Song progress bar — only shown during the `playing` phase.
+ *   3. Song progress bar - only shown during the `playing` phase.
  *      Recomputed every 250ms via a local rAF-throttled tick state
  *      so the bar advances live; the parent snapshot only updates
  *      on score events (5Hz) and would otherwise miss the in-
  *      between frames. Hidden during loading / countdown /
  *      results because progress is undefined for those phases.
- *   4. Compact live scoreboard — top entries only; full scoreboard
+ *   4. Compact live scoreboard - top entries only; full scoreboard
  *      lives on the in-match HUD for participants. Host badge,
  *      "you" badge (if the watcher's own row appears, e.g. in the
  *      "leaver" case where they have a partial live score), and
@@ -2167,7 +2392,7 @@ function MatchInProgressPane({
   const selected = snapshot.selectedSong;
   const phase = snapshot.phase;
   // Live wall-clock tick so the song progress bar advances between
-  // 5Hz scoreboard snapshots. 250ms cadence (4Hz) is enough — the
+  // 5Hz scoreboard snapshots. 250ms cadence (4Hz) is enough - the
   // bar is small and a quarter-second of jitter isn't visible at
   // the rendered width. Pause when the room is paused so the bar
   // freezes too (it would otherwise overshoot during a long pause
@@ -2180,7 +2405,7 @@ function MatchInProgressPane({
     return () => clearInterval(id);
   }, [phase, snapshot.pausedAt]);
 
-  // Sort scoreboard locally too — the server already sorts by score
+  // Sort scoreboard locally too - the server already sorts by score
   // descending, but a snapshot tick that arrives before the next
   // scoreboard fan-out could leave entries out of order if the
   // upstream order shifts. Cheap enough at <50 entries.
@@ -2233,7 +2458,7 @@ function MatchInProgressPane({
         {selected ? (
           <p
             className="mt-0.5 truncate font-mono text-[0.92rem] text-bone-50/90"
-            data-tooltip={`${selected.artist} — ${selected.title}`}
+            data-tooltip={`${selected.artist} - ${selected.title}`}
           >
             <ArrowIcon
               direction="right"
@@ -2241,7 +2466,7 @@ function MatchInProgressPane({
               strokeWidth={2.75}
               className="mr-1 inline align-middle text-accent"
             />
-            <span className="text-bone-50/60">{selected.artist}</span> —{" "}
+            <span className="text-bone-50/60">{selected.artist}</span> -{" "}
             <span className="text-bone-50">{selected.title}</span>
           </p>
         ) : (
@@ -2265,11 +2490,11 @@ function MatchInProgressPane({
       </div>
 
       {/* Compact live scoreboard. Shown for every match phase, even
-          loading / countdown — entries will all be 0 until songs
+          loading / countdown - entries will all be 0 until songs
           start, but rendering the empty rows keeps the panel from
           shifting layout the moment the first score lands. Grows
           with the player count and lets the page scrollbar on the
-          right edge take overflow — no mid-card inner scrollbar. */}
+          right edge take overflow - no mid-card inner scrollbar. */}
       <div className="mt-4 min-h-0 flex-1">
         <div className="flex items-baseline justify-between gap-3">
           <p className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
@@ -2311,7 +2536,7 @@ function MatchInProgressPane({
                 }
               />
               <span className="min-w-0 flex-1 truncate font-mono text-[0.86rem] text-bone-50/85">
-                {entry.name || "—"}
+                {entry.name || "-"}
               </span>
               <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-bone-50/55">
                 {entry.accuracy.toFixed(1)}%
@@ -2376,7 +2601,7 @@ function GuestPane({
 }: {
   snapshot: RoomSnapshot;
   code: string;
-  /** Opens the per-player settings modal — wired here so the
+  /** Opens the per-player settings modal - wired here so the
    *  "Settings" text-button next to the copy-code button can fire
    *  it. State + handler live in the Lobby parent. */
   onOpenSettings: () => void;
@@ -2445,7 +2670,7 @@ function GuestPane({
           this is the song the host has locked in.
           mt-4 instead of a parent `gap-4` so the spacing matches
           HostPane (which also walks the layout with explicit
-          margins) — keeps the two panes visually in lockstep. */}
+          margins) - keeps the two panes visually in lockstep. */}
       <div
         className={`mt-4 w-full border-2 px-3 py-2 transition-colors ${
           selected
@@ -2463,7 +2688,7 @@ function GuestPane({
         {selected ? (
           <p
             className="mt-0.5 truncate font-mono text-[0.92rem]"
-            data-tooltip={`${selected.artist} — ${selected.title}`}
+            data-tooltip={`${selected.artist} - ${selected.title}`}
           >
             <ArrowIcon
               direction="right"
@@ -2472,7 +2697,7 @@ function GuestPane({
               className="mr-1 inline align-middle text-accent"
             />
             <span className="text-accent/65">{selected.artist}</span>{" "}
-            <span className="text-accent/40">—</span>{" "}
+            <span className="text-accent/40">-</span>{" "}
             <span className="font-bold text-accent">{selected.title}</span>
           </p>
         ) : (

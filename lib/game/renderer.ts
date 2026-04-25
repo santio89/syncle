@@ -33,7 +33,7 @@ export type ThemeName = "dark" | "light";
  *                     on low-end mobile, AND so accessibility-minded
  *                     players who don't want pulsing flashes can keep
  *                     gameplay calm. Notes/holds/judgment line/beat
- *                     dot still draw — gameplay reads identical, just
+ *                     dot still draw - gameplay reads identical, just
  *                     without celebratory polish.
  *
  * Mirrors `RenderQuality` from `lib/game/settings` (kept here as a
@@ -42,7 +42,7 @@ export type ThemeName = "dark" | "light";
 export type RenderQualityMode = "high" | "performance";
 
 export interface RenderOptions {
-  /** Seconds of look-ahead — note travels from top to judgment line in this time. */
+  /** Seconds of look-ahead - note travels from top to judgment line in this time. */
   leadTime: number;
   /** Pulses each lane gate when its key is held. Indexed by lane (0 .. TOTAL_LANES-1). */
   laneHeld: boolean[];
@@ -52,7 +52,7 @@ export interface RenderOptions {
   bpm: number;
   /** Song offset (seconds) for beat-line alignment. */
   offset: number;
-  /** Active UI theme — drives the canvas color palette. */
+  /** Active UI theme - drives the canvas color palette. */
   theme: ThemeName;
   /**
    * Visual quality preset (`"high"` or `"performance"`). The hot
@@ -67,7 +67,7 @@ export interface RenderOptions {
  * All canvas colors that change with the active theme. Resolved once per
  * frame from `opts.theme` and threaded into every draw helper. Anything
  * NOT in here (lane colors, judgment popup grades) is intentionally
- * theme-agnostic — those use a fixed brand palette so a perfect-tap
+ * theme-agnostic - those use a fixed brand palette so a perfect-tap
  * always reads as "blue green great" regardless of UI mode.
  */
 export interface ThemePalette {
@@ -76,7 +76,7 @@ export interface ThemePalette {
   /**
    * Reference page-bg color matching the app's `--bg` CSS token.
    *
-   * NOTE: `drawFrame` does NOT paint this — it `clearRect`s the canvas
+   * NOTE: `drawFrame` does NOT paint this - it `clearRect`s the canvas
    * and lets the underlying body background (which is themed via CSS
    * with a 220ms cubic-bezier crossfade) show through. The field is
    * kept on the palette for two reasons:
@@ -95,7 +95,7 @@ export interface ThemePalette {
   laneSeparator: string;
   /** Horizontal beat lines (off-beat). */
   beatLine: string;
-  /** Horizontal measure lines (every 4th beat — slightly stronger). */
+  /** Horizontal measure lines (every 4th beat - slightly stronger). */
   measureLine: string;
   /** Base RGB for the judgment line (alpha is computed per-frame from the beat pulse). */
   judgeRgb: RGB;
@@ -109,7 +109,7 @@ export interface ThemePalette {
   noteCore: string;
   /** Inside of a lane gate (the dark/light "hole" inside the colored ring). */
   gateInner: string;
-  /** Lane label color when the gate is being held / sustained — sits on a colored fill. */
+  /** Lane label color when the gate is being held / sustained - sits on a colored fill. */
   gateLabelOnFill: string;
   /** Beat dot in the top-right corner on non-downbeats. Downbeats use the accent. */
   beatDotIdle: string;
@@ -142,7 +142,7 @@ const LIGHT_PALETTE: ThemePalette = {
   //
   // We used to paint rgba(20,18,14,0.18) at the outer ring for focus
   // pull, but on a cream `--bg` that blended down to ~rgb(204,204,199)
-  // at the canvas corners — visibly grayer than the surrounding page
+  // at the canvas corners - visibly grayer than the surrounding page
   // bg, so the gameplay rectangle read as a darker chunk floating
   // inside a brighter page. (In dark mode the same trick is invisible
   // because pageBg is already near-black; the darken-to-black just
@@ -172,7 +172,7 @@ const LIGHT_PALETTE: ThemePalette = {
   noteCore: "#0a0c10",
   gateInner: "#f5f5f0",
   // When a lane is being held, the gate fills with its lane color and the
-  // label needs to ride on top — light text on saturated color reads well.
+  // label needs to ride on top - light text on saturated color reads well.
   gateLabelOnFill: "#f5f5f0",
   beatDotIdle: "#0c0e12",
 };
@@ -196,7 +196,7 @@ export interface Particle {
   /** Total life so we can compute alpha as life/maxLife. */
   maxLife: number;
   size: number;
-  /** Index into LANE_RGB — avoids per-particle string storage and reparse. */
+  /** Index into LANE_RGB - avoids per-particle string storage and reparse. */
   laneIdx: number;
 }
 
@@ -215,12 +215,12 @@ export interface Shockwave {
   /** Seconds remaining. */
   life: number;
   maxLife: number;
-  /** True for "perfect" — drawn slightly larger and with a white core. */
+  /** True for "perfect" - drawn slightly larger and with a white core. */
   intense: boolean;
 }
 
 /**
- * Combo milestone strobe — when the player passes 25/50/100/250/500/1000+,
+ * Combo milestone strobe - when the player passes 25/50/100/250/500/1000+,
  * we tint the rails + judge line briefly so the eye gets a *moment*. Decays
  * to zero over `MILESTONE_FLASH_DUR_MS`.
  */
@@ -241,13 +241,13 @@ export interface RenderState {
    * only READS this array (drawJudgmentPopups iterates with a `for`
    * loop and skips already-aged entries by `songTime - ev.at`). If you
    * ever need to mutate this array from the renderer side, copy first
-   * — the engine reuses the same backing array across frames.
+   * - the engine reuses the same backing array across frames.
    */
   recentEvents: JudgmentEvent[];
   /** Lane flash impulses [0..1] driven by hits. Indexed by lane. */
   laneFlash: number[];
   /**
-   * Per-lane "anticipation" pulse [0..1] — set by drawHighway whenever a
+   * Per-lane "anticipation" pulse [0..1] - set by drawHighway whenever a
    * note is within ANTICIPATION_WINDOW_S of the judge line. Read by
    * drawLaneGate to widen the ring + brighten the glow so the player sees
    * the gate "loading" before the note arrives.
@@ -255,7 +255,7 @@ export interface RenderState {
   laneAnticipation: number[];
   /** Active particle pool. Capped to PARTICLE_BUDGET so we can't unbounded-grow. */
   particles: Particle[];
-  /** Active shockwave pool — much smaller than particles (capped at 24). */
+  /** Active shockwave pool - much smaller than particles (capped at 24). */
   shockwaves: Shockwave[];
   /** Hit events pushed by the game; renderer drains and converts to particles. */
   pendingHits: PendingHit[];
@@ -283,7 +283,7 @@ export interface RenderState {
 interface RenderCache {
   W: number;
   H: number;
-  /** Theme the cached gradients were baked for — invalidates the cache on swap. */
+  /** Theme the cached gradients were baked for - invalidates the cache on swap. */
   paletteId: ThemeName;
   vignette: CanvasGradient;
   highway: CanvasGradient;
@@ -295,7 +295,7 @@ interface RenderCache {
    * intensity without re-allocating a gradient every frame.
    */
   railGradient: CanvasGradient;
-  /** Milestone vignette gradient — only recreated on resize/theme swap.
+  /** Milestone vignette gradient - only recreated on resize/theme swap.
    *  Re-allocating this every frame during a milestone showed up as ~3% of
    *  total frame time in profile traces. */
   milestoneVignette: CanvasGradient;
@@ -308,7 +308,7 @@ interface RenderCache {
   judgeY: number;
   /**
    * Visual top/bottom of the trapezoid AFTER the edge-fade extension.
-   * Strictly visuals — note spawn/travel still keys off `topY`/`judgeY`
+   * Strictly visuals - note spawn/travel still keys off `topY`/`judgeY`
    * so timing perception is identical to the pre-fade version.
    *
    * `bottomY` is the unfaded bottom edge (judgeY + 50) and is used by
@@ -322,7 +322,7 @@ interface RenderCache {
    * Trapezoid corners EXTRAPOLATED along the existing perspective slope
    * to the new visual top/bottom. Re-derived from the same slope as the
    * rails so the fade region's left/right edges remain perfectly
-   * collinear with the rails — no perspective break.
+   * collinear with the rails - no perspective break.
    */
   visTopLeftX: number;
   visTopRightX: number;
@@ -355,7 +355,7 @@ interface RenderCache {
   beatDotIdleRgb: RGB;
   /**
    * Pre-built `rgba()` lookup tables for the palette's accent and judge
-   * colors — 256 entries each, indexed by alpha bucket. Replaces every
+   * colors - 256 entries each, indexed by alpha bucket. Replaces every
    * per-frame `rgba(palette.accentRgb, ...)` / `rgba(palette.judgeRgb, ...)`
    * call (judgment line, judgment-line glow shadow, lane-flash on the
    * accent-tinted floor, etc.) with a pure array lookup. Rebuilt only
@@ -364,14 +364,14 @@ interface RenderCache {
   accentRgba: string[];
   judgeRgba: string[];
   /** RGBA LUT for the off-beat (idle) beat dot. Built from
-   *  `palette.beatDotIdle` — saves a per-frame `rgb(...)` shadowColor
+   *  `palette.beatDotIdle` - saves a per-frame `rgb(...)` shadowColor
    *  string + `rgba(...)` fill string in the upper-right beat indicator. */
   beatDotIdleRgba: string[];
 }
 
 const PARTICLE_BUDGET = 200;
 const SHOCKWAVE_BUDGET = 24;
-/** Pre-computed `Math.PI * 2` — used by every arc() call in the hot path
+/** Pre-computed `Math.PI * 2` - used by every arc() call in the hot path
  *  (notes, gates, particles, shockwaves, beat dot). Saves a multiply per
  *  arc on dense frames (~50+ arcs/frame). */
 const TAU = Math.PI * 2;
@@ -388,7 +388,7 @@ const ANTICIPATION_WINDOW_S = 0.18;
  *   t=miss       → engine flips note.judged="miss" + records judgedAt
  *
  * If the two fades are separate, the moment the engine fires the auto-miss
- * the alpha resets back to 1 and fades a second time — that "flicker pop"
+ * the alpha resets back to 1 and fades a second time - that "flicker pop"
  * is exactly what reads as the note "still being there" to the player.
  *
  * Solution: take the MINIMUM of the two fades each frame. The grace fade
@@ -396,14 +396,14 @@ const ANTICIPATION_WINDOW_S = 0.18;
  * notes that judged near the line. min() means the alpha never re-rises.
  *
  * Both use a fast ease-out curve (quadratic) so the note loses most of
- * its visual weight in the first ~40% of the window — feels snappy
+ * its visual weight in the first ~40% of the window - feels snappy
  * rather than "lingering ghost note".
  */
 const JUDGED_FADE_S = 0.10;
 const PAST_GRACE_S = 0.16;
 /**
  * Fraction of canvas height the trapezoid extends BEYOND the original
- * top and bottom edges. Used purely for visuals — gameplay math
+ * top and bottom edges. Used purely for visuals - gameplay math
  * (judgeY, topY, note spawn/travel timing) is unchanged.
  *
  * Top and bottom are tuned independently because they sit next to
@@ -411,7 +411,7 @@ const PAST_GRACE_S = 0.16;
  * so it only needs enough room for the alpha ramp to read as a soft
  * dissolve (≈26px on an 800px tall canvas). The bottom sits right
  * below the input button row, so a heavy fade-to-transparent strip
- * looks like an oppressive black band crowding the buttons — we
+ * looks like an oppressive black band crowding the buttons - we
  * keep the strip small AND clamp it to a non-zero alpha floor below
  * (`BOTTOM_FADE_FLOOR`) so the highway only dims at the bottom edge
  * instead of disappearing entirely.
@@ -429,14 +429,14 @@ const EDGE_FADE_PCT_BOTTOM = 0.038;
  * fully-opaque highway BEFORE the fade begins. Combined with the
  * reduced `EDGE_FADE_BLEED` below, the alpha=1 anchor now sits at
  * ≈`bottomY - 17px`, so the visible darkening starts ~85px below
- * `judgeY` and the perceptual midpoint sits ~108px below it — well
+ * `judgeY` and the perceptual midpoint sits ~108px below it - well
  * separated from the input buttons so the dissolve never reads as
  * crowding or covering them.
  */
 const BOTTOM_HIGHWAY_PAD = 100;
 /**
  * Lowest alpha the highway / rails fade to at the very bottom edge.
- * Now true 0 — any non-zero floor leaves the trapezoid's bottom edge
+ * Now true 0 - any non-zero floor leaves the trapezoid's bottom edge
  * visible as a dim shelf, which is exactly the "block" look we kept
  * fighting. With the short `BOTTOM_HIGHWAY_PAD` + tight ramp this
  * dissolves cleanly to nothing within ~25px of the buttons, no
@@ -452,7 +452,7 @@ const BOTTOM_FADE_FLOOR = 0;
  * close to `bottomY` rather than creeping back toward the buttons,
  * which is what visually separates the dissolve from the button
  * row. The wider `EDGE_FADE_PCT_BOTTOM` strip compensates so the
- * ramp itself still spans ~55px on a typical 800px canvas — long
+ * ramp itself still spans ~55px on a typical 800px canvas - long
  * enough that the eye reads it as a smooth gradient rather than a
  * crisp boundary.
  */
@@ -464,7 +464,7 @@ const EDGE_FADE_BLEED = 0.45;
  *
  * 0.95 means the fade happens across the first 5% of progress; on a
  * 1.2s leadTime that's ~60ms which is exactly the "very quick" window
- * the player asked for — fast enough to feel snappy, long enough to
+ * the player asked for - fast enough to feel snappy, long enough to
  * kill the pop. The same constant is reused for hold-trail head fade
  * and beat-line top fade so all three top-edge effects stay in sync.
  */
@@ -490,17 +490,17 @@ function rgba(c: RGB, a: number): string {
  * Profiling showed that the particle hot loop alone produced ~200
  * `rgba()` strings per frame (≈12k allocations / sec @ 60Hz). At dense
  * particle bursts this generated enough short-lived garbage to trigger
- * minor GC pauses every few seconds — the classic source of "fine for
+ * minor GC pauses every few seconds - the classic source of "fine for
  * 5s, then a 30ms hitch" stutters in canvas games.
  *
- * Fix: pre-compute `LANE_RGBA[lane][alphaBucket]` once at module load —
+ * Fix: pre-compute `LANE_RGBA[lane][alphaBucket]` once at module load -
  * 4 lanes × 256 alpha buckets = 1024 strings, ~25KB resident, ZERO
  * per-frame allocations. Alpha is quantized to 1/255 which is exactly
  * the precision the GPU uses for the 8-bit alpha channel anyway, so
  * there's no visual difference vs the unquantized form.
  *
  * Same trick applied to per-palette colors (accent / judge) via
- * `makeRgbaLut` — those luts live on the cache and rebuild only on
+ * `makeRgbaLut` - those luts live on the cache and rebuild only on
  * resize / theme swap, so they're free at frame time too.
  *
  * Hot-path call sites should use:
@@ -541,7 +541,7 @@ function laneRgba(lane: number, a: number): string {
 
 // White-with-alpha LUT, used for "shine" overlays (gate label glow,
 // shockwave white core). Same allocation-elimination pattern as
-// LANE_RGBA — saves a `toFixed(3)` + template-literal allocation per
+// LANE_RGBA - saves a `toFixed(3)` + template-literal allocation per
 // affected draw per frame, which matters because the shine fires on
 // every active lane on every keypress.
 const WHITE_SHINE_RGBA: string[] = makeRgbaLut({ r: 255, g: 255, b: 255 });
@@ -605,7 +605,7 @@ export function createRenderState(): RenderState {
  *        laptop, longer on integrated GPUs.
  *     2. JIT-compile drawTapNote / drawHoldNote / drawJudgmentText /
  *        the particle path. V8 keeps these in the interpreter until
- *        they're called several times — the very first call can spend
+ *        they're called several times - the very first call can spend
  *        4–10 ms in the parse+baseline tier alone.
  *
  *   Combined that's a 12–35 ms hitch on the EXACT frame the song begins,
@@ -663,7 +663,7 @@ export function prewarmRenderer(
     { noteId: -205, lane: 2, judgment: "perfect", delta: 0,    at: -0.05, tail: true },
   ];
 
-  // Throwaway RenderState — keeps the caller's particles / pendingHits /
+  // Throwaway RenderState - keeps the caller's particles / pendingHits /
   // milestone untouched. We pre-charge:
   //   - pendingHits: one per judgment so drainHits spawns particles +
   //     shockwaves of every flavor (warms updateAndDrawParticles +
@@ -706,7 +706,7 @@ export function prewarmRenderer(
   // in the throwaway and is discarded with it.
   realRs.cache = throwawayRs.cache;
 
-  // Wipe the canvas so nothing the prewarm drew is visible — both
+  // Wipe the canvas so nothing the prewarm drew is visible - both
   // Game.tsx and MultiGame.tsx have an overlay above the canvas
   // during the prewarm window, but clearing belt-and-suspenders means
   // we're safe even on the brief frame between mount and overlay paint.
@@ -734,7 +734,7 @@ export function crossedComboMilestone(
 }
 
 /**
- * Draw one frame. Coordinates are CSS pixels — caller pre-applies devicePixelRatio
+ * Draw one frame. Coordinates are CSS pixels - caller pre-applies devicePixelRatio
  * scaling via ctx.setTransform so we draw in logical units.
  *
  * Performance notes:
@@ -760,13 +760,13 @@ export function drawFrame(
    * `clientHeight` every frame.
    *
    * Reading those `client*` getters forces a layout flush in any
-   * browser engine that has a pending style invalidation — Chrome's
+   * browser engine that has a pending style invalidation - Chrome's
    * tracing showed it as ~0.1–0.4 ms per frame on contended layout
    * pages (hot canvas + a sibling React subtree just re-rendered).
    * Dropping the reads removes that variance entirely.
    *
    * Falls back to `ctx.canvas.clientWidth` / `clientHeight` when
-   * either argument is omitted or non-positive — keeps legacy
+   * either argument is omitted or non-positive - keeps legacy
    * call-sites (`prewarmRenderer`'s synthetic frame, any future
    * embedder that doesn't track size) working unchanged.
    */
@@ -784,7 +784,7 @@ export function drawFrame(
   // Clear to fully-transparent (NOT opaque pageBg) so the underlying
   // body background shows through. The body uses `rgb(var(--bg))`
   // which is wired into the same 220ms cubic-bezier theme transition
-  // that fades the header / footer / landing-page surface — so the
+  // that fades the header / footer / landing-page surface - so the
   // gameplay-area bg now crossfades in lockstep with the rest of the
   // app on a theme swap, instead of hard-cutting in one frame the
   // moment React's `theme` state flips.
@@ -809,7 +809,7 @@ export function drawFrame(
   // The old code allocated a fresh `Highway` object every frame here
   // (just to hand a few cached numbers to drawHighway / drawTapNote /
   // drawHoldTrail). On long sessions those tiny per-frame allocations
-  // were a real GC contributor — now we just thread `cache` through
+  // were a real GC contributor - now we just thread `cache` through
   // the call sites and read the numbers off it directly. Zero allocs
   // per frame on the geometry-passing path.
   const beatLen = 60 / opts.bpm;
@@ -823,7 +823,7 @@ export function drawFrame(
   const isDownbeat =
     Math.round((songTime - opts.offset) / beatLen) % 4 === 0;
 
-  // Particles + shockwaves are pure celebration VFX — gameplay is
+  // Particles + shockwaves are pure celebration VFX - gameplay is
   // identical without them, so `performance` mode skips drainHits
   // (which spawns both) AND the corresponding draw passes. We
   // still clear the pendingHits queue so the engine's per-hit push
@@ -843,15 +843,31 @@ export function drawFrame(
   // mode only). Computed ONCE here and threaded into drawHighway →
   // drawTapNote so the per-note loop doesn't recompute the same
   // sin() ~20× per frame on dense charts. In performance mode the
-  // breath is unused (no glow path runs) — pass 1 so the math stays
+  // breath is unused (no glow path runs) - pass 1 so the math stays
   // a no-op for callers that don't gate on `perf`.
   //
-  // 0.7 ± 0.3 sweeps the halo's globalAlpha between 0.4 and 1.0
-  // (was 0.8-1.0) — clearly perceptible as "the dots are breathing"
-  // without crossing into "the dots are pulsing distractingly".
-  // ω = 1.3 rad/s → ~4.8 s full cycle (was ~7 s) so the breath
-  // reads as a slow ambient rhythm rather than dragging.
-  const breath = perf ? 1 : 0.7 + 0.3 * Math.sin(songTime * 1.3);
+  // 0.9 ± 0.1 sweeps the halo's globalAlpha between 0.8 and 1.0
+  // (was 0.4-1.0). The previous 60 % swing dimmed dots noticeably
+  // every cycle - it read as the highway "blinking", and combined
+  // with all dots breathing in unison it added to the dizzy
+  // sensation players were reporting on dense charts. The new
+  // ±10 % swing is a soft shimmer the eye reads as "alive" without
+  // a visible brightness pulse, so the dots never look washed out.
+  //
+  // The COLORED RING under the halo is no longer modulated by
+  // breath at all (see drawTapNote - the solid fill is drawn before
+  // the halo at the note's intrinsic alpha). So the breath here ONLY
+  // affects the soft outer halo glow - exactly the layer that
+  // SHOULD breathe, leaving the rhythm-critical inner ring bright
+  // and saturated 100 % of the time.
+  //
+  // ω = 0.9 rad/s → ~7.0 s full cycle (was ~4.8 s). Slowing the
+  // pulse down further reduces the synchronized whole-screen
+  // throbbing that was contributing to the dizziness - the rate is
+  // now slower than human breathing (~12-20 cycles/min ≈ 3-5 s),
+  // so it reads as ambient atmosphere rather than something
+  // demanding attention.
+  const breath = perf ? 1 : 0.9 + 0.1 * Math.sin(songTime * 0.9);
 
   drawHighway(
     ctx, state, songTime, opts, rs,
@@ -900,12 +916,12 @@ function ensureCache(
   // Vertical placement of the playfield. `topY` + `judgeY` were
   // translated down together by ~4% of H vs the pre-tweak placement
   // (0.05 / 0.78 → 0.09 / 0.82) so the highway sits lower in its
-  // container — gives the score / settings cards visible breathing
+  // container - gives the score / settings cards visible breathing
   // room above the trapezoid and soaks up the previously-empty black
   // band beneath the lane gates. Playfield HEIGHT is unchanged
   // (judgeY - topY ≈ 0.73 * H in both versions), so note travel
   // time, perspective, and every other y-derived constant stay
-  // identical — this is a pure translate.
+  // identical - this is a pure translate.
   const judgeY = H * opts.judgeLineY;
   const topY = H * 0.09;
   const cx = W / 2;
@@ -938,7 +954,7 @@ function ensureCache(
   vignette.addColorStop(1, palette.vignetteOuter);
 
   // Visual edge extension. The trapezoid's geometric "play area" stays
-  // anchored at topY → bottomY — that's where notes live and where
+  // anchored at topY → bottomY - that's where notes live and where
   // the rails *used* to terminate. We extend outward by
   // `EDGE_FADE_PCT_TOP / _BOTTOM` of H on each side and use that
   // extra strip purely for the fade-to-transparent so the highway
@@ -956,7 +972,7 @@ function ensureCache(
   // Extrapolate the trapezoid corners along the existing rail slope so
   // the fade-zone widening matches the perspective EXACTLY. If we just
   // pushed the corners straight up/down we'd get a tiny "step" where
-  // the rails meet the fade region — the eye picks that up immediately.
+  // the rails meet the fade region - the eye picks that up immediately.
   const slope = (bottomHalf - topHalf) / (bottomY - topY);
   const visTopHalf = Math.max(0, topHalf - slope * (topY - topYVisual));
   const visBottomHalf = bottomHalf + slope * (bottomYVisual - bottomY);
@@ -965,7 +981,7 @@ function ensureCache(
   const visBottomLeftX = cx - visBottomHalf;
   const visBottomRightX = cx + visBottomHalf;
 
-  // Highway gradient — spans the FULL visual extent (including the
+  // Highway gradient - spans the FULL visual extent (including the
   // fade zones) and uses rgba so we can fade alpha to 0 at the very
   // top and very bottom.
   //
@@ -974,7 +990,7 @@ function ensureCache(
   // covers (a) the entire new strip plus (b) a small slice of the
   // original highway. Without this bleed the ramp is contained inside
   // a ~32px strip whose start AND end pixels are visible against the
-  // page bg simultaneously — the eye picks the ramp endpoints out as
+  // page bg simultaneously - the eye picks the ramp endpoints out as
   // two faint horizontal lines instead of "no edge". With the bleed,
   // the alpha-1 anchor sits well inside the highway and the ramp
   // gradient looks like a single smooth dissolve.
@@ -991,7 +1007,7 @@ function ensureCache(
   // below produce NaN. NaN then propagates through `clamp` (which is
   // NaN-pass-through with `<` / `>` comparisons) into `addColorStop`,
   // which the spec mandates throw `TypeError: non-finite double` for
-  // anything but a finite [0, 1] number — taking down the entire
+  // anything but a finite [0, 1] number - taking down the entire
   // render frame. Clamping to ≥1 keeps the math finite; the rendered
   // gradient is briefly degenerate but the next ensureCache() rebuild
   // (with real dimensions) corrects it.
@@ -1030,12 +1046,12 @@ function ensureCache(
   highway.addColorStop(fadeTopAnchor, rgba(stop0, 1));
   highway.addColorStop(innerMid, rgba(stop1, 1));
   highway.addColorStop(fadeBotAnchor, rgba(stop2, 1));
-  // Bottom dissolves to `BOTTOM_FADE_FLOOR` instead of 0 — keeps a
+  // Bottom dissolves to `BOTTOM_FADE_FLOOR` instead of 0 - keeps a
   // faint highway tone behind the input buttons so the fade reads as
   // a soft dim instead of a hard fade-to-bg band right under them.
   highway.addColorStop(1, rgba(stop2, BOTTOM_FADE_FLOOR));
 
-  // Rail gradient — same fade anchors at unit accent alpha so the
+  // Rail gradient - same fade anchors at unit accent alpha so the
   // rails fade in/out in lockstep with the highway floor. Per-frame
   // rail draw sets `globalAlpha = railAlpha` which scales the WHOLE
   // gradient (including the gradient's own alpha stops); the
@@ -1056,7 +1072,7 @@ function ensureCache(
     const f = (i + 0.5) / MAIN_LANE_COUNT;
     // Bottom (= judge-line) X is what particles + lane gates use.
     laneX.push(lerp(bottomLeftX, bottomRightX, f));
-    // Top + bottom edges of the trapezoid for this lane — used by
+    // Top + bottom edges of the trapezoid for this lane - used by
     // drawTapNote / drawHoldTrail to lerp the X along note progress
     // without re-deriving the endpoints per note per frame.
     laneXTop.push(lerp(topLeftX, topRightX, f));
@@ -1074,7 +1090,7 @@ function ensureCache(
   // multiply by `globalAlpha` per draw to scale the flash strength
   // instead of re-allocating a gradient with new color stops every
   // frame (the gradient takes a non-trivial amount of work to create
-  // — caching it dropped milestone-active frames from ~6.5ms to ~5.2ms
+  // - caching it dropped milestone-active frames from ~6.5ms to ~5.2ms
   // on a Ryzen 5 / 1080p test rig).
   const milestoneVignette = ctx.createRadialGradient(
     W / 2, H * 0.55, Math.min(W, H) * 0.25,
@@ -1118,7 +1134,7 @@ function drawHighway(
   perf: boolean,
   breath: number,
 ) {
-  // Trapezoid floor — drawn at the EXTENDED visual extent so the
+  // Trapezoid floor - drawn at the EXTENDED visual extent so the
   // baked highway gradient can fade alpha to 0 at top and bottom. The
   // gameplay area (where notes live) still occupies topY → judgeY+50;
   // everything outside that band is the fade strip.
@@ -1131,15 +1147,15 @@ function drawHighway(
   ctx.fillStyle = cache.highway;
   ctx.fill();
 
-  // Rails — fixed neon glow, no beat-pulse / milestone / downbeat
+  // Rails - fixed neon glow, no beat-pulse / milestone / downbeat
   // modulation. Earlier versions ramped `railAlpha`, `railBlur` and
   // `lineWidth` against `beatPulse` to "react" to the music, but at
   // 161 BPM that's ~2.7 alpha+blur swings per second on the most
-  // visually dominant element on screen — extremely distracting and
+  // visually dominant element on screen - extremely distracting and
   // exactly what the player called out as "constantly flashing".
   // The judgment line still pulses (it's narrow and subtle), and the
   // milestone vignette still flashes the whole canvas tinted on
-  // combo milestones, so the music-reactive feedback isn't lost — it
+  // combo milestones, so the music-reactive feedback isn't lost - it
   // just isn't competing with the rails for attention anymore.
   //
   // Strokestyle uses the CACHED `railGradient` (baked once per
@@ -1168,7 +1184,7 @@ function drawHighway(
   // resolve it here even though the rails no longer need it.
   const ms = rs.milestone?.strength ?? 0;
 
-  // Lane separators — endpoints baked once in `ensureCache`, AND all N
+  // Lane separators - endpoints baked once in `ensureCache`, AND all N
   // separators batched into a single path + single stroke. Each
   // separator shares strokeStyle + lineWidth so there's no need to
   // break them into individual stroke calls. Drops MAIN_LANE_COUNT-1
@@ -1191,7 +1207,7 @@ function drawHighway(
     const progress = (t - songTime) / opts.leadTime;
     if (progress < 0 || progress > 1) continue;
     // Beat lines that just spawned at the top get the same quick alpha
-    // ramp as notes — without it they pop into existence at full alpha
+    // ramp as notes - without it they pop into existence at full alpha
     // right at topY, which reads as a "twitch" on every measure as the
     // grid scrolls. Same SPAWN_FADE_PROGRESS constant as note + hold
     // fade-ins keeps every top-edge effect in sync.
@@ -1206,7 +1222,7 @@ function drawHighway(
     const isMeasure = Math.round((t - opts.offset) / beatLen) % 4 === 0;
     ctx.strokeStyle = isMeasure ? palette.measureLine : palette.beatLine;
     ctx.lineWidth = isMeasure ? 2 : 1;
-    // save/restore only on the few frames a beat is in the fade zone —
+    // save/restore only on the few frames a beat is in the fade zone -
     // most frames are fully opaque and skip the state shuffle entirely.
     const needsAlpha = beatAlpha < 1;
     if (needsAlpha) {
@@ -1220,7 +1236,7 @@ function drawHighway(
     if (needsAlpha) ctx.restore();
   }
 
-  // Notes — draw hold trails first (behind), then heads.
+  // Notes - draw hold trails first (behind), then heads.
   // Indexed loops over state.notes (instead of `for...of`) avoid the
   // per-frame Iterator object allocation. On dense charts (~3000 notes) the
   // hot path is called twice per frame, so this saves measurable GC.
@@ -1234,7 +1250,7 @@ function drawHighway(
   // the visible window instead of the song's elapsed length. Buffer (0.3s)
   // exceeds PAST_GRACE_S + JUDGED_FADE_S so we never elide a note that
   // could still contribute to a trailing fade.
-  // Clamp on entry — a fresh GameState (new song / restart) resets `notes`
+  // Clamp on entry - a fresh GameState (new song / restart) resets `notes`
   // but the cursor lives on `rs`; bounds check protects against that race.
   if (rs.firstVisibleIdx > len) rs.firstVisibleIdx = 0;
   while (rs.firstVisibleIdx < len) {
@@ -1256,7 +1272,7 @@ function drawHighway(
       if (headLook > opts.leadTime + 1) break;
       continue;
     }
-    // Hold trail fade — same min() pattern as tap notes so the engine's
+    // Hold trail fade - same min() pattern as tap notes so the engine's
     // auto-miss flip doesn't pop the alpha back to 1 mid-fade.
     let trailAlpha = 1;
     if (tailLook < 0) {
@@ -1286,7 +1302,7 @@ function drawHighway(
       continue;
     }
     // Compute fade alpha as the MIN of the two pathways so the alpha
-    // is monotonically decreasing — see JUDGED_FADE_S/PAST_GRACE_S
+    // is monotonically decreasing - see JUDGED_FADE_S/PAST_GRACE_S
     // doc comment above for why this matters.
     let alpha = 1;
     if (lookahead < 0) {
@@ -1304,7 +1320,7 @@ function drawHighway(
       }
     }
     if (alpha <= 0.01) continue;
-    // Anticipation only fires for upcoming (non-judged) notes — once the
+    // Anticipation only fires for upcoming (non-judged) notes - once the
     // note has passed or been hit, the gate shouldn't keep pulsing for it.
     if (
       !n.judged &&
@@ -1319,7 +1335,7 @@ function drawHighway(
     drawTapNote(ctx, n, lookahead, opts, palette, alpha, cache, perf, breath);
   }
 
-  // Judgment line — subtle pulse on the beat AND on combo milestones.
+  // Judgment line - subtle pulse on the beat AND on combo milestones.
   // In performance mode the pulsing shadow is the most repaint-heavy
   // strip on the canvas (it grows + shrinks every beat); we still draw
   // the line at the same alpha so timing is unambiguous, just without
@@ -1340,11 +1356,11 @@ function drawHighway(
   ctx.stroke();
   ctx.restore();
 
-  // Per-lane judgment-line "kiss" — a tiny accent segment under each gate
+  // Per-lane judgment-line "kiss" - a tiny accent segment under each gate
   // that swells with the lane's most recent flash. Reads as the lane
   // "lighting up the floor" for half a beat after a hit. Skipped in
   // performance mode because (a) it overlaps the lane gate so the
-  // visual cue isn't lost — the gate fill itself still flashes — and
+  // visual cue isn't lost - the gate fill itself still flashes - and
   // (b) it draws with shadowBlur per-lane per-frame, which is expensive
   // on integrated GPUs.
   if (!perf) {
@@ -1399,53 +1415,86 @@ function drawTapNote(
 
   // Lane top/bottom X are baked in `ensureCache` (constant per lane until
   // the canvas resizes). Only the perspective-progress lerp varies
-  // per-note — saves 2 lerps per note per frame on dense charts.
+  // per-note - saves 2 lerps per note per frame on dense charts.
   const xTop = cache.laneXTop[n.lane];
   const xBot = cache.laneXBot[n.lane];
   const x = lerp(xTop, xBot, 1 - progress);
 
-  const radius = lerp(11.5, 27.5, 1 - progress);
+  // Note size scaling tuned for visual presence + minimum perspective-
+  // zoom dizziness:
+  //
+  //   - was `lerp(11.5, 27.5, ...)` → 2.39 × growth top→bottom. At
+  //     11.5 px the top dots are TINY (the visible colored rim after
+  //     the bg overdraw is only ~3-5 px wide), which is why they
+  //     read as "dull, washed out" against the dark highway. At the
+  //     same time the 2.4 × scale ratio is enough to feel like notes
+  //     are "rushing at you" - exactly the dizziness players were
+  //     reporting on dense charts.
+  //   - now  `lerp(15, 26, ...)`  → 1.73 × growth. Top dots still
+  //     read as smaller (perspective is preserved), but the colored
+  //     rim is ~6-8 px wide so saturation actually registers, AND
+  //     the per-note size delta as it falls is much gentler so the
+  //     incoming column reads as "moving down the highway" rather
+  //     than "expanding outward at the player". Bottom is one px
+  //     under the previous max so it still fits comfortably inside
+  //     the lane-gate inner ring (innerRingR = r - 5 = 33).
+  //
+  // Gameplay math is unchanged - note y still tracks songTime exactly,
+  // so timing windows / hit registration / judgments are bit-identical
+  // to the pre-tweak version. This is a pure visual rebalance.
+  const radius = lerp(15, 26, 1 - progress);
   const color = LANE_COLORS[n.lane];
 
-  // Manual globalAlpha save/restore. Was `ctx.save()/ctx.restore()` —
+  // Manual globalAlpha save/restore. Was `ctx.save()/ctx.restore()` -
   // dropped because we only mutate globalAlpha + fillStyle here, and
   // every downstream draw path (next note, lane gate, judgment text,
   // etc.) overwrites fillStyle on entry. Avoiding the canvas state
   // stack push/pop saves ~2 ops per visible note per frame; on a
   // dense chart with ~25 notes on screen that's ~50 ops/frame
-  // eliminated. Also drops the dead `ctx.shadowBlur = 0;` calls that
-  // used to live here — neither branch sets shadowBlur (the perf
-  // path is unshadowed fill, the quality path is a drawImage blit
-  // which doesn't honor shadowBlur), so the resets were no-ops.
+  // eliminated.
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = alpha;
-  // Glow rendering path:
-  //   - quality mode → pre-rasterized `drawRadialGlow` blit. Cheap
-  //     enough (a single drawImage) that we can run it on every
-  //     visible note from the top of the highway down to the judge
-  //     line; there's no longer a `closeToLine` gate. That keeps the
-  //     entire incoming column reading as a single coherent stream
-  //     of glowing dots instead of a hard "glow turns on at 55 %"
-  //     band that visibly popped each note as it crossed mid-screen.
-  //   - performance mode → unshadowed fill (same as before). The
-  //     colored ring + inner core still read clearly and we keep the
-  //     zero-shadow-pass cost for integrated GPUs.
+
+  // Layered draw stack (4 disc passes, all centered on (x, y)):
   //
-  // Breath modulation:
-  //   The glow's intensity breathes via globalAlpha — a slow sine
-  //   sweep computed ONCE per frame in `drawFrame` and threaded down
-  //   to every visible note, so all dots breathe in unison (reads as
-  //   a coherent ambient pulse of the highway, not random per-note
-  //   strobing). Modulates ONLY the halo's intensity, not the inner
-  //   core — the core stays stable so the rhythm-critical center
-  //   point of every note never wavers. Hoisting kills N-1 sin()
-  //   calls per frame on dense charts at ~zero cost.
-  if (perf) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, TAU);
-    ctx.fill();
-  } else {
+  //   1. Solid colored fill at FULL note alpha (radius). This is the
+  //      "saturated rim" the player sees as the lane color - pinned
+  //      to the note's intrinsic alpha (1 in flight, fading post-
+  //      judgment) so the colored ring NEVER dims with the breath
+  //      pulse. Used in BOTH perf and quality modes.
+  //   2. Soft outer halo at BREATH alpha (quality only). The radial
+  //      glow sprite re-fills the same disc area at breath alpha
+  //      (no visible change inside - same color over same color is
+  //      a no-op compositionally) and adds a blurred halo extending
+  //      OUTSIDE the disc. So the halo is the only thing that
+  //      breathes; the colored ring underneath stays vivid.
+  //   3. Background-tone overdraw at 0.6 r → carves the inner hole
+  //      so the disc reads as a colored RING instead of a solid
+  //      dot. Inherits the breath-modulated globalAlpha but it's
+  //      drawing the page bg color, so the visual effect is just
+  //      "ring vs solid disc" - no color change.
+  //   4. Tiny center core at 0.28 r → the rhythm-critical center
+  //      point of the note. Kept on the same alpha pass so it
+  //      remains the brightest pixel on the note.
+  //
+  // Why this fixes the "dull / low opacity" complaint:
+  //   The previous order drew the glow sprite at breath alpha as the
+  //   ONLY colored layer. When breath swung down to 0.4, the visible
+  //   colored ring went down to 0.4 too - which is exactly the
+  //   "washed out" look. Putting the solid fill underneath the
+  //   breath layer means the ring stays at the note's intrinsic
+  //   alpha (1 mid-flight) regardless of where breath is in its
+  //   cycle. The breath now ONLY animates the halo glow's intensity,
+  //   which reads as a soft "shimmer" instead of dimming the dot.
+  //
+  // Cost: one extra `arc + fill` per visible note per frame in
+  // quality mode (~25 notes on dense charts = 25 fills/frame, well
+  // under any GC threshold; perf mode is unchanged).
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, TAU);
+  ctx.fill();
+  if (!perf) {
     drawRadialGlow(ctx, color, x, y, radius, 18, breath);
   }
   ctx.fillStyle = palette.noteInner;
@@ -1507,8 +1556,13 @@ function drawHoldTrail(
   const xTail = lerp(xHeadTop, xHeadBot, 1 - visTail);
 
   // Width tapers with perspective just like the notes themselves.
-  const wHead = lerp(10.5, 27.5, 1 - visHead);
-  const wTail = lerp(10.5, 27.5, 1 - visTail);
+  // Endpoints retuned to match the new tap-note scaling (15→26 instead
+  // of 11.5→27.5) so the ribbon doesn't look thicker/thinner than the
+  // head it connects to. Slightly inset (14 vs 15 at top, 26 vs 26 at
+  // bottom) to keep the visual hint that the ribbon is "behind" the
+  // head - same relative inset as the previous (10.5 / 11.5) pair.
+  const wHead = lerp(14, 26, 1 - visHead);
+  const wTail = lerp(14, 26, 1 - visTail);
 
   const color = LANE_COLORS[n.lane];
   const consumed = n.holding === true;
@@ -1516,14 +1570,14 @@ function drawHoldTrail(
 
   // Manual globalAlpha save/restore. Previously `ctx.save()/restore()`,
   // dropped because the only state we leak on the way out is fillStyle/
-  // strokeStyle/lineWidth — every downstream path overwrites all three
+  // strokeStyle/lineWidth - every downstream path overwrites all three
   // on entry. shadowBlur is explicitly reset to 0 below before exit
   // so subsequent paths aren't accidentally shadowed. Saves 2 canvas
   // state-stack ops per visible hold per frame.
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = alphaMul;
   ctx.fillStyle = laneRgba(n.lane, alpha);
-  // Same "near the line" gating as drawTapNote — a hold trail's shadow
+  // Same "near the line" gating as drawTapNote - a hold trail's shadow
   // is the most expensive part of its draw, but visually only matters
   // when the head is close to the judge line OR the note is being
   // actively sustained (consumed). Far-up trails skip the blur entirely.
@@ -1558,7 +1612,7 @@ function drawHoldTrail(
     ctx.lineWidth = 2;
     // Tail-cap glow: visible flourish but not gameplay-critical (the
     // outlined rect already reads as a release marker). Performance
-    // mode skips the shadow pass entirely — on a long sustain this
+    // mode skips the shadow pass entirely - on a long sustain this
     // would otherwise repaint ~60 blurred rectangles/sec, which is
     // the single most expensive thing a hold trail does on
     // integrated GPUs.
@@ -1589,7 +1643,7 @@ function drawLaneGate(
   perf: boolean,
 ) {
   // Gate geometry. Tuned so the letter+arrow stack reads as a single,
-  // centered glyph block — see LETTER_DY / ARROW_DY below for the exact
+  // centered glyph block - see LETTER_DY / ARROW_DY below for the exact
   // offsets that compensate for canvas text metrics.
   const r = 38;            // outer ring radius
   const innerRingR = r - 5;  // held-color disk (sits inside the ring)
@@ -1599,8 +1653,8 @@ function drawLaneGate(
 
   // Anticipation halo: a soft outer ring drawn behind everything else when
   // a note is about to land in this lane. Quadratic ease so the halo isn't
-  // visible 200ms out — it materializes only in the last ~100ms.
-  // Skipped in perf mode — the gate glow on press still telegraphs the
+  // visible 200ms out - it materializes only in the last ~100ms.
+  // Skipped in perf mode - the gate glow on press still telegraphs the
   // hit, and this halo costs an extra shadow pass per lane per frame.
   if (!perf && anticipation > 0.05) {
     ctx.save();
@@ -1623,11 +1677,11 @@ function drawLaneGate(
     ctx.stroke();
   } else {
     // Held / flash glow + a small lift from anticipation so the gate
-    // "pulls" as the note approaches — extra anticipatory feel before
+    // "pulls" as the note approaches - extra anticipatory feel before
     // any keypress.
     //
     // `flash * 32` (was 22) so a fresh hit (laneFlash=1) briefly halos
-    // at ~40 px instead of ~30 px — reads as "the ring just popped"
+    // at ~40 px instead of ~30 px - reads as "the ring just popped"
     // rather than a subtle dim-up. Decays naturally over ~220 ms with
     // the existing 4.5/s `laneFlash` ramp in Game.tsx / MultiGame.tsx.
     //
@@ -1635,13 +1689,13 @@ function drawLaneGate(
     // becomes a pre-rasterized sprite blit (one drawImage call)
     // instead of `arc + stroke + shadowBlur` per lane per frame.
     // Both stroke and shadow are the OPAQUE lane color in this
-    // path, so the sprite captures the visual exactly — same look,
+    // path, so the sprite captures the visual exactly - same look,
     // ~10-30x cheaper on integrated GPUs / software fallbacks.
     const blur = held || holding ? 26 : 8 + flash * 32 + anticipation * 12;
     drawRingGlow(ctx, color, x, y, r, 4, blur, 1);
   }
 
-  // Held / flash fill — extra strong while sustaining a hold.
+  // Held / flash fill - extra strong while sustaining a hold.
   const fillAlpha = Math.max(
     holding ? 0.95 : held ? 0.85 : 0,
     flash,
@@ -1658,7 +1712,7 @@ function drawLaneGate(
   // Outer-ring brightness pop on hit. A second thin white-tinted
   // stroke layered on top of the lane-colored ring so the outer
   // circle visibly *brightens* for ~220 ms after a successful hit
-  // (`laneFlash` resets to 1.0 on hit, then decays at 4.5/s — see
+  // (`laneFlash` resets to 1.0 on hit, then decays at 4.5/s - see
   // Game.tsx / MultiGame.tsx).
   //
   // Critically this works identically in BOTH perf and quality
@@ -1688,12 +1742,12 @@ function drawLaneGate(
   // Label + arrow always render in the lane color so they stay legible on
   // the dark gateInner regardless of held state. (Earlier versions tried
   // to flip the color to gateLabelOnFill on press, but gateInner is the
-  // *same* tone as gateLabelOnFill in both themes — the label vanished.)
+  // *same* tone as gateLabelOnFill in both themes - the label vanished.)
   // When pressed/held we instead add a soft white shine: a glow halo
   // around the glyph plus a small alpha bump. Reads as "the key lit up"
   // rather than the letter going dark.
   // LETTER_DY / ARROW_DY position the pair so its visual midpoint lands on
-  // (x, y) — the circle center. With "middle" baseline a 26px ExtraBold cap
+  // (x, y) - the circle center. With "middle" baseline a 26px ExtraBold cap
   // is ~18px tall, the arrow is 11px tall, with a 4px gap between them:
   //   stack height ≈ 18 + 4 + 11 = 33
   //   letter center → y - 7.5, arrow center → y + 10  → rounded below.
@@ -1701,7 +1755,7 @@ function drawLaneGate(
   const ARROW_DY = 10;
   const ARROW_SIZE = 11;
 
-  // Press shine intensity — strongest on an active hold sustain, slightly
+  // Press shine intensity - strongest on an active hold sustain, slightly
   // softer on a normal keypress, fades out alongside the lane flash.
   const shine = holding ? 1 : held ? 0.85 : flash * 0.6;
 
@@ -1718,7 +1772,7 @@ function drawLaneGate(
   } else {
     ctx.shadowBlur = 0;
   }
-  // 800 (ExtraBold) is the heaviest weight loaded for JetBrains Mono — see
+  // 800 (ExtraBold) is the heaviest weight loaded for JetBrains Mono - see
   // app/layout.tsx. Asking for 900 here would silently fall back to 700
   // (the next loaded weight) and make the letter look the same as
   // font-bold. The size bump to 26 gives the glyph the visual mass we
@@ -1728,7 +1782,7 @@ function drawLaneGate(
   ctx.textBaseline = "middle";
   ctx.fillText(LANE_LABEL[lane], x, y + LETTER_DY);
 
-  // Brutalist arrow indicator under the letter — drawn as a real canvas
+  // Brutalist arrow indicator under the letter - drawn as a real canvas
   // path (not a font glyph) so it's pixel-identical to the SVG arrows used
   // in the rest of the UI. Slightly dimmer than the letter so the lane
   // identity reads "letter-first". Brightens on press for the same shine.
@@ -1814,7 +1868,7 @@ function drawArrow(
 }
 
 // ---------------------------------------------------------------------------
-// Judgment popup constants — keep ALL string literals out of the hot loop.
+// Judgment popup constants - keep ALL string literals out of the hot loop.
 // Pre-built LUTs / font cache / labels save 4 string allocations + a
 // `parseInt` × 3 + a `toFixed` per popup per frame. With 4 lanes firing
 // once per beat that's ~100 strings/sec eliminated, enough to keep this
@@ -1874,7 +1928,7 @@ function drawJudgmentPopups(
 ) {
   ctx.save();
   ctx.textAlign = "center";
-  // Indexed loop (not for...of) per the project's hot-path convention —
+  // Indexed loop (not for...of) per the project's hot-path convention -
   // every frame allocates one fewer Iterator object. Events array is
   // capped at 32 by the engine, but this runs every frame for the entire
   // session so the savings add up.
@@ -1884,7 +1938,7 @@ function drawJudgmentPopups(
     const age = songTime - ev.at;
     if (age < 0 || age > 0.6) continue;
     const t = age / 0.6;
-    // Cubic-out lift: fast at the start, settles at the top — reads as a
+    // Cubic-out lift: fast at the start, settles at the top - reads as a
     // satisfying "pop" instead of a constant linear drift.
     const liftEase = 1 - Math.pow(1 - t, 3);
     const yOff = -liftEase * 56;
@@ -1915,7 +1969,7 @@ function drawJudgmentPopups(
 // ---------------------------------------------------------------------------
 /**
  * Big combo number rendered straight on the canvas above the judge line.
- * Only shows once the combo passes 10 — below that the HUD card already
+ * Only shows once the combo passes 10 - below that the HUD card already
  * carries the information and a giant "5" on the highway looks silly.
  *
  * Sized to swell on milestones, fade slightly on the off-beat. Cheap: a
@@ -1994,7 +2048,7 @@ function drawCanvasCombo(
 
 // ---------------------------------------------------------------------------
 /**
- * Brief tinted vignette on milestone — a screen-edge accent flash that
+ * Brief tinted vignette on milestone - a screen-edge accent flash that
  * fades over ~700ms. We re-use the cached vignette gradient stop pattern,
  * but with the brand accent instead of the dark stop, and we only paint
  * it when a milestone is active.
@@ -2008,12 +2062,12 @@ function drawMilestoneVignette(
 ): void {
   const m = rs.milestone;
   if (!m || m.strength <= 0) return;
-  // Curve: peak quickly then trail off — feels like a flash, not a pulse.
+  // Curve: peak quickly then trail off - feels like a flash, not a pulse.
   // `lighter` blend lets the accent edge punch *through* the highway
   // colors instead of muddying them, which is what gives the milestone
   // its characteristic "screen reacts" arcade pop.
   // Uses the cached `cache.milestoneVignette` (baked at unit alpha for
-  // the accent) — globalAlpha scales the flash without rebuilding the
+  // the accent) - globalAlpha scales the flash without rebuilding the
   // gradient every frame.
   const k = clamp(m.strength, 0, 1);
   const peakAlpha = 0.32 * k * k;
@@ -2026,7 +2080,7 @@ function drawMilestoneVignette(
 }
 
 // ---------------------------------------------------------------------------
-// Shockwave rings — drawn between the highway pass and the particles. Use
+// Shockwave rings - drawn between the highway pass and the particles. Use
 // `lighter` blend so overlapping waves stack into a brighter peak rather
 // than canceling each other out, matching osu!mania's hit feedback feel.
 // ---------------------------------------------------------------------------
@@ -2057,7 +2111,7 @@ function updateAndDrawShockwaves(
     ctx.arc(s.x, s.y, radius, 0, TAU);
     ctx.stroke();
     if (s.intense && t < 0.4) {
-      // White core for the first ~180ms of perfect hits — the splash that
+      // White core for the first ~180ms of perfect hits - the splash that
       // your eye reads as "yes that was clean".
       ctx.strokeStyle = whiteShineRgba(0.55 * (1 - t * 2.5));
       ctx.lineWidth = 1.5;
@@ -2094,7 +2148,7 @@ function drawBeatDot(
   const lut = isDownbeat ? cache.accentRgba : cache.beatDotIdleRgba;
   const r = 5 + pulse * 5;
   if (!perf) {
-    // Solid (alpha 1) entry of the same LUT — the shadow only cares
+    // Solid (alpha 1) entry of the same LUT - the shadow only cares
     // about the RGB channels.
     ctx.shadowColor = rgbaFromLut(lut, 1);
     ctx.shadowBlur = 8 + pulse * 16;
@@ -2107,7 +2161,7 @@ function drawBeatDot(
 }
 
 // ---------------------------------------------------------------------------
-// Particle system — small, no shadow blur, capped by PARTICLE_BUDGET.
+// Particle system - small, no shadow blur, capped by PARTICLE_BUDGET.
 // What it does: on a successful tap the renderer spawns ~16 particles at
 // the lane gate. They fly upward with random spread, fade, and shrink.
 // Cheap to draw (filled circles, no shadow), but huge perceived polish gain.
@@ -2117,7 +2171,7 @@ function drainHits(rs: RenderState, cache: RenderCache): void {
   const hits = rs.pendingHits;
   const n = hits.length;
   if (n === 0) return;
-  // Indexed loop (not for...of) — same hot-path convention used by the
+  // Indexed loop (not for...of) - same hot-path convention used by the
   // popup loop. Saves one Iterator allocation per frame at the price of
   // one local variable.
   for (let idx = 0; idx < n; idx++) {
@@ -2178,7 +2232,7 @@ function spawnBurst(
   }
 }
 
-const GRAVITY = 480; // px/sec^2 — gentle pull so particles arc
+const GRAVITY = 480; // px/sec^2 - gentle pull so particles arc
 
 function updateAndDrawParticles(
   ctx: CanvasRenderingContext2D,
@@ -2222,7 +2276,7 @@ function lerp(a: number, b: number, t: number) {
 
 // NaN-safe: a plain `v < lo ? lo : v > hi ? hi : v` returns `NaN` for
 // `NaN` input (both comparisons evaluate false). That's the wrong
-// behavior for downstream consumers — a NaN ratio handed to e.g.
+// behavior for downstream consumers - a NaN ratio handed to e.g.
 // `addColorStop` throws "non-finite double" and aborts the entire
 // frame paint. We collapse non-finite inputs to `lo` so the gradient
 // stays valid even when an upstream divide-by-zero leaks through.
@@ -2232,7 +2286,7 @@ function clamp(v: number, lo: number, hi: number) {
 }
 
 /**
- * Convert "#rrggbb" to "rgba(r,g,b,a)". Slow path — three parseInts each call.
+ * Convert "#rrggbb" to "rgba(r,g,b,a)". Slow path - three parseInts each call.
  * Prefer the pre-parsed `rgba(LANE_RGB[i], a)` form on per-frame hot paths.
  * Kept here for one-off colors (popup grades, beat dot variants).
  */

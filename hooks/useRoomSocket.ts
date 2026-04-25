@@ -88,12 +88,19 @@ export interface RoomActions {
   /** Host: flip room discoverability. Server validates the enum and
    * no-ops when the value already matches the current setting. */
   setRoomVisibility(visibility: RoomVisibility): void;
+  /**
+   * Host: flip the room's match-wide Strict Inputs (anti-mash) flag.
+   * Lobby phase only - server rejects mid-match flips so the policy
+   * can't shift out from under players inside a song. The new value
+   * propagates to every client on the next snapshot.
+   */
+  setStrictInputs(strictInputs: boolean): void;
   /** Host: ask server to (re)fetch the catalog. */
   requestCatalog(refresh?: boolean): Promise<CatalogItem[]>;
   /**
    * Host: paginated no-query catalog browse, sorted by `sort`
    * (default: `ranked_desc`). `refresh: true` bypasses the server's
-   * 5-min cache for the current page — used by the ↻ button.
+   * 5-min cache for the current page - used by the ↻ button.
    * Returns `null` on error (surfaced via lastError toast).
    */
   browseCatalog(
@@ -119,9 +126,9 @@ export interface RoomActions {
    * Host: text-query catalog search with explicit pagination.
    *
    * Resolves to `{ items, hasMore, page, query }`. `query` is the
-   * normalized form the server actually used — caller can compare it
+   * normalized form the server actually used - caller can compare it
    * against the input they sent to detect that a stale (debounced)
-   * response arrived AFTER a newer one. `hasMore` is a heuristic — UI
+   * response arrived AFTER a newer one. `hasMore` is a heuristic - UI
    * should disable Next on `false` rather than trusting it as exact.
    *
    * On error returns `null`; the error is surfaced via `lastError` for
@@ -132,7 +139,7 @@ export interface RoomActions {
     page: number,
     opts?: {
       /**
-       * Optional Syncle bucket filter — same semantics as
+       * Optional Syncle bucket filter - same semantics as
        * `browseCatalog.opts.bucket`. Server post-filters the search
        * page to sets that contain this tier. `undefined` = no filter.
        */
@@ -150,7 +157,7 @@ export interface RoomActions {
    * authoritative record of which tier is queued. */
   setMode(mode: ChartMode): void;
   /**
-   * Host: explicit start — works whether or not everyone is ready
+   * Host: explicit start - works whether or not everyone is ready
    * (host can choose to wait for full quorum or start anyway).
    *
    * The server does NOT flip into the loading phase immediately.
@@ -181,26 +188,26 @@ export interface RoomActions {
   resumeMatch(): void;
   /**
    * Host: hard-cancel an in-progress match (countdown / playing /
-   * paused) and bounce everyone to the lobby. Destructive — no
+   * paused) and bounce everyone to the lobby. Destructive - no
    * standings recorded. Used by the host's pause-menu cancel button.
    */
   cancelMatch(): void;
   /**
    * Non-host participant: leave the active match and sit out the rest
    * in the lobby (with a "match in progress" indicator). Idempotent
-   * and a no-op for the host (server-side rejection — hosts have to
+   * and a no-op for the host (server-side rejection - hosts have to
    * `cancelMatch` instead of orphaning the room). Reverses on the
    * next `transitionToLobby` automatically; there's no "rejoin
    * mid-match" affordance yet.
    */
   leaveMatch(): void;
   /**
-   * Any player can fire — pulls everyone back to the lobby from the
+   * Any player can fire - pulls everyone back to the lobby from the
    * results phase. The user-facing button is "Back to room" and there's
    * intentionally no host-confirmation gate.
    */
   returnToLobby(): void;
-  /** Per-player lobby ready toggle. Purely informational — signals to
+  /** Per-player lobby ready toggle. Purely informational - signals to
    * the host that the player is set; host still has to click Start. */
   setReady(ready: boolean): void;
   /** Per-client: chart parsed + audio decoded; ready to start round. */
@@ -238,12 +245,12 @@ export interface UseRoomSocket {
   /**
    * Wall-clock ms at which the server force-starts the countdown
    * (loading phase only). Clients that haven't reported `client:ready`
-   * by this point are NOT kicked — they stay in the room and join
+   * by this point are NOT kicked - they stay in the room and join
    * late once their download/decode finishes. The LoadingScreen uses
    * this to show a countdown chip + tint the progress bar.
    */
   loadDeadline: number | null;
-  /** Most recent error event from the server (transient — clear on action). */
+  /** Most recent error event from the server (transient - clear on action). */
   lastError: { code: string; message: string } | null;
   /** Set when the player is kicked; UI uses this to redirect home. */
   kicked: { reason: string } | null;
@@ -268,7 +275,7 @@ function writeStoredSession(code: string, sessionId: string): void {
   try {
     sessionStorage.setItem(SESSION_PREFIX + code, sessionId);
   } catch {
-    /* sessionStorage unavailable / quota — non-fatal */
+    /* sessionStorage unavailable / quota - non-fatal */
   }
 }
 
@@ -308,7 +315,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
   const noticeIdRef = useRef(0);
   /**
    * Outstanding `setTimeout` handles scheduled by the `room:notice`
-   * handler — one per notice still inside its TTL. Tracked so we can
+   * handler - one per notice still inside its TTL. Tracked so we can
    * `clearTimeout` them on hook unmount: without this, a player who
    * leaves the room while a notice is still on screen leaves React
    * holding a closure over a `setNotices` setter for an unmounted
@@ -358,7 +365,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
           // identify the local player via `players.find(p => p.id ===
           // sessionId)`. Without this, the page is stuck on "Joining
           // lobby…" because `me` is always null until the user manually
-          // re-joins — but we suppress the join form precisely BECAUSE
+          // re-joins - but we suppress the join form precisely BECAUSE
           // we have a stored session, so the loop never resolves.
           // If the rejoin ultimately fails, the ack handler clears
           // both the storage and the state below.
@@ -563,6 +570,10 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
     socketRef.current?.emit("host:setVisibility", { visibility });
   }, []);
 
+  const setStrictInputs = useCallback((strictInputs: boolean) => {
+    socketRef.current?.emit("host:setStrictInputs", { strictInputs });
+  }, []);
+
   const requestCatalog = useCallback(
     async (refresh = false) => {
       const res = await callWithAck<{ items: CatalogItem[] }>(
@@ -671,7 +682,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
   }, []);
 
   // Use the new "any player" event so clicking "Back to room" doesn't
-  // require host coordination — the first click pulls everyone back.
+  // require host coordination - the first click pulls everyone back.
   const returnToLobby = useCallback(() => {
     socketRef.current?.emit("room:returnToLobby");
   }, []);
@@ -734,7 +745,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
   // would re-fire on every snapshot tick (~5Hz per peer score update,
   // plus chat / join / leave). In <MultiGame> that translated into the
   // rAF render loop being torn down + restarted multiple times per
-  // second mid-song — visible as a chronic micro-stutter at match
+  // second mid-song - visible as a chronic micro-stutter at match
   // start (when the snapshot churn peaks while everyone marks ready /
   // loads / countdowns) and dropped frames whenever a peer's score
   // refreshed. Memoizing here gives every consumer a stable reference
@@ -748,6 +759,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       setName,
       setRoomName,
       setRoomVisibility,
+      setStrictInputs,
       requestCatalog,
       browseCatalog,
       searchCatalog,
@@ -779,6 +791,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       setName,
       setRoomName,
       setRoomVisibility,
+      setStrictInputs,
       requestCatalog,
       browseCatalog,
       searchCatalog,

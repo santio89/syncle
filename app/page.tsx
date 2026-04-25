@@ -74,7 +74,7 @@ export default function HomePage() {
    *      availability on first paint instead of the all-disabled
    *      placeholder.
    *
-   *   2. For LOCAL fallback songs (rare — only when every osu mirror
+   *   2. For LOCAL fallback songs (rare - only when every osu mirror
    *      fails), the audio lives at a separate URL and isn't bundled
    *      with the chart. We `prefetchAudio()` it so the browser HTTP
    *      cache is warm by the time the player hits Play. Remote .osz
@@ -98,7 +98,7 @@ export default function HomePage() {
             prefetchAudio(s.meta.audioUrl);
           }
           // Highest score this device has ever set on this song, across all
-          // difficulties — gives the player a target to chase on this refresh.
+          // difficulties - gives the player a target to chase on this refresh.
           let highest: RunBest | null = null;
           for (const m of MODE_ORDER) {
             const b = loadBest(bestKey(s.meta.id, m));
@@ -184,12 +184,16 @@ export default function HomePage() {
           </span>
         </div>
         <nav className="flex items-center gap-3 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
-          {/* All header chips share `.icon-btn` (38×38 square) so the
-              right side of the header reads as a uniform strip. The
-              old wider "░ multi" pill drifted off-grid; the icon-only
-              MultiButton keeps the rhythm with ThemeToggle. Tooltip
-              just says "Multiplayer" — the icon is the affordance,
-              the long descriptor lives on the entry page itself. */}
+          {/* `MultiButton` is a labeled pill ("MULTIPLAYER" + icon)
+              while `ThemeToggle` stays a 38×38 icon square. Both
+              share the same 38px height + 2px border + accent hover
+              state so the strip still reads as one family even with
+              different widths. Earlier the multi entry was also
+              icon-only, but newcomers consistently failed to read
+              the four-dot grid as "multiplayer" - the literal word
+              is the cheapest, clearest fix and works on touch
+              devices where hover tooltips don't fire. See the long
+              comment in components/MultiButton.tsx for the history. */}
           <MultiButton />
           <ThemeToggle />
         </nav>
@@ -231,7 +235,7 @@ export default function HomePage() {
               ▶
             </span>
             {/* min-w-0 + flex-1 (mobile) / w-full (desktop) is what unlocks
-             *  truncation inside this flex parent — without min-w-0 the flex
+             *  truncation inside this flex parent - without min-w-0 the flex
              *  child defaults to min-width:auto and refuses to shrink. */}
             <div className="flex min-w-0 flex-1 flex-col items-start text-left sm:w-full sm:flex-none sm:items-center sm:text-center">
               <span className="font-display text-[1.6rem] font-bold tracking-[0.25em] sm:text-[1.6rem] lg:text-[1.95rem]">
@@ -265,7 +269,7 @@ export default function HomePage() {
             // `flex flex-col` + `mt-auto` on the waveform row pins the
             // waveform/PLAY controls to the bottom edge of the card.
             // Without this they hug the title block and leave the
-            // bottom half of the cover image as empty padding — bad
+            // bottom half of the cover image as empty padding - bad
             // composition, especially with anime keyart covers whose
             // subjects sit center/lower. The card height comes from
             // grid `stretch` matching the stats card on the right.
@@ -277,14 +281,14 @@ export default function HomePage() {
                     // page's BASE color (`--bg`: cream in light mode,
                     // near-black in dark mode) so the dim layer
                     // becomes a "lighter wash" or a "darker wash"
-                    // depending on theme — text below it always sits
+                    // depending on theme - text below it always sits
                     // on a surface tinted toward the active theme,
                     // which means the regular themed `--fg` text
                     // color (inherited from <body>) reads naturally
                     // without needing to lock the card to one theme.
                     //
                     // Two layers:
-                    //   1. Left-weighted directional gradient — the
+                    //   1. Left-weighted directional gradient - the
                     //      title/artist column lives on the left, so
                     //      it gets the heaviest wash. Right side
                     //      stays lighter to let the cover breathe
@@ -316,7 +320,7 @@ export default function HomePage() {
                 <p className="flex flex-wrap items-center gap-2 font-mono text-[0.78rem] uppercase tracking-widest text-accent">
                   <span>Now playing</span>
                   {load.status === "ready" && (
-                    <span className="text-bone-50/40">· osu! 4K</span>
+                    <span className="text-bone-50/40">· 4K chart</span>
                   )}
                   {load.status === "ready" && (
                     <DifficultyRangeBadge
@@ -363,7 +367,7 @@ export default function HomePage() {
                       {load.meta.year ? ` · ${load.meta.year}` : ""}
                     </p>
                     {/* Duration sits as a quiet metadata line under the
-                        artist — no border, no padding, just the same
+                        artist - no border, no padding, just the same
                         muted-mono treatment used for other secondary
                         details (year, mapper, etc. when shown). The
                         old bordered chip in the bottom-right corner
@@ -401,7 +405,7 @@ export default function HomePage() {
                 )}
               </div>
               {/* Right rail of the now-playing header now carries
-                  ONLY the "roll a new random track" refresh button —
+                  ONLY the "roll a new random track" refresh button -
                   the duration chip moved down to sit above the PLAY
                   CTA in the bottom row, where it visually belongs
                   (it describes the thing you're about to play). The
@@ -430,7 +434,7 @@ export default function HomePage() {
                   // Deterministic-but-irregular stagger so each bar pulses
                   // out of phase with its neighbors. Two coprime multipliers
                   // (47, 73) make the pattern look chaotic without RNG.
-                  // Durations 1.4s–2.6s — slow breathing EQ, just a touch
+                  // Durations 1.4s–2.6s - slow breathing EQ, just a touch
                   // livelier than full ambient.
                   const delayMs = (i * 47) % 1800;
                   const durMs = 1400 + ((i * 73) % 1200);
@@ -448,7 +452,7 @@ export default function HomePage() {
                   );
                 })}
               </div>
-              {/* PLAY CTA — duration moved out of this stack and
+              {/* PLAY CTA - duration moved out of this stack and
                   back up under the artist line as inline metadata,
                   so the bottom-right corner is just the play action
                   itself, free of competing chips. The PLAY link
@@ -492,12 +496,12 @@ export default function HomePage() {
               />
               <Stat
                 label="best on this track"
-                value={trackBest ? trackBest.score.toLocaleString() : "—"}
+                value={trackBest ? trackBest.score.toLocaleString() : "-"}
               />
               <Stat
                 label="all-time best"
                 value={
-                  stats.bestEver ? stats.bestEver.score.toLocaleString() : "—"
+                  stats.bestEver ? stats.bestEver.score.toLocaleString() : "-"
                 }
                 hint={
                   stats.bestEver
@@ -527,7 +531,7 @@ export default function HomePage() {
           </span>
         </span>
         {/* Same MultiIcon + ArrowIcon vocabulary as the header buttons
-            (Back / Join room / Start) — the loose `░` unicode glyph
+            (Back / Join room / Start) - the loose `░` unicode glyph
             and `→` character were the last holdouts from the early
             "ascii-art" era and didn't match the sharper SVG icons
             elsewhere. The arrow gets the same group-hover translate
@@ -538,7 +542,7 @@ export default function HomePage() {
           data-tooltip="Multiplayer"
         >
           {/* MultiIcon bumped from 11→14 (and the trailing arrow from
-              12→14 to keep the row balanced) — at 11px the four
+              12→14 to keep the row balanced) - at 11px the four
               squares were getting muddy at this footer text size,
               now they read as four distinct players at a glance. */}
           <MultiIcon size={14} />

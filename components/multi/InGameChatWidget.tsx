@@ -57,7 +57,7 @@ export function InGameChatWidget({
       return;
     }
     if (last.id > lastSeenIdRef.current) {
-      // Don't count my own messages as unread — they're not "new" to me.
+      // Don't count my own messages as unread - they're not "new" to me.
       const newOnes = chat.filter(
         (m) => m.id > lastSeenIdRef.current && m.authorId !== meId,
       ).length;
@@ -92,7 +92,7 @@ export function InGameChatWidget({
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Click-outside collapses the panel — but only when actually open,
+  // Click-outside collapses the panel - but only when actually open,
   // otherwise we'd be adding a useless global listener every render.
   useEffect(() => {
     if (!open) return;

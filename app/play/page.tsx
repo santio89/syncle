@@ -9,7 +9,7 @@ import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import { useAttemptLeave } from "@/components/LeaveGuardProvider";
 
 // Game uses browser-only APIs (AudioContext, Canvas), so render client-side.
-// Keeping the page itself "use client" too — mixing a server page that both
+// Keeping the page itself "use client" too - mixing a server page that both
 // imports a client component AND uses next/dynamic({ssr:false}) intermittently
 // breaks the React Client Manifest (we saw this happen with ThemeToggle).
 //
@@ -60,7 +60,7 @@ export default function PlayPage() {
           />
           <span>Syncle</span>
         </Link>
-        {/* Center cluster — mirrors the /multi header (room code +
+        {/* Center cluster - mirrors the /multi header (room code +
             ConnectionPill in the middle slot). The page title sits
             here so the bar reads back-button · title · controls
             on every screen. Hidden on <sm because the back link +
@@ -86,7 +86,7 @@ export default function PlayPage() {
 
 /**
  * Placeholder shown while the Game chunk is still downloading. Matches the
- * dark canvas backdrop so the swap-in is invisible — the user just sees a
+ * dark canvas backdrop so the swap-in is invisible - the user just sees a
  * spinner appear in the middle of the dark area, then the highway lights up.
  */
 function GameSkeleton() {

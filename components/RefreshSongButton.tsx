@@ -5,11 +5,11 @@
  *
  * Shared between the home page's `NOW PLAYING` card and the in-game
  * StartCard so both surfaces expose the same affordance with the same
- * recipe — the player learns the icon + label once and recognizes it
+ * recipe - the player learns the icon + label once and recognizes it
  * everywhere a random song can be swapped without a full page reload.
  *
  * Spins the icon while the new song is fetching so the player has an
- * honest indicator that something's happening — clicking again
+ * honest indicator that something's happening - clicking again
  * mid-fetch is harmless on both call sites (each parent cancels its
  * older in-flight signal so only the freshest response wins).
  *
@@ -25,7 +25,7 @@ export function RefreshSongButton({
 }: {
   onClick: () => void;
   loading: boolean;
-  /** Optional extra classes — lets call sites tweak spacing without
+  /** Optional extra classes - lets call sites tweak spacing without
    *  losing the recipe (e.g. inline-flex sizing in tight headers). */
   className?: string;
 }) {
@@ -54,7 +54,7 @@ export function RefreshSongButton({
     >
       {/* Unicode ↻ glyph instead of an SVG so this button matches
           the browser-lobby's "↻ refresh" affordance one-for-one
-          — three surfaces, same icon, no inconsistency. The glyph
+          - three surfaces, same icon, no inconsistency. The glyph
           still spins / counter-rotates via transform classes, so
           the loading / hover affordances are unchanged. */}
       <span
