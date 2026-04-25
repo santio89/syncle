@@ -135,19 +135,37 @@ export function classifyDifficultyByName(version: string): ChartMode | null {
 
 /**
  * Pick the bucket a mapper chart actually belongs to. Name is the
- * primary signal but density gets the final say — if the name says one
- * tier and the real nps clearly says another, we trust the math.
+ * primary signal but density gets the final say WHEN WE HAVE IT —
+ * if the name says one tier and the real nps clearly says another,
+ * we trust the math.
  *
- * Examples:
+ * The catch: server-side, we run this function against beatmap
+ * metadata pulled from a mirror BEFORE the .osz is downloaded, and
+ * not every mirror exposes hit-object counts on every diff (some
+ * return zeros, some omit the fields entirely). When that happens
+ * `nps` is 0 / non-finite and `classifyByDensity(0)` would dump
+ * everything into Easy — that's the "every catalog row says EASY"
+ * bug. So we treat `nps <= 0` (or NaN) as "no density signal" and
+ * lean entirely on the mapper name, which is always present.
+ *
+ * Examples (with density):
  *   - mapper "Hard" at 6 nps     → name says Hard, density confirms (4.5-7.5) → Hard
  *   - mapper "Hard" at 14 nps    → name says Hard, density says Expert (9.5+)  → Expert
  *   - mapper "[4K Lv.27]" at 8.2 → name unrecognized, density 8.2 ∈ Insane    → Insane
  *
- * This is what stops a song with a single mapper-named "Easy" at 14 nps
- * (yes, this happens) from showing up as the player's Easy option.
+ * Examples (no density signal — `nps <= 0` or `NaN`):
+ *   - mapper "Hard"      → trust the name → Hard
+ *   - mapper "Lunatic"   → trust the name → Expert
+ *   - mapper "[4K Lv.?]" → unknown name + no density → fall back to "normal"
+ *     (safer than Easy, which would let a 12-nps chart slip into the Easy
+ *      filter)
  */
 export function assignBucket(version: string, nps: number): ChartMode {
   const named = classifyDifficultyByName(version);
+  const haveDensity = Number.isFinite(nps) && nps > 0;
+  if (!haveDensity) {
+    return named ?? "normal";
+  }
   if (named) {
     const band = TIER_BANDS[named];
     if (nps >= band.min && nps <= band.max) return named;

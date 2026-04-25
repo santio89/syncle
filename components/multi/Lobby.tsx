@@ -2066,15 +2066,22 @@ function HostModeButton({
   hasSelectedSong: boolean;
   onPick: (m: ChartMode) => void;
 }) {
-  const available = !hasSelectedSong ? true : !!probe?.available[mode];
-  const disabled = hasSelectedSong && (probing || !available);
+  // Tier is only "available" when there's actually a song queued AND
+  // the probe came back saying this tier is shipped. Without a
+  // selected song there's nothing to play at any difficulty, so every
+  // button is disabled until the host picks something — used to
+  // default to "all enabled, click to set the mode I'll use later"
+  // which read as "this tier exists for the song" and was confusing
+  // when nothing was selected.
+  const available = hasSelectedSong && !!probe?.available[mode];
+  const disabled = !hasSelectedSong || probing || !available;
   const enabled = !disabled;
   const reason = !hasSelectedSong
-    ? undefined
+    ? "Pick a song first to see its difficulties"
     : probing
       ? "Reading the song's difficulty list…"
       : !available
-        ? `Couldn't fit a ${displayMode(mode)} chart for this song's density profile.`
+        ? `This song doesn't ship a ${displayMode(mode)} difficulty.`
         : undefined;
   const stars = modeStars(mode);
   // Density tooltip mirrors the single-player picker — players asked

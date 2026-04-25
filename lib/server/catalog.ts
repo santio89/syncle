@@ -503,26 +503,47 @@ function normalize(raw: any, source: string): CatalogItem | null {
   // Compute the Syncle buckets present in this set BEFORE the .osz is
   // ever downloaded. We don't have the parsed notes at this point, only
   // the upstream metadata, so we approximate `nps` using the mirror's
-  // hit-object counts (`count_normal + count_slider + count_spinner`)
-  // divided by `hit_length` (= time between first and last hit object).
-  // That's the same density definition the on-disk path uses post-parse,
-  // so the buckets agree for ~99 % of sets — the only drift is when a
-  // mirror omits one of the count fields (rare; we treat undefined as 0).
+  // hit-object counts divided by `hit_length` (= time between first
+  // and last hit object). That's the same density definition the
+  // on-disk path uses post-parse, so the buckets agree for ~99 % of
+  // sets when the count fields are present.
+  //
+  // Field-name caveat: the modern osu! API v2 (and every mirror that
+  // proxies it: nerinyan.moe, osu.direct, catboy.best) uses the
+  // PLURAL v2 names — `count_circles`, `count_sliders`,
+  // `count_spinners`. The legacy v1 API used the SINGULAR
+  // `count_normal`, `count_slider`, `count_spinner`. We accept both
+  // shapes (v2 first, v1 fallback) so any mirror's response normalizes
+  // correctly. Without this, the v1 keys would resolve to undefined
+  // on every modern mirror, every diff would have nps=0, and every
+  // set would mis-bucket to Easy (which is what we'd shipped before
+  // the field name fix).
+  //
+  // When a diff exposes neither count shape, `assignBucket` falls
+  // back to mapper-name classification (see the function's doc) —
+  // strictly better than the previous behavior of dumping everything
+  // into Easy, since the mapper's "Hard"/"Insane"/"Lunatic" naming is
+  // a strong signal even without note counts.
+  //
   // Buckets are de-duped + sorted into MODE_ORDER for deterministic
   // wire output (cache-friendly + UI-friendly: chip always renders
   // easy-then-expert order even on mirrors that list diffs out of order).
   const bucketSet = new Set<ChartMode>();
   for (const b of fourKBeats) {
     const version = typeof b?.version === "string" ? b.version : "";
-    const counts =
-      Number(b?.count_normal ?? 0) +
-      Number(b?.count_slider ?? 0) +
-      Number(b?.count_spinner ?? 0);
+    const circles = Number(b?.count_circles ?? b?.count_normal ?? 0);
+    const sliders = Number(b?.count_sliders ?? b?.count_slider ?? 0);
+    const spinners = Number(b?.count_spinners ?? b?.count_spinner ?? 0);
+    const counts = circles + sliders + spinners;
     const dur = Number(b?.hit_length ?? b?.total_length ?? 0);
-    if (!Number.isFinite(counts) || !Number.isFinite(dur) || dur <= 0) {
-      continue;
-    }
-    const nps = counts / dur;
+    // We ALWAYS try to bucket — even when counts/duration are missing
+    // — because `assignBucket` handles the no-density case via the
+    // mapper name. We just pass `0` as nps in that fallback path,
+    // which the function reads as "trust the name only".
+    const nps =
+      Number.isFinite(counts) && Number.isFinite(dur) && dur > 0
+        ? counts / dur
+        : 0;
     bucketSet.add(assignBucket(version, nps));
   }
   const availableBuckets = MODE_ORDER.filter((m) => bucketSet.has(m));
