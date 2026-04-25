@@ -13,7 +13,7 @@
  *   Trivially fine for any host.
  */
 
-import type { ChartMode } from "@/lib/game/chart";
+import type { ChartMode } from "@/lib/game/difficulty";
 
 /* -------------------------------------------------------------------------- */
 /* Domain types                                                               */
@@ -48,6 +48,18 @@ export interface SongRef {
    * mirror name in the right column of every catalog row.
    */
   durationSec?: number;
+  /**
+   * Sorted list of Syncle difficulty buckets the beatmapset's 4K mania
+   * diffs map to (computed server-side in `normalize()` via
+   * `assignBucket`). Used for two things:
+   *   - Catalog UI chip: "easy-expert" range badge on each row.
+   *   - Multiplayer difficulty filter: the host can scope browse /
+   *     search results to sets that contain a specific bucket.
+   * Optional because old servers and cached snapshots may omit it; UI
+   * code must treat `undefined` as "unknown, show no chip / don't
+   * filter out".
+   */
+  availableBuckets?: ChartMode[];
 }
 
 export interface CatalogItem extends SongRef {}
@@ -381,6 +393,13 @@ export interface ClientToServerEvents {
       page: number;
       sort?: "ranked_desc" | "ranked_asc" | "plays_desc" | "rating_desc";
       refresh?: boolean;
+      /**
+       * Optional Syncle bucket filter. When set, the server post-
+       * filters the upstream page to keep only items whose
+       * `availableBuckets` includes this tier. `undefined` / omitted
+       * = no filter (show every set the upstream returned).
+       */
+      bucket?: ChartMode;
     },
     ack: (
       res: AckResult<{
@@ -415,7 +434,17 @@ export interface ClientToServerEvents {
    * as a guarantee.
    */
   "host:catalogSearch": (
-    payload: { query: string; page: number },
+    payload: {
+      query: string;
+      page: number;
+      /**
+       * Optional Syncle bucket filter — same semantics as
+       * `host:catalogBrowse.bucket`. Server post-filters the search
+       * results page to sets that include this tier. Undefined =
+       * unfiltered.
+       */
+      bucket?: ChartMode;
+    },
     ack: (
       res: AckResult<{
         items: CatalogItem[];

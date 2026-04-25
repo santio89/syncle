@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import type { Server as IOServer, Socket } from "socket.io";
 
 import type { ChartMode } from "@/lib/game/chart";
+import { MODE_ORDER } from "@/lib/game/difficulty";
 import {
   AckResult,
   CatalogItem,
@@ -1030,6 +1031,7 @@ class RoomRegistry {
     code: string,
     rawQuery: string,
     page: number,
+    bucket?: ChartMode,
   ): Promise<SearchCatalogResult> {
     const room = this.rooms.get(code);
     if (!room) throw new RoomError("ROOM_NOT_FOUND", "Room gone");
@@ -1044,7 +1046,11 @@ class RoomRegistry {
       throw new RoomError("BAD_QUERY", "Search query too long");
     }
     const safePage = Math.max(0, Math.floor(page));
-    const cacheKey = `s|${query}|${safePage}`;
+    // Bucket is part of the cache key so "easy filter" results don't
+    // poison the unfiltered view (and vice versa). Empty string for
+    // "no filter" keeps backwards compat with previously-cached entries
+    // hashed before this param existed (they'll just miss once).
+    const cacheKey = `s|${query}|${safePage}|${bucket ?? ""}`;
 
     if (!room.searchCache) {
       room.searchCache = new Map();
@@ -1054,7 +1060,7 @@ class RoomRegistry {
       return cached.result;
     }
 
-    const result = await searchCatalogPage({ query, page: safePage });
+    const result = await searchCatalogPage({ query, page: safePage, bucket });
     room.searchCache.set(cacheKey, { result, at: Date.now() });
 
     while (room.searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
@@ -1084,6 +1090,7 @@ class RoomRegistry {
     rawSort: string | undefined,
     page: number,
     refresh: boolean,
+    bucket?: ChartMode,
   ): Promise<SearchCatalogResult> {
     const room = this.rooms.get(code);
     if (!room) throw new RoomError("ROOM_NOT_FOUND", "Room gone");
@@ -1093,7 +1100,10 @@ class RoomRegistry {
       ? (rawSort as BrowseSort)
       : "ranked_desc";
     const safePage = Math.max(0, Math.floor(page));
-    const cacheKey = `b|${sort}|${safePage}`;
+    // Same cache-key composition rule as `searchCatalog`: bucket is
+    // part of the key so the "easy filter" page-0 result doesn't get
+    // returned for an unfiltered request.
+    const cacheKey = `b|${sort}|${safePage}|${bucket ?? ""}`;
 
     if (!room.searchCache) {
       room.searchCache = new Map();
@@ -1106,7 +1116,7 @@ class RoomRegistry {
       return cached.result;
     }
 
-    const result = await browseCatalogPage({ page: safePage, sort });
+    const result = await browseCatalogPage({ page: safePage, sort, bucket });
     room.searchCache.set(cacheKey, { result, at: Date.now() });
 
     while (room.searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
@@ -2146,11 +2156,23 @@ export function wireSocketServer(io: IO): void {
         if (!Number.isFinite(page) || page < 0) {
           throw new RoomError("BAD_PAGE", "Invalid page index");
         }
+        // Validate bucket against the canonical tier set so a
+        // misbehaving client can't punch a hole in the cache key
+        // ("?bucket=trololo" creating an infinite number of unique
+        // cache entries that never hit). Unknown / missing → no
+        // filter, same as the search handler below.
+        const rawBucket = payload?.bucket;
+        const bucket: ChartMode | undefined =
+          typeof rawBucket === "string" &&
+          (MODE_ORDER as readonly string[]).includes(rawBucket)
+            ? (rawBucket as ChartMode)
+            : undefined;
         const result = await reg.browseCatalog(
           ref.code,
           typeof payload?.sort === "string" ? payload.sort : undefined,
           page,
           !!payload?.refresh,
+          bucket,
         );
         ack?.(
           ackOk({
@@ -2186,7 +2208,13 @@ export function wireSocketServer(io: IO): void {
         if (!Number.isFinite(page) || page < 0) {
           throw new RoomError("BAD_PAGE", "Invalid page index");
         }
-        const result = await reg.searchCatalog(ref.code, query, page);
+        const rawBucket = payload?.bucket;
+        const bucket: ChartMode | undefined =
+          typeof rawBucket === "string" &&
+          (MODE_ORDER as readonly string[]).includes(rawBucket)
+            ? (rawBucket as ChartMode)
+            : undefined;
+        const result = await reg.searchCatalog(ref.code, query, page, bucket);
         ack?.(
           ackOk({
             items: result.items,

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GradientBg } from "@/components/GradientBg";
 import { MultiButton, MultiIcon } from "@/components/MultiButton";
-import { StatusBadge } from "@/components/StatusBadge";
+import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import {
@@ -317,8 +317,13 @@ export default function HomePage() {
                   {load.status === "ready" && (
                     <span className="text-bone-50/40">· osu! 4K</span>
                   )}
-                  {load.status === "ready" && load.meta.status && (
-                    <StatusBadge status={load.meta.status} size="xs" />
+                  {load.status === "ready" && (
+                    <DifficultyRangeBadge
+                      buckets={MODE_ORDER.filter(
+                        (m) => load.modes.available[m],
+                      )}
+                      size="xs"
+                    />
                   )}
                 </p>
 

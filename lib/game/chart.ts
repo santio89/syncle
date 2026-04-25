@@ -6,6 +6,16 @@ import {
   ExtractedSongFull,
   pickRandomManiaBeatmapsetId,
 } from "./oszFetcher";
+import { ChartMode, MODE_ORDER, assignBucket } from "./difficulty";
+
+// Re-export the public bits of the difficulty module so existing
+// importers (`@/lib/game/chart`'s ChartMode / MODE_ORDER / displayMode)
+// keep working without touching every call site. The classification
+// implementation lives in `./difficulty` because the server's catalog
+// normalizer needs it too and can't transitively pull in the audio /
+// blob deps that chart.ts brings.
+export type { ChartMode } from "./difficulty";
+export { MODE_ORDER, displayMode } from "./difficulty";
 
 /**
  * Empty skeleton meta used as the type-safe initial state before a real
@@ -24,80 +34,47 @@ export const PLACEHOLDER_META: SongMeta = {
 };
 
 /* ------------------------------------------------------------------------- */
-/* Difficulty quantization                                                   */
+/* Difficulty resolution                                                     */
 /* ------------------------------------------------------------------------- */
 
 /**
- * Syncle difficulty modes — five universal tiers that mirror osu!mania's
- * own naming scheme (easy / normal / hard / insane / expert), so the same
+ * Syncle difficulty modes — five universal tiers (easy / normal / hard /
+ * insane / expert) that mirror osu!mania's own naming scheme. Same
  * vocabulary works across the homepage card, the in-game picker, the
  * multiplayer lobby, and the saved-score keys.
  *
- * Resolution model — every tier owns a calibrated nps band (see
- * {@link TIER_BANDS}). A tier is honoured only when we can deliver a
- * chart whose real density falls inside its band; everything else is
- * disabled. This guarantees a Hard always feels like a Hard and an Easy
- * is never accidentally a 14-nps stream, no matter what the source song
- * looked like.
+ * Resolution model — "originals only" (no synthesis):
  *
- *   1. Mapper-provided chart for this bucket — assignment in
- *      {@link assignBucket} validates the chart's nps against the band,
- *      so a "Hard"-named chart at 14 nps gets re-bucketed to Expert
- *      where it actually belongs. Mapper Expert above the band's max
- *      (e.g. a 25-nps Lunatic) is thinned down to the band target so
- *      no absurd-density chart ever reaches the player.
+ *   - For each beatmapset, every parsed mapper chart is bucketed into one
+ *     of the five tiers via {@link assignBucket} (mapper-named tier with
+ *     density validation, falling back to pure density classification when
+ *     the name is uninformative). At most one mapper chart wins per
+ *     bucket; a tier with no winning mapper chart is simply UNAVAILABLE.
  *
- *   2. Synthesis from the densest mapper chart in the song:
- *        easy / normal → beat-grid pass first (snaps notes to whole
- *                        or half beats for musicality), then a
- *                        density-targeted subsample if the grid result
- *                        lands outside band
- *        hard / insane → density-targeted subsample (computes the exact
- *                        tap-fraction to land at band target)
- *        expert        → mapper-only (can't synthesize denser than the
- *                        densest chart in the song)
+ *   - When a tier is unavailable the picker disables that button. The
+ *     player sees exactly the difficulties the mapper actually shipped —
+ *     no quantization, no subsampling, no grid-snapping. The previous
+ *     "synthesize a tier from the densest chart" path was removed because
+ *     re-timed notes drifted off the song's beat just enough to feel
+ *     wrong on careful listens (the user complaint that motivated this
+ *     refactor: "some things seem out of beat").
  *
- *      Holds are always preserved across synthesis — losing a sustain
- *      would silently drop a phrase of the song.
+ *   - Difficulty NAMES (`ChartMode`) and the canonical order
+ *     (`MODE_ORDER`) live in `./difficulty` so the catalog server can
+ *     bucket charts during normalization without dragging in this file's
+ *     audio / blob deps. We re-export them above so existing
+ *     `@/lib/game/chart` imports keep working unchanged.
  *
- * A mode is marked unavailable in `ModeAvailability` and disabled in
- * the UI when no source can produce a chart inside the tier's band.
- *
- * NOTE on the wire/storage value `"normal"`: we keep that string for the
- * second tier instead of renaming to `"medium"` because localStorage best
- * keys, the multiplayer protocol, and persisted run history all reference
- * it. The user-facing label is mapped to `"medium"` via {@link displayMode}.
+ * NOTE on the wire/storage value `"normal"`: kept for the second tier
+ * instead of renaming to `"medium"` because localStorage best keys, the
+ * multiplayer protocol, and persisted run history all reference it. The
+ * user-facing label is mapped to `"medium"` via {@link displayMode}.
  */
-export type ChartMode = "easy" | "normal" | "hard" | "insane" | "expert";
-
-/**
- * Difficulty order, easiest → hardest. Used for picker layout, walking
- * to the next-available mode when a song doesn't ship the requested
- * difficulty, and computing the homepage card's "lowest available" label.
- */
-export const MODE_ORDER: ChartMode[] = [
-  "easy",
-  "normal",
-  "hard",
-  "insane",
-  "expert",
-];
-
 const DEFAULT_MODE: ChartMode = "easy";
 
 /**
- * Map an internal {@link ChartMode} to the label we actually show users.
- * `"normal"` displays as `"medium"`; everything else is identity.
- */
-export function displayMode(
-  mode: ChartMode,
-): "easy" | "medium" | "hard" | "insane" | "expert" {
-  return mode === "normal" ? "medium" : mode;
-}
-
-/**
- * Canonical "intensity stars" for each tier. We keep this fixed (1..5,
- * easy → expert) instead of deriving it from the loaded chart's nps so
+ * Canonical "intensity stars" for each tier. Kept fixed (1..5,
+ * easy → expert) instead of deriving from the loaded chart's nps so
  * the rating means the same thing across every song the player ever
  * sees: an Insane in song A and an Insane in song B both render four
  * stars, full stop. That predictability is what makes the badge useful
@@ -106,285 +83,6 @@ export function displayMode(
 export function modeStars(mode: ChartMode): 1 | 2 | 3 | 4 | 5 {
   const i = MODE_ORDER.indexOf(mode);
   return ((i >= 0 ? i : 0) + 1) as 1 | 2 | 3 | 4 | 5;
-}
-
-/* ------------------------------------------------------------------------- */
-/* Difficulty density bands — the source of truth for "what is a Hard?"      */
-/* ------------------------------------------------------------------------- */
-
-/**
- * Per-tier notes-per-second band. The same numbers govern THREE different
- * decisions, which is why they live in one place:
- *
- *   1. Mapper-shipped chart validation. A mapper-named "Hard" only counts
- *      as Hard if its real density falls in `[min, max]`. A "Hard" chart
- *      at 14 nps is misclassified — we re-bucket it into Insane or Expert
- *      based on the density band that actually contains it.
- *
- *   2. Synthesis target. When a tier has no mapper chart, we thin the
- *      densest available source down to `target` nps. Player gets a chart
- *      that always feels like that tier across every song they ever
- *      play — Hard at 5.8 nps, Insane at 8 nps, no surprises.
- *
- *   3. Synthesis sanity check. The thinned result must land inside
- *      `[min, max]`. If a quirky source produces a synthesis that lands
- *      outside (e.g. grid quantization at unusual BPMs), we fall back to
- *      raw subsample. If even that fails, the tier is disabled — better
- *      to show a clean "unavailable" than a misleading button.
- *
- * Bands are deliberately calibrated against the typical osu!mania 4K
- * density spread (Easy ≈ 1.5-3.5 nps, ..., Expert ≈ 9.5+ nps) and overlap
- * by ~0.5 nps at boundaries so a borderline 5.0-nps chart can land in
- * either Normal or Hard depending on the mapper's intent.
- *
- * Expert has a real upper cap (22 nps) — anything denser than that gets
- * thinned down on display. The result: no "Expert" with 100 nps madness
- * ever escapes onto a player's screen. The original count survives in the
- * "raw" badge so the curious can still see what the chart was natively.
- */
-const TIER_BANDS: Record<
-  ChartMode,
-  { min: number; max: number; target: number }
-> = {
-  easy: { min: 1.5, max: 3.5, target: 2.5 },
-  normal: { min: 3.0, max: 5.0, target: 4.0 },
-  hard: { min: 4.5, max: 7.5, target: 5.8 },
-  insane: { min: 6.5, max: 10.5, target: 8.5 },
-  // Expert max isn't infinity on purpose — see capping logic in resolveTier.
-  expert: { min: 9.5, max: 22.0, target: 13.0 },
-};
-
-/**
- * Tier whose `[min, max]` band contains `nps`. Used both for re-bucketing
- * misclassified mapper charts and for "purely density-driven" classification
- * when the mapper's name gives us nothing to go on.
- *
- * Bands overlap at boundaries — we walk from easiest to hardest and return
- * the FIRST band that contains the value, which biases ambiguous densities
- * toward the easier tier (a 4.7-nps chart is "still kinda Normal" rather
- * than "barely Hard"). Mappers tend to over-rate their charts, not under-
- * rate them, so this matches reader expectations.
- *
- * Below the easy floor → easy (impossibly sparse charts shouldn't unlock
- * anything harder). Above expert.max → expert (the cap will thin them down
- * for display).
- */
-function classifyByDensity(nps: number): ChartMode {
-  if (nps < TIER_BANDS.easy.min) return "easy";
-  for (const tier of MODE_ORDER) {
-    const band = TIER_BANDS[tier];
-    if (nps >= band.min && nps <= band.max) return tier;
-  }
-  // Above every band's max (only possible past expert.max) → expert with
-  // capping. classifyByDensity is invoked before capping happens, so we
-  // still report this as expert here.
-  return "expert";
-}
-
-/**
- * Mapper-name → tier hint. Returns `null` for unrecognized names so the
- * caller can fall back to density-only classification.
- *
- * Order matters: most specific / hardest names first so a chart called
- * "Insane Expert" classifies as expert instead of being shadowed by the
- * earlier "insane" branch.
- */
-function classifyDifficultyByName(version: string): ChartMode | null {
-  const v = version.toLowerCase();
-  if (
-    /(expert|extra|\blunatic\b|master|overdose|extreme|edge|deathmoon|\bshd\b)/.test(
-      v,
-    )
-  ) {
-    return "expert";
-  }
-  if (/(insane|\bhyper\b|\bheavy\b|another|crazy)/.test(v)) return "insane";
-  if (/(hard|advanced|\bhd\b|rain)/.test(v)) return "hard";
-  if (/(normal|basic|medium|\bnm\b|regular|intermediate|platter)/.test(v))
-    return "normal";
-  if (/(beginner|easy|novice|gentle|noob|lite|casual|cup|salad)/.test(v))
-    return "easy";
-  return null;
-}
-
-/**
- * Pick the bucket a mapper chart actually belongs to. Name is the
- * primary signal but density gets the final say — if the name says one
- * tier and the real nps clearly says another, we trust the math.
- *
- * Examples:
- *   - mapper "Hard" at 6 nps     → name says Hard, density confirms (4.5-7.5) → Hard
- *   - mapper "Hard" at 14 nps    → name says Hard, density says Expert (9.5-22) → Expert
- *   - mapper "[4K Lv.27]" at 8.2 → name unrecognized, density 8.2 ∈ Insane (6.5-10.5) → Insane
- *
- * This is what stops a song with a single mapper-named "Easy" at 14 nps
- * (yes, this happens) from showing up as the player's Easy option.
- */
-function assignBucket(version: string, nps: number): ChartMode {
-  const named = classifyDifficultyByName(version);
-  if (named) {
-    const band = TIER_BANDS[named];
-    if (nps >= band.min && nps <= band.max) return named;
-  }
-  return classifyByDensity(nps);
-}
-
-/**
- * Snap notes to a beat-grid and dedup by cell. The shape of the grid
- * (how many cells per beat) controls how aggressively the chart is
- * thinned; chord preservation controls whether multiple notes at the
- * same time across different lanes get collapsed into one.
- *
- * `gridDivisor` — cells per beat:
- *    1 → whole beats     (≈ Easy density,        max 1 note / beat)
- *    2 → half beats      (≈ Medium density,      max 2 notes / beat)
- *    3 → triplet 8ths    (intermediate, useful for adaptive Hard)
- *    4 → 16th notes      (≈ Hard density)
- *    6 → triplet 16ths   (intermediate, useful for adaptive Insane)
- *    8 → 32nd notes      (≈ Insane density)
- *
- * `preserveChords`:
- *   - false (default): bucket key = grid cell only. Chord stacks at the
- *     same time collapse to one note. Used for Easy/Medium where the
- *     player should never need more than one finger per moment.
- *   - true: bucket key = `${cell}:${lane}`. Chords survive — vertical
- *     stacks stay intact, only same-lane double-hits within a cell
- *     dedup. Used for Hard/Insane where chord patterns are part of
- *     what makes the tier feel like itself.
- *
- * `maxPerCell` (only meaningful with `preserveChords: true`):
- *   - undefined: no cap. Pure chord-preserve.
- *   - N: at most N notes survive per cell across lanes (first-come on
- *     a per-lane basis, since `bucketCharts` are time-sorted by parser).
- *     Lets us thin chord stacks WITHOUT collapsing every cell to a
- *     single note — the missing rung between full chord-preserve and
- *     full chord-collapse. Critical for synthesizing a tier whose
- *     band sits narrowly between Hard and Expert: pure chord-preserve
- *     leaves all notes (= Expert), pure chord-collapse strips too
- *     much, but `maxPerCell: 2` or `3` reliably shaves chord stacks
- *     without flattening timing variety.
- *
- * Hold notes (sustains) are always preserved unconditionally — losing
- * them on easier tiers would silently drop entire phrases of the song.
- * Their head time is snapped to the nearest cell; duration is kept.
- * Hold heads do NOT count against `maxPerCell` (a sustain anchoring a
- * lane shouldn't displace a downbeat tap in another lane).
- */
-function quantizeToGrid(
-  notes: Note[],
-  bpm: number,
-  offsetSec: number,
-  gridDivisor: 1 | 2 | 3 | 4 | 6 | 8,
-  preserveChords = false,
-  maxPerCell?: number,
-): Note[] {
-  const beatLen = 60 / bpm;
-  const cell = beatLen / gridDivisor;
-  if (cell <= 0) return notes;
-
-  const isHold = (n: Note) => n.endT != null && n.endT > n.t + 0.05;
-
-  const holds: Note[] = [];
-  // Key is a string when chords are preserved (idx + lane) or numeric
-  // for the chord-collapse path. Map keeps insertion order so the
-  // resulting note array stays roughly in chart order.
-  const buckets = new Map<string, Note>();
-  // Per-cell lane occupancy — only populated when maxPerCell is in
-  // effect. Tracks how many distinct lanes already landed in each cell
-  // so we can stop accepting new lanes once the cap is reached.
-  const cellLanes =
-    preserveChords && maxPerCell != null
-      ? new Map<number, Set<number>>()
-      : null;
-
-  for (const n of notes) {
-    const idx = Math.round((n.t - offsetSec) / cell);
-    const snapped = offsetSec + idx * cell;
-    if (isHold(n)) {
-      const dur = (n.endT as number) - n.t;
-      holds.push({
-        id: 0,
-        t: snapped,
-        endT: snapped + dur,
-        lane: n.lane,
-      });
-      continue;
-    }
-    const key = preserveChords ? `${idx}:${n.lane}` : `${idx}`;
-    if (buckets.has(key)) continue;
-    if (cellLanes) {
-      let lanes = cellLanes.get(idx);
-      if (!lanes) {
-        lanes = new Set();
-        cellLanes.set(idx, lanes);
-      }
-      // At cap: drop notes for any lane not already accepted in this
-      // cell. Notes for already-accepted lanes are no-ops anyway since
-      // the `(idx, lane)` key would have hit the `buckets.has(key)`
-      // short-circuit above.
-      if (lanes.size >= maxPerCell! && !lanes.has(n.lane)) continue;
-      lanes.add(n.lane);
-    }
-    buckets.set(key, { id: 0, t: snapped, lane: n.lane });
-  }
-
-  const out: Note[] = [...holds, ...buckets.values()];
-  out.sort((a, b) => a.t - b.t);
-  out.forEach((n, i) => (n.id = i));
-  return out;
-}
-
-/**
- * Final-resort thinning that bypasses the beat-grid entirely and just
- * removes a fixed fraction of taps along the chart timeline.
- *
- * Used as the LAST recipe entry for Hard / Insane to guarantee a
- * usable synthesized chart even on awkward sources where every grid
- * recipe either preserves all notes (no chord stacks at finer cells)
- * or strips too aggressively (sparse chart with chord-collapse). The
- * canonical break case: a Hard already lands at /3 chord-preserve,
- * leaving Insane a narrow band of "between Hard and Expert" that no
- * grid divisor naturally hits.
- *
- * Approach: keep all holds (sustains carry phrasing — losing one
- * silently kills part of the song) and Bresenham-step through the
- * sorted taps to drop `(1 - ratio) * count` of them at evenly-spaced
- * indices. This avoids dropping a contiguous burst of notes (which
- * would carve a hole in a single bar) at the cost of slight loss of
- * pattern integrity — acceptable since this only fires when no
- * grid-aligned recipe could thin at all.
- */
-function subsampleNotes(notes: Note[], ratio: number): Note[] {
-  const isHold = (n: Note) => n.endT != null && n.endT > n.t + 0.05;
-  const holds: Note[] = [];
-  const taps: Note[] = [];
-  for (const n of notes) (isHold(n) ? holds : taps).push(n);
-  taps.sort((a, b) => a.t - b.t);
-
-  const targetTaps = Math.max(0, Math.floor(taps.length * ratio));
-  const dropCount = taps.length - targetTaps;
-  if (dropCount <= 0) {
-    // No-op — return a fresh array so the id-rewrite below is honest.
-    const out = [...holds, ...taps];
-    out.sort((a, b) => a.t - b.t);
-    out.forEach((n, i) => (n.id = i));
-    return out;
-  }
-
-  // Mark `dropCount` indices to skip, evenly distributed.
-  const drop = new Set<number>();
-  const step = taps.length / dropCount;
-  for (let i = 0; i < dropCount; i++) {
-    drop.add(Math.min(taps.length - 1, Math.floor((i + 0.5) * step)));
-  }
-  const kept: Note[] = [];
-  for (let i = 0; i < taps.length; i++) {
-    if (!drop.has(i)) kept.push(taps[i]);
-  }
-  const out: Note[] = [...holds, ...kept];
-  out.sort((a, b) => a.t - b.t);
-  out.forEach((n, i) => (n.id = i));
-  return out;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -400,16 +98,14 @@ function subsampleNotes(notes: Note[], ratio: number): Note[] {
  * lookups.
  *
  * Rules (computed in `finalize` / `resolveTier`):
- *   - Mapper-shipped tier → available iff the mapper chart's nps falls
- *     in the tier's band (validated upstream in `assignBucket`).
- *     Special case: mapper Expert above band.max gets thinned down to
- *     band.target so we never surface a 25-nps "Expert".
- *   - Synthesized tier → density-targeted subsample (or beat-grid pass
- *     for Easy/Normal) sourced from the densest mapper chart in the
- *     song. Available iff the result lands inside the tier's band.
- *   - Expert is mapper-only (no chart denser than the source to thin
- *     from). Easy through Insane can always be synthesized when the
- *     source is dense enough to thin into the band.
+ *   - Mapper-shipped tier → available, with the mapper's raw note count
+ *     and nps. Tiers are populated by routing each parsed mapper chart
+ *     through `assignBucket(version, nps)` (see `lib/game/difficulty.ts`).
+ *   - No mapper chart for that bucket → unavailable. The picker disables
+ *     the button. We don't synthesize from neighbouring tiers anymore —
+ *     re-timing notes drifted them just off the song's beat enough to
+ *     feel wrong on careful play, and an honest "not available" beats a
+ *     subtly-mistimed Easy.
  */
 export interface ModeAvailability {
   noteCounts: Record<ChartMode, number>;
@@ -512,12 +208,15 @@ interface RawChart {
 
 /**
  * Everything we need to materialize a `LoadSongResult` for any difficulty.
- * Captured ONCE per page session — switching modes never triggers a fresh
- * API roll; we either use a different mapper chart or re-quantize.
+ * Captured ONCE per page session — switching modes is a free O(1) lookup
+ * into `bucketCharts`, never another network roll.
  *
- * `bucketCharts` holds at most one mapper chart per bucket (best name match
- * wins ties); `fallbackBase` is the densest chart we have, used as the
- * source for quantization when a bucket has no mapper chart.
+ * `bucketCharts` holds at most one mapper chart per bucket (best name +
+ * density match wins ties; see `rawSessionFromExtracted`). Buckets with
+ * no qualifying mapper chart are simply absent — those tiers will be
+ * marked unavailable in the picker. `fallbackBase` is the densest chart
+ * we parsed and is used by local-fallback songs (which ship only one
+ * .osu and so populate at most one bucket) for chart-level metadata.
  */
 interface RawSession {
   bucketCharts: Partial<Record<ChartMode, RawChart>>;
@@ -554,8 +253,9 @@ let sessionPromise: Promise<RawSession> | null = null;
  *   - First call: rolls a random ranked osu!mania 4K beatmap from a public
  *     mirror, downloads + extracts it. Falls back to a random local song
  *     if every mirror fails.
- *   - Subsequent calls (e.g. switching difficulty): reuse the same raw
- *     song, only re-running quantization for the new mode.
+ *   - Subsequent calls (e.g. switching difficulty): reuse the cached raw
+ *     session and pull a different mapper chart out of `bucketCharts`.
+ *     No re-download, no re-parse.
  *   - Pass `force: true` to throw away the cache and roll a fresh song.
  */
 export async function loadSong(
@@ -798,9 +498,10 @@ function rawSessionFromExtracted(
   // Bucket each chart by name+density (see `assignBucket`). When two
   // mapper charts collide in the same bucket we tie-break by density:
   //   - Easy / Normal: prefer LOWER nps (more chill, closer to band min)
-  //   - Hard / Insane / Expert: prefer HIGHER nps (more challenge, closer
-  //     to band max) — but Expert above its band max gets capped at
-  //     synthesis time, not here.
+  //   - Hard / Insane / Expert: prefer HIGHER nps (more challenge,
+  //     closer to band max). Expert is now uncapped — if a mapper
+  //     ships a 25-nps "Lunatic" the player gets it as-is, since the
+  //     "originals only" model means we don't thin notes anymore.
   const bucketCharts: Partial<Record<ChartMode, RawChart>> = {};
   for (const { raw } of parsedCharts) {
     const bucket = assignBucket(raw.version, raw.nps);
@@ -812,8 +513,9 @@ function rawSessionFromExtracted(
     if (better) bucketCharts[bucket] = raw;
   }
 
-  // Densest chart in the set, regardless of bucket — used as the source
-  // when we need to quantize down for an empty bucket.
+  // Densest chart in the set, regardless of bucket — kept around for
+  // chart-level metadata / fallback id generation. Synthesis is gone,
+  // so this no longer feeds resolveTier directly.
   const fallbackBase = parsedCharts.reduce(
     (best, cur) => (cur.raw.nps > best.nps ? cur.raw : best),
     parsedCharts[0].raw,
@@ -870,9 +572,13 @@ async function pickRandomLocal(): Promise<RawSession> {
       `Local fallback chart "${song.id}" is not a valid 4K mania beatmap`,
     );
   }
-  // Local songs ship a single chart — we don't have mapper-made variants,
-  // so all three Syncle modes derive from this one chart via quantization.
-  // The bucketCharts map stays empty; finalize() will use fallbackBase.
+  // Local fallback songs ship a single .osu — bucket it by density so
+  // the picker enables exactly the tier it actually belongs to and
+  // disables the rest. Since synthesis was removed there's no longer a
+  // way for the player to "play this song on Easy" if the local chart
+  // is a Hard, but local fallbacks only fire when every public mirror
+  // is unreachable, so this lives in the "best-effort offline mode"
+  // budget — a single playable difficulty beats no song at all.
   const nps = parsed.duration > 0 ? parsed.notes.length / parsed.duration : 0;
   const fallbackBase: RawChart = {
     rawNotes: parsed.notes,
@@ -882,8 +588,12 @@ async function pickRandomLocal(): Promise<RawSession> {
     version: "",
     nps,
   };
+  const localBucket = assignBucket(fallbackBase.version, fallbackBase.nps);
+  const bucketCharts: Partial<Record<ChartMode, RawChart>> = {
+    [localBucket]: fallbackBase,
+  };
   return {
-    bucketCharts: {},
+    bucketCharts,
     fallbackBase,
     meta: {
       id: song.id,
@@ -896,82 +606,54 @@ async function pickRandomLocal(): Promise<RawSession> {
   };
 }
 
-/* ---- finalize (per-mode quantization) ------------------------------------ */
+/* ---- finalize (per-mode resolution) -------------------------------------- */
 
 /**
- * Per-tier resolution result. Tracks not just the notes but also which
- * mapper chart we sourced them from, so the HUD can show the player a
- * truthful "raw N notes" readout — i.e. the size of the chart we
- * actually thinned, not the densest chart in the .osz.
+ * Per-tier resolution result. Tracks the notes plus the mapper chart
+ * they came from, so chart-level metadata (bpm, offset, duration) can
+ * be sourced from the right place when the player switches mode.
+ *
+ * In the "originals only" model `notes === source.rawNotes` whenever
+ * the tier is available — `mapperShipped` is now always `true` for
+ * available tiers, kept on the type for downstream code that still
+ * branches on it (HUD "raw N notes" badge etc.).
  */
 interface ResolvedTier {
   notes: Note[];
   count: number;
   available: boolean;
   /**
-   * The mapper chart that produced this tier's notes, either directly
-   * (mapper-shipped) or as the source we quantized from. `null` only
-   * for unavailable tiers.
+   * The mapper chart this tier maps to. `null` only for unavailable
+   * tiers (no mapper chart was bucketed into this tier).
    */
   source: RawChart | null;
-  /** True when `source.rawNotes === notes` (no quantization applied). */
+  /**
+   * Always `true` for available tiers post-refactor; kept on the type
+   * because HUD badges and `LoadSongResult.rawNoteCount` still reference
+   * it as a "is this a real mapper chart?" flag.
+   */
   mapperShipped: boolean;
 }
 
 /**
- * Densest mapper chart in the song, or the fallback base if no buckets
- * are populated. This is the canonical source for synthesizing every
- * non-mapper tier — "thin the highest-fidelity reference" gives more
- * predictable density bands than "thin the nearest above" (which had
- * the perverse outcome where mapper-shipping a sparse Insane would
- * cause Hard to be synthesized from THAT instead of the dense Expert,
- * producing a chart that didn't fit the Hard band at all).
+ * Resolve every Syncle tier to concrete notes + availability, then
+ * return the result for the requested mode.
  *
- * Subsampling is deterministic and beat-agnostic, so sourcing every
- * synthesized tier from one canonical chart gives the player a
- * consistent "feel chain": the patterns they see at Easy are the same
- * shapes they'll see at Expert, just sparser.
- */
-function densestSource(
-  buckets: Partial<Record<ChartMode, RawChart>>,
-  fallback: RawChart,
-): RawChart {
-  let best: RawChart = fallback;
-  for (const tier of MODE_ORDER) {
-    const c = buckets[tier];
-    if (c && c.nps > best.nps) best = c;
-  }
-  return best;
-}
-
-/**
- * Resolve every Syncle tier to concrete notes + availability + density,
- * then return the result for the requested mode.
+ * Resolution is dead simple now that synthesis is gone:
+ *   - mapper-shipped chart in the bucket → use it AS-IS (no thinning,
+ *     no grid-snap, no Expert capping). What the mapper made is what
+ *     the player gets.
+ *   - bucket empty → tier disabled, picker greys it out.
  *
- * The new model: every tier owns a calibrated nps band (see
- * `TIER_BANDS`) and `resolveTier` either delivers a chart whose density
- * lands inside that band or marks the tier unavailable. There's no
- * relative-ordering check between tiers anymore — bands are absolute,
- * which is why a Hard always feels like a Hard regardless of how dense
- * the source song happened to be.
- *
- * Per-tier strategy:
- *   - mapper-shipped chart in the bucket → use it as-is (Expert above
- *     band.max gets thinned down to band.target)
- *   - else → subsample the densest mapper chart in the song to land at
- *     band.target nps (Easy/Normal try a beat-grid pass first for
- *     musicality and fall back to subsample if the grid result is
- *     out of band)
- *   - if no source can produce a chart in band → tier disabled
- *
- * The result: the picker shows you exactly the tiers that are honest
- * representations of their label, never a "Hard" that's secretly Expert
- * or an "Easy" with 14 nps streams.
+ * The previous model that synthesized missing tiers from the densest
+ * mapper chart was removed because the re-timed notes drifted just off
+ * the song's beat enough to feel wrong on careful play, and we'd
+ * rather show the player an honest "Easy not available" than a
+ * subtly-mistimed Easy.
  */
 function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
   const buckets = session.bucketCharts;
   const base = session.fallbackBase;
-  const source = densestSource(buckets, base);
 
   const tiers: Record<ChartMode, ResolvedTier> = {
     easy: emptyTier(),
@@ -982,14 +664,14 @@ function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
   };
 
   for (const tier of MODE_ORDER) {
-    tiers[tier] = resolveTier(tier, buckets, source);
+    tiers[tier] = resolveTier(tier, buckets);
   }
 
   const requested = tiers[mode];
-  // Resolution map from mode → which chart we use for audio metadata.
-  // Mapper-shipped tiers use their own mapper chart; synthesized tiers
-  // ride on their source chart's bpm/offset/duration (we didn't shift
-  // any of that, just thinned the note set).
+  // Audio metadata source: the mapper chart that owns this tier, or the
+  // fallback (used by local-fallback songs where the same chart drives
+  // every available tier — typically only one bucket is populated for a
+  // local song since they ship a single .osu).
   const chartForMode = requested.source ?? base;
 
   const safeDiv = (n: number, d: number) => (d > 0 ? n / d : 0);
@@ -1050,12 +732,11 @@ function finalize(session: RawSession, mode: ChartMode): LoadSongResult {
     meta,
     notes: requested.notes,
     source: "osu",
-    // `rawNoteCount` is the count of the chart we sourced this tier
-    // FROM — for mapper-shipped tiers that equals the tier's own count
-    // (so the "raw N" badge naturally hides), for synthesized tiers it
-    // surfaces the size of the parent mapper chart we thinned. Falls
-    // back to base only for unavailable tiers (which the caller
-    // shouldn't be requesting in the first place).
+    // `rawNoteCount` always equals the requested tier's note count now
+    // (mapper chart is used as-is, no thinning). Kept on the result for
+    // backward compat with the HUD's "raw N" badge — it'll just always
+    // match `requested.count`. Falls back to `base` only for the
+    // pathological case where the caller requests an unavailable tier.
     rawNoteCount: (requested.source ?? base).rawNotes.length,
     mode,
     modes,
@@ -1078,297 +759,31 @@ function emptyTier(): ResolvedTier {
 }
 
 /**
- * Resolve a single tier against its density band.
+ * Resolve a single tier — mapper-only, no synthesis.
  *
- * Three paths, in order:
+ * `buckets[tier]` was populated in `rawSessionFromExtracted` by walking
+ * every parsed mapper chart in the .osz and routing it through
+ * `assignBucket(version, nps)`. So if a chart exists here, it's a real
+ * mapper-made difficulty whose density was validated against the tier's
+ * band (see `lib/game/difficulty.ts`).
  *
- *   1. Mapper-shipped (`buckets[tier]` is set). The chart already passed
- *      band validation in `assignBucket`, so we just hand it back. Special
- *      case: Expert above its band.max gets thinned to band.target — this
- *      is what stops an absurd 25-nps mapper "Lunatic" from surfacing as
- *      a 25-nps "Expert" button. The original count survives in
- *      `source.rawNotes.length`, so the HUD's "raw N" badge still tells
- *      the truth about what the chart was natively.
- *
- *   2. Synthesized via beat-grid (Easy / Normal only). We try a /1 or /2
- *      grid pass first because it snaps notes to whole/half beats — gives
- *      players the musical "tap on the downbeat" feel they expect at
- *      easier tiers. If the grid result lands in band, we use it. If
- *      not (uncommon BPMs, sparse sources), we fall through to step 3.
- *
- *   3. Synthesized via subsample. Computes the exact ratio needed to land
- *      `result.length / source.duration` near `band.target`, accounting
- *      for hold notes (always preserved, so we only thin taps). Holds
- *      contribute to density on their own — if the source's holds alone
- *      already exceed band.max nps we can't synthesize this tier without
- *      dropping sustains, which we refuse to do.
- *
- * If every path fails to produce a chart inside `[band.min, band.max]`,
- * the tier is disabled and the picker shows it greyed-out.
- *
- * Why no synthesis for Expert: Expert is the densest tier by definition,
- * and we can't add notes to a source — we can only thin. So Expert
- * requires either a mapper Expert (the common case) or a re-bucketed
- * mapper chart whose density landed in the Expert band.
+ * If no mapper chart maps to this tier, we mark it unavailable. The
+ * picker disables the button; the player picks something else. This is
+ * the explicit contract: "originals only, disable what isn't shipped".
  */
 function resolveTier(
   tier: ChartMode,
   buckets: Partial<Record<ChartMode, RawChart>>,
-  source: RawChart,
 ): ResolvedTier {
-  const band = TIER_BANDS[tier];
-
-  // 1) Mapper-shipped — assignment already validated the band, except for
-  //    Expert which has an upper cap that we apply here.
   const mapper = buckets[tier];
-  if (mapper) {
-    if (tier === "expert" && mapper.nps > band.max) {
-      const thinned = subsampleToTargetNps(mapper, band.target);
-      // Even after capping, a degenerate source (huge holds, no taps)
-      // might miss the band. Validate before reporting available.
-      if (thinned && inBand(thinned.length, mapper.duration, band)) {
-        return {
-          notes: thinned,
-          count: thinned.length,
-          available: true,
-          source: mapper,
-          mapperShipped: false,
-        };
-      }
-      return emptyTier();
-    }
-    return {
-      notes: mapper.rawNotes,
-      count: mapper.rawNotes.length,
-      available: true,
-      source: mapper,
-      mapperShipped: true,
-    };
-  }
-
-  // 2) Synthesize — only if the source can plausibly thin DOWN to the
-  //    band. A source sparser than the band's min can never reach this
-  //    tier (we'd need to invent notes), and Expert can't be synthesized
-  //    at all (nothing denser to thin from).
-  if (tier === "expert") return emptyTier();
-  if (source.nps < band.min) return emptyTier();
-
-  // 2a) Beat-grid passes for Easy / Normal — snaps notes to musical
-  //     beats. We try MULTIPLE divisors and use the first that lands in
-  //     band, instead of locking to a single divisor that may overshoot
-  //     on high-BPM sources (a /1 grid at BPM 280 gives 4.7 nps, way
-  //     above Easy's 3.5 max). The order biases toward the coarsest
-  //     grid that fits, which gives the most musical-feeling result.
-  if (tier === "easy" || tier === "normal") {
-    const divisors: Array<1 | 2 | 3 | 4> =
-      tier === "easy" ? [1, 2, 3] : [2, 3, 4];
-    for (const div of divisors) {
-      const grid = quantizeToGrid(
-        source.rawNotes,
-        source.bpm,
-        source.offset,
-        div,
-        false,
-      );
-      if (inBand(grid.length, source.duration, band)) {
-        return {
-          notes: grid,
-          count: grid.length,
-          available: true,
-          source,
-          mapperShipped: false,
-        };
-      }
-    }
-    // Fall through to subsample.
-  }
-
-  // 2b) Subsample pass — precise density targeting via tap-fraction
-  //     math. Tries the band target first (the calibrated "feels like
-  //     this tier" density) and then walks a few candidate targets
-  //     inside the band so we don't disable a tier just because the
-  //     calibrated target landed a hair outside on this particular
-  //     source. Holds are preserved across all of these.
-  const subTargets: number[] = [
-    band.target,
-    (band.min + band.target) / 2,
-    (band.target + band.max) / 2,
-    band.min,
-    band.max,
-  ];
-  for (const target of subTargets) {
-    const sub = subsampleToTargetNps(source, target);
-    if (sub && inBand(sub.length, source.duration, band)) {
-      return {
-        notes: sub,
-        count: sub.length,
-        available: true,
-        source,
-        mapperShipped: false,
-      };
-    }
-  }
-
-  // 2c) Hold-thinning fallback for Easy / Normal. Fires when the source's
-  //     sustains are so dense they alone exceed the tier's band.max
-  //     (think Expert hold-spam → Easy: holds at 5 nps, Easy max 3.5).
-  //     Without this fallback, Easy and Medium would simply be DISABLED
-  //     on those songs, which is exactly the failure mode the user hit
-  //     ("u quantizied the others, but u didnt do the easy and medium
-  //     modes"). We only allow this for Easy/Normal because losing some
-  //     sustains is acceptable on the simplification-friendly tiers and
-  //     unacceptable on the Hard-and-up tiers where holds carry chart
-  //     identity.
-  if (tier === "easy" || tier === "normal") {
-    for (const target of subTargets) {
-      const thinned = thinHoldsAndSubsampleToTargetNps(source, target);
-      if (thinned && inBand(thinned.length, source.duration, band)) {
-        return {
-          notes: thinned,
-          count: thinned.length,
-          available: true,
-          source,
-          mapperShipped: false,
-        };
-      }
-    }
-  }
-
-  return emptyTier();
-}
-
-/**
- * Subsample `chart` so its resulting density lands at approximately
- * `targetNps`. Holds are kept unconditionally (losing one would silently
- * drop a phrase of the song), so we compute the fraction of *taps* to
- * keep in order to hit the total target count.
- *
- * Returns `null` if the source has no taps at all (rare — short pure-hold
- * sustain charts) since we have nothing to thin.
- *
- * Note: when `holdCount/duration > targetNps`, the result will simply be
- * "all holds, zero taps" and the resulting density still exceeds target.
- * That's intentional here — phrasing-preservation is the contract of this
- * helper. Tiers that need to dip BELOW the holds-floor (e.g. Easy on a
- * sustain-heavy Expert source) use `thinHoldsAndSubsampleToTargetNps`
- * instead, which is allowed to drop sustains as a last resort.
- */
-function subsampleToTargetNps(
-  chart: RawChart,
-  targetNps: number,
-): Note[] | null {
-  let tapCount = 0;
-  for (const n of chart.rawNotes) {
-    const isHold = n.endT != null && n.endT > n.t + 0.05;
-    if (!isHold) tapCount++;
-  }
-  if (tapCount === 0) return null;
-  const holdCount = chart.rawNotes.length - tapCount;
-  const targetTotal = Math.round(targetNps * chart.duration);
-  const targetTaps = Math.max(0, targetTotal - holdCount);
-  const ratio = Math.min(1.0, targetTaps / tapCount);
-  return subsampleNotes(chart.rawNotes, ratio);
-}
-
-/**
- * Hold-permissive variant of {@link subsampleToTargetNps} — thins BOTH
- * holds and taps to hit `targetNps`. Used as a last-resort fallback for
- * Easy/Medium synthesis when the source is so hold-heavy that
- * `holdCount/duration` alone already exceeds the tier's band.max.
- *
- * Why this is OK to do (despite our usual "never drop a sustain" rule):
- *
- *   - The hold-preserving subsample only fails on charts where sustains
- *     are SO dense they form streams in their own right (think Expert
- *     hold-spam patterns at 5+ nps). On those charts the sustains are no
- *     longer "phrasing markers" — they're the chart's main density. A
- *     player asking for Easy literally cannot play an Easy unless we
- *     thin them.
- *
- *   - Refusing to thin would mean the song shows Easy and Medium as
- *     unavailable, which is what the user actually complained about
- *     ("u quantizied the others, but u didnt do the easy and medium
- *     modes"). Silent loss of some holds is strictly better than a
- *     dead button.
- *
- * Strategy:
- *   1. Decide how many holds to keep so they contribute at most ~70% of
- *      the target density (leaves headroom for some taps to land on
- *      downbeats — a pure-holds Easy feels nothing like an Easy).
- *   2. Bresenham-thin holds along the timeline to that count, preserving
- *      time distribution rather than just slicing off the tail.
- *   3. Top up to `targetTotal` with evenly-thinned taps.
- *   4. Sort + reassign ids before returning.
- *
- * Returns `null` only on degenerate inputs (zero notes / zero duration).
- */
-function thinHoldsAndSubsampleToTargetNps(
-  chart: RawChart,
-  targetNps: number,
-): Note[] | null {
-  if (chart.rawNotes.length === 0 || chart.duration <= 0) return null;
-  const isHold = (n: Note) => n.endT != null && n.endT > n.t + 0.05;
-  const holds: Note[] = [];
-  const taps: Note[] = [];
-  for (const n of chart.rawNotes) (isHold(n) ? holds : taps).push(n);
-  holds.sort((a, b) => a.t - b.t);
-  taps.sort((a, b) => a.t - b.t);
-
-  const targetTotal = Math.max(0, Math.round(targetNps * chart.duration));
-  if (targetTotal === 0) return null;
-
-  // Cap the hold quota at 70% of total target — keeps room for a real
-  // tap layer so the synthesized chart still feels like a tap-driven
-  // tier instead of a sustain-only soup.
-  const holdQuota = Math.min(holds.length, Math.floor(targetTotal * 0.7));
-
-  // Bresenham-keep `holdQuota` holds out of `holds.length`, evenly
-  // distributed across time so we don't carve a gap in any one section.
-  const keptHolds: Note[] = [];
-  if (holds.length === 0) {
-    // No holds in source — fall back to plain tap subsample.
-  } else if (holdQuota >= holds.length) {
-    keptHolds.push(...holds);
-  } else if (holdQuota > 0) {
-    const step = holds.length / holdQuota;
-    for (let i = 0; i < holdQuota; i++) {
-      const idx = Math.min(holds.length - 1, Math.floor((i + 0.5) * step));
-      keptHolds.push(holds[idx]);
-    }
-  }
-
-  // Top up to `targetTotal` with thinned taps.
-  const remainingForTaps = Math.max(0, targetTotal - keptHolds.length);
-  const keptTaps: Note[] = [];
-  if (remainingForTaps > 0 && taps.length > 0) {
-    const tapKeep = Math.min(taps.length, remainingForTaps);
-    if (tapKeep >= taps.length) {
-      keptTaps.push(...taps);
-    } else {
-      const step = taps.length / tapKeep;
-      for (let i = 0; i < tapKeep; i++) {
-        const idx = Math.min(taps.length - 1, Math.floor((i + 0.5) * step));
-        keptTaps.push(taps[idx]);
-      }
-    }
-  }
-
-  const out: Note[] = [...keptHolds, ...keptTaps];
-  if (out.length === 0) return null;
-  out.sort((a, b) => a.t - b.t);
-  out.forEach((n, i) => (n.id = i));
-  return out;
-}
-
-/** True iff `count` notes over `duration` seconds lands inside `band`. */
-function inBand(
-  count: number,
-  duration: number,
-  band: { min: number; max: number },
-): boolean {
-  if (duration <= 0) return false;
-  const nps = count / duration;
-  return nps >= band.min && nps <= band.max;
+  if (!mapper) return emptyTier();
+  return {
+    notes: mapper.rawNotes,
+    count: mapper.rawNotes.length,
+    available: true,
+    source: mapper,
+    mapperShipped: true,
+  };
 }
 
 /* ---- helpers ------------------------------------------------------------- */

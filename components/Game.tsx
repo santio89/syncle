@@ -55,7 +55,7 @@ import {
 import { useLeaveGuard } from "@/components/LeaveGuardProvider";
 import { useTheme } from "@/components/ThemeProvider";
 import { ArrowIcon, type ArrowDirection } from "@/components/icons/ArrowIcon";
-import { StatusBadge } from "@/components/StatusBadge";
+import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
 import ScrollStrip from "@/components/ScrollStrip";
 import TouchLanes from "@/components/TouchLanes";
 
@@ -1907,8 +1907,13 @@ function StartCard({
           <p className="font-mono text-[10.5px] uppercase tracking-[0.4em] text-accent">
             {mirror ? "Random pick" : "Now playing"}
           </p>
-          {ready && meta!.status && (
-            <StatusBadge status={meta!.status} size="xs" />
+          {ready && (
+            <DifficultyRangeBadge
+              buckets={MODE_ORDER.filter(
+                (m) => modeAvailability.available[m],
+              )}
+              size="xs"
+            />
           )}
         </div>
         {ready && songSource && (

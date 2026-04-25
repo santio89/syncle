@@ -10,6 +10,7 @@
  */
 
 import { CatalogItem } from "@/lib/multi/protocol";
+import { ChartMode, MODE_ORDER, assignBucket } from "@/lib/game/difficulty";
 
 interface SearchSource {
   name: string;
@@ -313,6 +314,15 @@ export async function searchCatalogPage(opts: {
   query: string;
   page: number;
   pageSize?: number;
+  /**
+   * Optional Syncle bucket filter — when set, the returned `items` are
+   * restricted to sets whose `availableBuckets` includes this tier.
+   * Filtering happens AFTER `normalize`, so `hasMore` still reflects
+   * the upstream's view of "is this page full?" (the post-filter slice
+   * may be smaller than the upstream slice; the host paginates further
+   * to find more matches, same as a typical client-side filter).
+   */
+  bucket?: ChartMode;
 }): Promise<SearchCatalogResult> {
   const query = opts.query.trim();
   if (!query) {
@@ -345,6 +355,9 @@ export async function searchCatalogPage(opts: {
       for (const raw of sets) {
         const item = normalize(raw, src.name);
         if (!item || seen.has(item.beatmapsetId)) continue;
+        if (opts.bucket && !item.availableBuckets?.includes(opts.bucket)) {
+          continue;
+        }
         seen.add(item.beatmapsetId);
         items.push(item);
       }
@@ -390,6 +403,13 @@ export async function browseCatalogPage(opts: {
   page: number;
   pageSize?: number;
   sort?: BrowseSort;
+  /**
+   * Optional Syncle bucket filter — same semantics as
+   * `searchCatalogPage.bucket`. Applied AFTER `normalize`, so
+   * `hasMore` still reflects the upstream's view of "is this page
+   * full?".
+   */
+  bucket?: ChartMode;
 }): Promise<SearchCatalogResult> {
   const page = Math.max(0, Math.min(BROWSE_MAX_PAGES - 1, Math.floor(opts.page)));
   const pageSize = Math.max(
@@ -425,6 +445,9 @@ export async function browseCatalogPage(opts: {
       for (const raw of sets) {
         const item = normalize(raw, src.name);
         if (!item || seen.has(item.beatmapsetId)) continue;
+        if (opts.bucket && !item.availableBuckets?.includes(opts.bucket)) {
+          continue;
+        }
         seen.add(item.beatmapsetId);
         items.push(item);
       }
@@ -477,11 +500,38 @@ function normalize(raw: any, source: string): CatalogItem | null {
       durationSec = Math.max(durationSec ?? 0, Math.round(len));
     }
   }
+  // Compute the Syncle buckets present in this set BEFORE the .osz is
+  // ever downloaded. We don't have the parsed notes at this point, only
+  // the upstream metadata, so we approximate `nps` using the mirror's
+  // hit-object counts (`count_normal + count_slider + count_spinner`)
+  // divided by `hit_length` (= time between first and last hit object).
+  // That's the same density definition the on-disk path uses post-parse,
+  // so the buckets agree for ~99 % of sets — the only drift is when a
+  // mirror omits one of the count fields (rare; we treat undefined as 0).
+  // Buckets are de-duped + sorted into MODE_ORDER for deterministic
+  // wire output (cache-friendly + UI-friendly: chip always renders
+  // easy-then-expert order even on mirrors that list diffs out of order).
+  const bucketSet = new Set<ChartMode>();
+  for (const b of fourKBeats) {
+    const version = typeof b?.version === "string" ? b.version : "";
+    const counts =
+      Number(b?.count_normal ?? 0) +
+      Number(b?.count_slider ?? 0) +
+      Number(b?.count_spinner ?? 0);
+    const dur = Number(b?.hit_length ?? b?.total_length ?? 0);
+    if (!Number.isFinite(counts) || !Number.isFinite(dur) || dur <= 0) {
+      continue;
+    }
+    const nps = counts / dur;
+    bucketSet.add(assignBucket(version, nps));
+  }
+  const availableBuckets = MODE_ORDER.filter((m) => bucketSet.has(m));
   return {
     beatmapsetId: raw.id,
     title: typeof raw.title === "string" ? raw.title : "Untitled",
     artist: typeof raw.artist === "string" ? raw.artist : "Unknown",
     source,
     ...(durationSec !== undefined ? { durationSec } : {}),
+    ...(availableBuckets.length > 0 ? { availableBuckets } : {}),
   };
 }

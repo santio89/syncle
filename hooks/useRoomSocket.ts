@@ -101,6 +101,12 @@ export interface RoomActions {
     opts?: {
       sort?: "ranked_desc" | "ranked_asc" | "plays_desc" | "rating_desc";
       refresh?: boolean;
+      /**
+       * Optional Syncle bucket filter. When set, the server post-
+       * filters the upstream page so only sets that contain this
+       * tier come back. `undefined` = no filter (default).
+       */
+      bucket?: ChartMode;
     },
   ): Promise<{
     items: CatalogItem[];
@@ -124,6 +130,14 @@ export interface RoomActions {
   searchCatalog(
     query: string,
     page: number,
+    opts?: {
+      /**
+       * Optional Syncle bucket filter — same semantics as
+       * `browseCatalog.opts.bucket`. Server post-filters the search
+       * page to sets that contain this tier. `undefined` = no filter.
+       */
+      bucket?: ChartMode;
+    },
   ): Promise<{
     items: CatalogItem[];
     page: number;
@@ -570,6 +584,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
       opts?: {
         sort?: "ranked_desc" | "ranked_asc" | "plays_desc" | "rating_desc";
         refresh?: boolean;
+        bucket?: ChartMode;
       },
     ) => {
       const res = await callWithAck<{
@@ -582,6 +597,7 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
         page,
         sort: opts?.sort,
         refresh: opts?.refresh,
+        bucket: opts?.bucket,
       });
       if (!res.ok) {
         setLastError({ code: res.code, message: res.message });
@@ -593,14 +609,22 @@ export function useRoomSocket(roomCode: string | null): UseRoomSocket {
   );
 
   const searchCatalog = useCallback(
-    async (query: string, page: number) => {
+    async (
+      query: string,
+      page: number,
+      opts?: { bucket?: ChartMode },
+    ) => {
       const res = await callWithAck<{
         items: CatalogItem[];
         page: number;
         query: string;
         hasMore: boolean;
         source: string;
-      }>("host:catalogSearch", { query, page });
+      }>("host:catalogSearch", {
+        query,
+        page,
+        bucket: opts?.bucket,
+      });
       if (!res.ok) {
         setLastError({ code: res.code, message: res.message });
         return null;

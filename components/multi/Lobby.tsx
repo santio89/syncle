@@ -43,6 +43,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import { CopyToast } from "@/components/CopyToast";
+import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
 import ScrollStrip from "@/components/ScrollStrip";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type { RoomActions } from "@/hooks/useRoomSocket";
@@ -1182,6 +1183,14 @@ function HostPane({
   // user pauses typing for ~300 ms. Without this the host typing
   // "spectre" would fire 7 mirror requests; with it, exactly 1.
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Difficulty filter — when set, both browse and search results are
+  // restricted to sets that ship the chosen Syncle bucket. `null` =
+  // unfiltered (default; matches the pre-filter behavior). Wired into
+  // both fetch effects via the `bucket` field on the action and into
+  // each effect's dependency list so toggling the filter re-fetches
+  // the current view (browse OR search). The page-reset wrapper is
+  // declared further down, after the page setters exist.
+  const [bucketFilter, setBucketFilter] = useState<ChartMode | null>(null);
   // Browse-mode state (no query, paginated by ranked_desc by default).
   // The `browseRefreshTick` int is bumped by the ↻ button to force a
   // re-fetch of the current page even if React would otherwise skip
@@ -1207,6 +1216,16 @@ function HostPane({
   // slow page-1 response could land AFTER the user has already
   // navigated to page 2, overwriting newer results with stale ones.
   const searchReqId = useRef(0);
+  // Setter wrapper used by every difficulty chip — toggles the active
+  // filter AND resets both pagination cursors. Old page indices are
+  // meaningless across a filter change (page 5 of unfiltered "newest
+  // ranked" is rarely page 5 of "newest ranked with an Easy"), so
+  // dropping back to page 0 is what every other filter UI does.
+  const updateBucketFilter = useCallback((next: ChartMode | null) => {
+    setBucketFilter(next);
+    setBrowsePage(0);
+    setSearchPage(0);
+  }, []);
   // The "starting" state is now driven entirely by the server snapshot
   // (`prestartEndsAt !== null`). The 3 s prestart countdown overlay
   // doubles as the click debounce — between click and next snapshot the
@@ -1232,7 +1251,10 @@ function HostPane({
     setBrowseLoading(true);
     setBrowseError(null);
     actions
-      .browseCatalog(browsePage, isRefresh ? { refresh: true } : undefined)
+      .browseCatalog(browsePage, {
+        ...(isRefresh ? { refresh: true } : {}),
+        ...(bucketFilter ? { bucket: bucketFilter } : {}),
+      })
       .then((res) => {
         if (reqId !== browseReqId.current) return;
         if (!res) {
@@ -1258,7 +1280,7 @@ function HostPane({
         if (reqId !== browseReqId.current) return;
         setBrowseLoading(false);
       });
-  }, [browsePage, browseRefreshTick, actions]);
+  }, [browsePage, browseRefreshTick, bucketFilter, actions]);
 
   // Typing debounce. 300 ms was tuned from feel:
   // shorter than that and a normal-pace typist still fires 2-3 mid-
@@ -1290,7 +1312,9 @@ function HostPane({
     setSearchLoading(true);
     setSearchError(null);
     actions
-      .searchCatalog(debouncedQuery, searchPage)
+      .searchCatalog(debouncedQuery, searchPage, {
+        ...(bucketFilter ? { bucket: bucketFilter } : {}),
+      })
       .then((res) => {
         // Stale response — the user typed (or paged) past this
         // request before it landed. Drop it without touching state.
@@ -1318,7 +1342,7 @@ function HostPane({
         if (reqId !== searchReqId.current) return;
         setSearchLoading(false);
       });
-  }, [debouncedQuery, searchPage, actions]);
+  }, [debouncedQuery, searchPage, bucketFilter, actions]);
 
   // Source of truth for the rendered list. Search mode (non-empty
   // debounced query) shows ONLY upstream search results — there's no
@@ -1523,6 +1547,53 @@ function HostPane({
         )}
       </div>
 
+      {/* Difficulty filter chip row.
+          - "All" leaves the catalog unfiltered (server returns the
+            mirror's full page; the host can browse anything).
+          - Each tier chip post-filters the upstream page server-side
+            to sets that ship that Syncle bucket — so a host who only
+            wants Easy songs can scope the entire catalog without
+            opening individual sets to check.
+          The chips intentionally use the same accent palette as the
+          "Selected" preview tile above, so the eye reads them as
+          part of the same host-controls cluster instead of two
+          unrelated UI surfaces. Active chip is the inverse (filled
+          accent on bone text) so it's clearly the current scope at
+          a glance, even from across the room. */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-[9.5px] uppercase tracking-widest text-bone-50/45">
+          Difficulty
+        </span>
+        <button
+          onClick={() => updateBucketFilter(null)}
+          className={`border-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest transition-colors ${
+            bucketFilter === null
+              ? "border-accent bg-accent text-bone-950"
+              : "border-accent/30 text-accent/70 hover:border-accent/70 hover:text-accent"
+          }`}
+          data-tooltip="Show every set the upstream returns"
+        >
+          all
+        </button>
+        {MODE_ORDER.map((m) => {
+          const active = bucketFilter === m;
+          return (
+            <button
+              key={m}
+              onClick={() => updateBucketFilter(active ? null : m)}
+              className={`border-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                active
+                  ? "border-accent bg-accent text-bone-950"
+                  : "border-accent/30 text-accent/70 hover:border-accent/70 hover:text-accent"
+              }`}
+              data-tooltip={`Only show sets that ship ${displayMode(m)}`}
+            >
+              {displayMode(m)}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Catalog has its own internal scroller so the difficulty
           grid + Start button stay anchored near the bottom of the
           host pane instead of being pushed off-screen by a long
@@ -1599,25 +1670,39 @@ function HostPane({
                     <span className="text-bone-50/55">{c.artist}</span>{" "}
                     <span className="text-bone-50">— {c.title}</span>
                   </span>
-                  {/* Right column: track length (m:ss) when the mirror
-                      reported `total_length` for at least one 4K diff.
-                      Falls back to the mirror name for legacy / cached
-                      catalogs that pre-date the duration field, so the
-                      column is never empty. `tabular-nums` keeps every
-                      "1:23" vertically aligned across the list, which
-                      is much easier to scan than left-justified mirror
+                  {/* Right column: difficulty range chip (when the
+                      server computed `availableBuckets` for this set)
+                      followed by track length. The range chip
+                      replaces the old "ranked / loved / qualified"
+                      moderation badge — every player asks "what
+                      difficulties does this song have?" before they
+                      ask "is this set ranked?", so the row leads with
+                      the answer they actually want.
+                      Falls back to mirror name when `durationSec` is
+                      missing (legacy cache) so the column is never
+                      empty. `tabular-nums` keeps every "1:23"
+                      vertically aligned across the list, which is
+                      much easier to scan than left-justified mirror
                       names of varying width. */}
-                  <span
-                    className="shrink-0 font-mono text-[9.5px] uppercase tracking-widest tabular-nums text-bone-50/40"
-                    data-tooltip={
-                      c.durationSec !== undefined
-                        ? `Track length · sourced from ${c.source}`
-                        : `Source mirror · duration not reported`
-                    }
-                  >
-                    {c.durationSec !== undefined
-                      ? formatTrackLength(c.durationSec)
-                      : c.source}
+                  <span className="flex shrink-0 items-baseline gap-2">
+                    {c.availableBuckets && c.availableBuckets.length > 0 && (
+                      <DifficultyRangeBadge
+                        buckets={c.availableBuckets}
+                        size="xs"
+                      />
+                    )}
+                    <span
+                      className="font-mono text-[9.5px] uppercase tracking-widest tabular-nums text-bone-50/40"
+                      data-tooltip={
+                        c.durationSec !== undefined
+                          ? `Track length · sourced from ${c.source}`
+                          : `Source mirror · duration not reported`
+                      }
+                    >
+                      {c.durationSec !== undefined
+                        ? formatTrackLength(c.durationSec)
+                        : c.source}
+                    </span>
                   </span>
                 </button>
               </li>
