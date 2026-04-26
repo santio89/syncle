@@ -179,6 +179,15 @@ export function drawRadialGlow(
   radius: number,
   blur: number,
   alpha = 1,
+  /**
+   * Optional vertical squash factor applied at BLIT time (1 = circle,
+   * < 1 = flat ellipse / tilted perspective). The cached sprite is
+   * always a true circle - we just non-uniformly scale the
+   * destination rect, which is free because drawImage takes a dst
+   * width/height anyway. Keeps the sprite cache 1D instead of
+   * exploding into a perspective × color × radius × blur matrix.
+   */
+  yScale = 1,
 ): void {
   if (alpha <= 0 || radius <= 0) return;
   const rQ = quantize(radius, QUANTIZE_RADIUS_PX);
@@ -210,9 +219,16 @@ export function drawRadialGlow(
   const halfCssQ = sprite.width / dpr / 2;
   const scale = radius / rQ;
   const halfCss = halfCssQ * scale;
+  const halfCssY = halfCss * yScale;
   const prev = ctx.globalAlpha;
   if (alpha !== 1) ctx.globalAlpha = prev * alpha;
-  ctx.drawImage(sprite, x - halfCss, y - halfCss, halfCss * 2, halfCss * 2);
+  ctx.drawImage(
+    sprite,
+    x - halfCss,
+    y - halfCssY,
+    halfCss * 2,
+    halfCssY * 2,
+  );
   if (alpha !== 1) ctx.globalAlpha = prev;
 }
 
@@ -236,6 +252,8 @@ export function drawRingGlow(
   lineWidth: number,
   blur: number,
   alpha = 1,
+  /** Vertical squash factor (see `drawRadialGlow`). */
+  yScale = 1,
 ): void {
   if (alpha <= 0 || radius <= 0 || lineWidth <= 0) return;
   const rQ = quantize(radius, QUANTIZE_RADIUS_PX);
@@ -259,9 +277,16 @@ export function drawRingGlow(
   const halfCssQ = sprite.width / dpr / 2;
   const scale = radius / rQ;
   const halfCss = halfCssQ * scale;
+  const halfCssY = halfCss * yScale;
   const prev = ctx.globalAlpha;
   if (alpha !== 1) ctx.globalAlpha = prev * alpha;
-  ctx.drawImage(sprite, x - halfCss, y - halfCss, halfCss * 2, halfCss * 2);
+  ctx.drawImage(
+    sprite,
+    x - halfCss,
+    y - halfCssY,
+    halfCss * 2,
+    halfCssY * 2,
+  );
   if (alpha !== 1) ctx.globalAlpha = prev;
 }
 

@@ -64,9 +64,13 @@ import {
   loadRenderQuality,
   saveRenderQuality,
   nextRenderQuality,
+  loadPerspectiveMode,
+  savePerspectiveMode,
+  nextPerspectiveMode,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
+  type PerspectiveMode,
 } from "@/lib/game/settings";
 import {
   createRenderState,
@@ -347,6 +351,16 @@ function CanvasPane({
   // `renderOptsRef` below so toggling takes effect on the very next
   // rAF tick (no remount, no stutter).
   const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
+  // Playfield perspective - also shares the single-player persistence
+  // key so a player's preferred view ("3d" Guitar-Hero trapezoid or
+  // "2d" flat osu! style) carries across modes seamlessly. Purely
+  // visual, so - like Quality / FPS Lock / Metronome - this is a
+  // per-player preference rather than a room-wide rule. Two players
+  // in the same match can pick different perspectives without any
+  // impact on fairness: gameplay math (timing, scoring, hit
+  // registration) is identical in both modes.
+  const [perspectiveMode, setPerspectiveMode] =
+    useState<PerspectiveMode>(loadPerspectiveMode);
   // Strict Inputs (anti-mash protection) - match-wide and host-controlled
   // in multiplayer (unlike SP, where each player owns their own toggle).
   // The host flips it via `actions.setStrictInputs` from the lobby; the
@@ -388,6 +402,16 @@ function CanvasPane({
     renderOptsRef.current.quality = quality;
     saveRenderQuality(quality);
   }, [quality]);
+
+  // Mirror perspective mode into the renderer-options ref + persist
+  // on change - same save-on-change pattern as `quality` above. The
+  // renderer's `ensureCache` invalidates when `opts.perspectiveMode`
+  // changes, so flipping the HUD chip mid-match rebuilds the
+  // trapezoid on the very next frame without a remount.
+  useEffect(() => {
+    renderOptsRef.current.perspectiveMode = perspectiveMode;
+    savePerspectiveMode(perspectiveMode);
+  }, [perspectiveMode]);
 
   const { theme } = useTheme();
   useEffect(() => {
@@ -1434,6 +1458,10 @@ function CanvasPane({
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               quality={quality}
               onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+              perspectiveMode={perspectiveMode}
+              onCyclePerspectiveMode={() =>
+                setPerspectiveMode((cur) => nextPerspectiveMode(cur))
+              }
               strictInputs={strictInputs}
               isHost={isHost}
               // HealthPanel is only rendered mid-match (loading/
@@ -1891,6 +1919,8 @@ function HealthPanel({
   onCycleFpsLock,
   quality,
   onCycleQuality,
+  perspectiveMode,
+  onCyclePerspectiveMode,
   strictInputs,
   isHost,
   onSetStrictInputs,
@@ -1915,6 +1945,13 @@ function HealthPanel({
    *  modes. */
   quality: RenderQuality;
   onCycleQuality: () => void;
+  /** Playfield perspective preset - same control as the in-match
+   *  HUD in single-player. Shares the SP persistence key so a
+   *  player's preference carries across modes. Local-only (never
+   *  synced to other players): each player picks their own view,
+   *  scores stay comparable because gameplay math is identical. */
+  perspectiveMode: PerspectiveMode;
+  onCyclePerspectiveMode: () => void;
   /** Strict Inputs (anti-mash protection) - match-wide, host-controlled.
    *  Surface read-only for non-hosts; only the host's chip toggles it.
    *  Server enforces lobby-phase-only flips, so the in-match HUD chip
@@ -2115,6 +2152,40 @@ function HealthPanel({
           className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
         >
           {quality === "high" ? "HIGH" : "PERF"}
+        </span>
+      </button>
+      {/* View / perspective chip - mirrors the single-player HUD's
+          View chip and the lobby's PlayerSettingsModal tile. Per-
+          player preference (never synced over the wire) so each
+          player in the room can pick their own playfield view -
+          gameplay math is identical across modes, so scores stay
+          fully comparable. Live toggle via `renderOptsRef.current
+          .perspectiveMode` + ensureCache invalidation, same frame-
+          accurate pattern as Quality above. */}
+      <button
+        type="button"
+        onClick={onCyclePerspectiveMode}
+        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
+        data-tooltip={
+          perspectiveMode === "3d"
+            ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
+            : "2D · flat osu!-style lanes, constant note size, parallel rails"
+        }
+        aria-label="Cycle playfield perspective mode"
+      >
+        <span className="flex flex-col">
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+            View
+          </span>
+          <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
+            {perspectiveMode === "3d" ? "perspective" : "flat"}
+          </span>
+        </span>
+        <span
+          aria-hidden
+          className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+        >
+          {perspectiveMode === "3d" ? "3D" : "2D"}
         </span>
       </button>
       {/* Strict Inputs HUD chip - anti-mash protection. Match-wide

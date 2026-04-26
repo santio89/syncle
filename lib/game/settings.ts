@@ -47,6 +47,22 @@ const QUALITY_KEY = "syncle.quality";
 // canvas can flip to PERFORMANCE from the StartCard / HUD / Lobby
 // tile; the choice persists across sessions in `QUALITY_KEY`.
 const DEFAULT_QUALITY: RenderQuality = "high";
+const PERSPECTIVE_KEY = "syncle.perspective";
+// 2D (osu!-style flat lanes) is the default: parallel rails,
+// constant note size, no perspective depth. Chosen as the default
+// because player feedback flagged the 3D perspective highway as
+// disorienting for a subset of players (the notes grew as they
+// approached and the rails converged, which paired with flat
+// 2D input buttons read as inconsistent and mildly dizzying).
+// The 2D view is the stabler "first impression" - flat playfield,
+// flat inputs, flat notes, everything in the screen plane.
+// Players who prefer the Guitar Hero / Rock Band look can flip
+// to `"3d"` from the StartCard / HUD / Lobby tile; the choice
+// persists in `PERSPECTIVE_KEY` across sessions. The switch is
+// purely visual - gameplay math (timing windows, hit registration,
+// scoring) is identical in both modes, so it's stored as a per-
+// player preference and never synced over the multiplayer wire.
+const DEFAULT_PERSPECTIVE_MODE: PerspectiveMode = "2d";
 
 /* -----------------------------------------------------------------------
  * Storage-health signal - fires the first time a settings / resume /
@@ -198,6 +214,64 @@ export function saveRenderQuality(v: RenderQuality): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(QUALITY_KEY, v);
+  } catch {
+    reportStorageFailure();
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Playfield perspective mode.
+ *
+ * Controls the geometry of the highway, notes, rails, and hold trails:
+ *
+ * - `"3d"` → the Guitar Hero / Rock Band layout that has always
+ *            shipped. The highway is a trapezoid: top edge at 50% of
+ *            the bottom width, rails converge toward the top, notes
+ *            and hold trails scale from ~15 px wide at the top to
+ *            ~26 px at the judgment line. Beat lines also taper
+ *            horizontally to match the rail slope. Gives the game
+ *            visible depth and a "rushing toward the player" feel.
+ *
+ * - `"2d"` → osu!mania-style flat layout. Top edge = bottom edge
+ *            (rectangular highway), rails are perfectly vertical,
+ *            notes are a constant size, hold trails are constant
+ *            width. Pairs better with the flat 2D lane-gate buttons
+ *            at the bottom, eliminating the 2D/3D mismatch that
+ *            several players reported as mildly disorienting.
+ *
+ * Gameplay math (timing windows, hit registration, scoring,
+ * combo/score deltas, replay-worthy events) is IDENTICAL in both
+ * modes - this is a purely visual choice. Because it's purely
+ * visual, the setting is local-only (like Quality, FPS lock,
+ * metronome, feedback) and never synced over the multiplayer wire.
+ * Two players in the same room can run different perspective modes
+ * without any impact on fairness or leaderboard comparability.
+ * ------------------------------------------------------------------- */
+export type PerspectiveMode = "2d" | "3d";
+
+/** Cycle order for the in-game View toggle. */
+export const PERSPECTIVE_CYCLE: PerspectiveMode[] = ["2d", "3d"];
+
+export function nextPerspectiveMode(current: PerspectiveMode): PerspectiveMode {
+  return current === "3d" ? "2d" : "3d";
+}
+
+export function loadPerspectiveMode(): PerspectiveMode {
+  if (typeof window === "undefined") return DEFAULT_PERSPECTIVE_MODE;
+  try {
+    const raw = window.localStorage.getItem(PERSPECTIVE_KEY);
+    if (raw === "2d") return "2d";
+    if (raw === "3d") return "3d";
+    return DEFAULT_PERSPECTIVE_MODE;
+  } catch {
+    return DEFAULT_PERSPECTIVE_MODE;
+  }
+}
+
+export function savePerspectiveMode(v: PerspectiveMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PERSPECTIVE_KEY, v);
   } catch {
     reportStorageFailure();
   }

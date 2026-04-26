@@ -57,17 +57,21 @@ import {
 import {
   loadFpsLock,
   loadMetronome,
+  loadPerspectiveMode,
   loadRenderQuality,
   loadSfx,
   loadVolume,
   nextFpsLock,
+  nextPerspectiveMode,
   nextRenderQuality,
   saveFpsLock,
   saveMetronome,
+  savePerspectiveMode,
   saveRenderQuality,
   saveSfx,
   saveVolume,
   type FpsLock,
+  type PerspectiveMode,
   type RenderQuality,
 } from "@/lib/game/settings";
 import type {
@@ -646,6 +650,8 @@ function PlayerSettingsModal({
   const [sfx, setSfxState] = useState<boolean>(loadSfx);
   const [fpsLock, setFpsLockState] = useState<FpsLock>(loadFpsLock);
   const [quality, setQualityState] = useState<RenderQuality>(loadRenderQuality);
+  const [perspectiveMode, setPerspectiveModeState] =
+    useState<PerspectiveMode>(loadPerspectiveMode);
 
   // Live-save handlers - persist on every change so closing the lobby
   // tab without a final "save" still keeps the player's choices.
@@ -678,6 +684,18 @@ function PlayerSettingsModal({
     setQualityState((cur) => {
       const next = nextRenderQuality(cur);
       saveRenderQuality(next);
+      return next;
+    });
+  }, []);
+  // Perspective mode is purely a local viewing preference (never
+  // synced to the room) - each player picks the view they're most
+  // comfortable with. Gameplay math is identical across modes so
+  // scores stay 1:1 comparable. Shares the single-player persistence
+  // key, so a player's preference carries across modes.
+  const onCyclePerspectiveMode = useCallback(() => {
+    setPerspectiveModeState((cur) => {
+      const next = nextPerspectiveMode(cur);
+      savePerspectiveMode(next);
       return next;
     });
   }, []);
@@ -997,6 +1015,42 @@ function PlayerSettingsModal({
           </span>
         </label>
       </div>
+
+      {/* View / perspective tile - full-width under the 2x2 grid,
+          matching the single-player StartCard layout. Per-player
+          LOCAL preference: never synced over the wire, each player
+          picks the view they're most comfortable with (some get
+          dizzy from the Guitar-Hero perspective fret, some prefer
+          it to the flat osu-style lanes). Gameplay math is
+          identical across modes so scores stay comparable. */}
+      <button
+        type="button"
+        onClick={onCyclePerspectiveMode}
+        className="mt-2 flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
+        data-tooltip={
+          perspectiveMode === "3d"
+            ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
+            : "2D · flat osu!-style lanes, constant note size, parallel rails"
+        }
+        aria-label="Cycle playfield perspective mode"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+            View
+          </span>
+          <span
+            aria-hidden
+            className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+              perspectiveMode === "3d" ? "text-bone-50/60" : "text-accent"
+            }`}
+          >
+            {perspectiveMode === "3d" ? "3D" : "2D"}
+          </span>
+        </div>
+        <span className="font-mono text-[9.5px] text-bone-50/40">
+          fret perspective
+        </span>
+      </button>
 
       {/* Strict Inputs tile - match-wide anti-mash policy. Host owns
           the toggle (server enforces lobby-phase + host-only flips).

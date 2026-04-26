@@ -44,9 +44,13 @@ import {
   nextRenderQuality,
   loadStrictInputs,
   saveStrictInputs,
+  loadPerspectiveMode,
+  savePerspectiveMode,
+  nextPerspectiveMode,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
+  type PerspectiveMode,
 } from "@/lib/game/settings";
 import {
   clearSoloResume,
@@ -261,6 +265,19 @@ export default function Game() {
     strictInputsRef.current = strictInputs;
     saveStrictInputs(strictInputs);
   }, [strictInputs]);
+  /** Playfield perspective preset (`"3d"` = Guitar-Hero-style
+   *  trapezoid highway with converging rails and notes that scale
+   *  with depth, `"2d"` = osu!-style flat rectangle with parallel
+   *  rails and constant note size). Pure visual preference -
+   *  gameplay math is bit-identical in both modes, so it's
+   *  persisted locally (mirrors Quality / FPS Lock / Metronome) and
+   *  never synced over the multiplayer wire. Each player picks
+   *  their own view; scores remain fully comparable. Mirrored into
+   *  `renderOptsRef` on change so flipping the toggle (StartCard
+   *  tile or HUD chip) takes effect on the very next frame without
+   *  a remount. */
+  const [perspectiveMode, setPerspectiveMode] =
+    useState<PerspectiveMode>(loadPerspectiveMode);
   /** Persistent banner when localStorage / sessionStorage refuses a
    *  write (typical causes: Safari Private Browsing quota, exhausted
    *  per-origin quota, an extension that blocks storage). Surfaces a
@@ -383,6 +400,17 @@ export default function Game() {
     renderOptsRef.current.quality = quality;
     saveRenderQuality(quality);
   }, [quality]);
+
+  // Mirror perspective mode into the rAF-loop options ref. Same save-
+  // on-change pattern as `quality` above so the initial load from
+  // `loadPerspectiveMode()` doesn't cause a pointless write. The
+  // renderer's `ensureCache` invalidates when `opts.perspectiveMode`
+  // changes, so flipping the toggle is picked up cleanly on the next
+  // frame without a canvas remount.
+  useEffect(() => {
+    renderOptsRef.current.perspectiveMode = perspectiveMode;
+    savePerspectiveMode(perspectiveMode);
+  }, [perspectiveMode]);
 
   // Force-load the JetBrains Mono ExtraBold weight used by the lane-gate
   // letters drawn on the canvas. next/font only downloads weights that are
@@ -1604,8 +1632,22 @@ export default function Game() {
             onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
             quality={quality}
             onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+            perspectiveMode={perspectiveMode}
+            onCyclePerspectiveMode={() =>
+              setPerspectiveMode((cur) => nextPerspectiveMode(cur))
+            }
             strictInputs={strictInputs}
-            onToggleStrictInputs={() => setStrictInputs((s) => !s)}
+            // Strict Inputs is intentionally READ-ONLY once we're in
+            // countdown / playing / paused - flipping the anti-mash
+            // policy mid-run would let a spammer switch to forgiving
+            // scoring the moment a streak is on the line and still
+            // keep the combo they built under the strict rule.
+            // Locking it to the menus (StartCard) keeps the score
+            // shown on the results screen attributable to a single
+            // ruleset for the full run. Passing `undefined` here
+            // tells the HUD to render the checkbox as locked and
+            // flash a "Only editable in the menu" hint on click.
+            onToggleStrictInputs={undefined}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
             songDuration={displayMeta?.duration ?? null}
@@ -1651,6 +1693,10 @@ export default function Game() {
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               quality={quality}
               onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
+              perspectiveMode={perspectiveMode}
+              onCyclePerspectiveMode={() =>
+                setPerspectiveMode((cur) => nextPerspectiveMode(cur))
+              }
               strictInputs={strictInputs}
               onToggleStrictInputs={() => setStrictInputs((s) => !s)}
               songSource={songSource}
@@ -2008,6 +2054,8 @@ function StartCard({
   onCycleFpsLock,
   quality,
   onCycleQuality,
+  perspectiveMode,
+  onCyclePerspectiveMode,
   strictInputs,
   onToggleStrictInputs,
   songSource,
@@ -2047,6 +2095,13 @@ function StartCard({
    *  can opt into PERFORMANCE mode before the run even starts. */
   quality: RenderQuality;
   onCycleQuality: () => void;
+  /** Playfield perspective preset (`"3d"` = Guitar-Hero-style
+   *  trapezoid, `"2d"` = osu!-style flat). Mirrors the in-game HUD
+   *  chip - shared parent state, so the choice survives the
+   *  pre-game → in-game transition and vice versa. Purely visual,
+   *  never affects gameplay math or scoring. */
+  perspectiveMode: PerspectiveMode;
+  onCyclePerspectiveMode: () => void;
   /** Strict Inputs (anti-mash protection) toggle. Mirrors the in-game
    *  HUD chip - flipping it here vs there is identical (shared parent
    *  state). Tile renders in the bottom row of the settings grid. */
@@ -2432,6 +2487,46 @@ function StartCard({
           </span>
         </label>
 
+        {/* View / perspective tile - full-width row between the 2x2
+            toggle grid and the Strict Inputs rule. Sits on its own
+            row (sm:col-span-2) because flipping 2D ↔ 3D is the most
+            visually dramatic change in this panel and deserves a
+            dedicated band rather than being lost in the grid. Same
+            structural pattern as the FPS Lock / Quality tiles (whole
+            tile click cycles, right-aligned chip flips to accent when
+            not on the default value) so the player recognises it as
+            a cycling control. "3D" is the shipping default (read as
+            dim), "2D" flips the chip to accent so the player sees
+            they've opted out of the default look. */}
+        <button
+          type="button"
+          onClick={onCyclePerspectiveMode}
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left sm:col-span-2"
+          data-tooltip={
+            perspectiveMode === "3d"
+              ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
+              : "2D · flat osu!-style lanes, constant note size, parallel rails"
+          }
+          aria-label="Cycle playfield perspective mode"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              View
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                perspectiveMode === "3d" ? "text-bone-50/60" : "text-accent"
+              }`}
+            >
+              {perspectiveMode === "3d" ? "3D" : "2D"}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            fret perspective
+          </span>
+        </button>
+
         {/* Strict Inputs tile - full-width row beneath the 2x2 toggle
             grid. Lives on its own row (sm:col-span-2) because it's the
             only GAMEPLAY-rule toggle in this panel - Quality / FPS
@@ -2763,6 +2858,91 @@ function KeyCap({
   );
 }
 
+/**
+ * Read-only Strict Inputs chip for the in-match HUD. When
+ * `onToggleStrictInputs` is provided, clicks flip the checkbox and
+ * the tooltip explains the active state. When it's `undefined` (the
+ * path taken from the HUD call site - policy is menu-only mid-run),
+ * the checkbox renders as locked: clicks are intercepted
+ * (`preventDefault()`), and a transient "Only editable in the menu"
+ * callout flashes next to the chip for 1.4 s so the input is
+ * acknowledged and the rule is stated.
+ *
+ * Extracted because the flash hook (`useState` for the locked-
+ * callout visibility) can't live inline inside the main HUD JSX
+ * without also restructuring the HUD signature. Keeping this as a
+ * small sibling component lets the HUD stay a pure function of
+ * props.
+ */
+function StrictInputsHudChip({
+  strictInputs,
+  onToggleStrictInputs,
+}: {
+  strictInputs: boolean;
+  onToggleStrictInputs?: () => void;
+}) {
+  const [lockedFlash, setLockedFlash] = useState(false);
+  const editable = !!onToggleStrictInputs;
+  const tooltip = editable
+    ? strictInputs
+      ? "ON · empty press with no nearby note silently breaks combo (anti-mash)"
+      : "OFF · empty presses are free"
+    : `Locked mid-match - change in the menu. Currently ${
+        strictInputs ? "ON" : "OFF"
+      }.`;
+  const onLockedClick = (e: React.MouseEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    setLockedFlash(true);
+    // 1400 ms matches the lobby's guest flash duration so both
+    // locked-by-policy surfaces in the app feel identical.
+    window.setTimeout(() => setLockedFlash(false), 1400);
+  };
+  return (
+    <label
+      className={`pointer-events-auto relative flex items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 ${
+        editable ? "cursor-pointer" : "cursor-not-allowed"
+      }`}
+      data-tooltip={tooltip}
+    >
+      <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+        Strict
+      </span>
+      <input
+        type="checkbox"
+        checked={strictInputs}
+        onChange={editable ? onToggleStrictInputs : undefined}
+        onClick={editable ? undefined : onLockedClick}
+        // `readOnly` (not `disabled`) so the checkbox is still
+        // keyboard-focusable and the click handler above still
+        // fires - a `disabled` input wouldn't dispatch onClick at
+        // all and the flash would never show.
+        readOnly={!editable}
+        className={`h-[14px] w-[14px] accent-accent ${
+          editable ? "cursor-pointer" : "cursor-not-allowed"
+        }`}
+        aria-label="Strict inputs (anti-mash)"
+        aria-readonly={!editable || undefined}
+      />
+      {lockedFlash && (
+        // Transient callout: absolutely positioned ABOVE the chip
+        // so it doesn't reflow the neighboring HUD tiles when it
+        // flashes, and floats into the breathing room above the
+        // right-rail stack instead of fighting for horizontal
+        // space (the canvas edge / score card sit on either side).
+        // `pointer-events-none` because the callout itself isn't
+        // interactive - it's just feedback for the click that
+        // triggered it.
+        <span
+          className="pointer-events-none absolute bottom-[calc(100%+0.3rem)] right-0 z-10 whitespace-nowrap border border-accent/60 bg-ink-900/95 px-2 py-1 font-mono text-[9.2px] uppercase tracking-widest text-accent"
+          role="status"
+        >
+          Only editable in the menu
+        </span>
+      )}
+    </label>
+  );
+}
+
 // ---------------------------------------------------------------------------
 function HUD({
   stats,
@@ -2778,6 +2958,8 @@ function HUD({
   onCycleFpsLock,
   quality,
   onCycleQuality,
+  perspectiveMode,
+  onCyclePerspectiveMode,
   strictInputs,
   onToggleStrictInputs,
   sfx,
@@ -2804,12 +2986,22 @@ function HUD({
    *  match; the renderer reads it on the very next frame. */
   quality: RenderQuality;
   onCycleQuality: () => void;
+  /** Playfield perspective (`"3d"` / `"2d"`). Cycled live during a
+   *  match; the renderer's `ensureCache` invalidates on the mode
+   *  change and rebuilds the trapezoid + per-lane endpoints on the
+   *  very next frame - no remount, no pop. */
+  perspectiveMode: PerspectiveMode;
+  onCyclePerspectiveMode: () => void;
   /** Strict Inputs - anti-mash protection. When ON, an empty press
-   *  with no nearby note silently breaks combo. Live-toggleable so a
-   *  player can flip it off mid-run if they decide they want
-   *  forgiving classic scoring. */
+   *  with no nearby note silently breaks combo. Read-only surface in
+   *  the in-match HUD (parent passes `onToggleStrictInputs`
+   *  undefined) so a player can't swap scoring rules mid-run; flips
+   *  happen back at the StartCard. */
   strictInputs: boolean;
-  onToggleStrictInputs: () => void;
+  /** Provided only when a flip is legal (outside the in-match HUD,
+   *  i.e. never here - see the parent). `undefined` -> render the
+   *  chip as locked + flash "Only editable in the menu" on click. */
+  onToggleStrictInputs?: () => void;
   /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
@@ -3164,32 +3356,58 @@ function HUD({
             {quality === "high" ? "HIGH" : "PERF"}
           </span>
         </button>
-        {/* Strict Inputs HUD chip - anti-mash protection. Lives in the
-            same right-rail settings stack as Metronome / Feedback /
-            FPS / Quality / Vol so the player can flip it without
-            pausing. Same chip vocabulary (border, padding, mono
-            caption) as the toggle rows above. The on/off chip uses
-            the same accent / dim color scheme as Quality so "ON"
-            (the protective default) reads as the active state. */}
-        <label
-          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
+        {/* View / perspective chip - mirrors the StartCard's View tile
+            in the pre-game panel. Same HUD chip vocabulary (full-tile
+            click target, left caption + sub-label, right value in
+            accent). Toggling flips the playfield between the 3D
+            trapezoid highway and the flat 2D rectangle on the very
+            next frame - renderer's ensureCache invalidates on the
+            mode change and re-bakes the trapezoid corners + per-lane
+            endpoints in one go, so there's no pop or remount. */}
+        <button
+          type="button"
+          onClick={onCyclePerspectiveMode}
+          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
           data-tooltip={
-            strictInputs
-              ? "ON · empty press with no nearby note silently breaks combo (anti-mash)"
-              : "OFF · empty presses are free"
+            perspectiveMode === "3d"
+              ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
+              : "2D · flat osu!-style lanes, constant note size, parallel rails"
           }
+          aria-label="Cycle playfield perspective mode"
         >
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            Strict
+          <span className="flex flex-col">
+            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+              View
+            </span>
+            <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
+              {perspectiveMode === "3d" ? "perspective" : "flat"}
+            </span>
           </span>
-          <input
-            type="checkbox"
-            checked={strictInputs}
-            onChange={onToggleStrictInputs}
-            className="h-[14px] w-[14px] cursor-pointer accent-accent"
-            aria-label="Toggle strict inputs (anti-mash)"
-          />
-        </label>
+          <span
+            aria-hidden
+            className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+          >
+            {perspectiveMode === "3d" ? "3D" : "2D"}
+          </span>
+        </button>
+        {/* Strict Inputs HUD chip - anti-mash protection. Lives in
+            the right-rail settings stack alongside Metronome /
+            Feedback / FPS / Quality / Vol. Same chip vocabulary
+            (border, padding, mono caption) as the toggle rows above.
+            The on/off chip uses the same accent / dim color scheme
+            as Quality so "ON" (the protective default) reads as the
+            active state.
+            READ-ONLY mid-run: the parent never passes a setter here
+            (see call site comment) so flipping the policy mid-
+            countdown / -song is impossible. Click on the locked
+            checkbox flashes a transient "Only editable in the menu"
+            callout for ~1.4 s so the click is acknowledged and the
+            rule is stated - same pattern as the multiplayer lobby's
+            "Only the host can change this" guest flash. */}
+        <StrictInputsHudChip
+          strictInputs={strictInputs}
+          onToggleStrictInputs={onToggleStrictInputs}
+        />
         {/* Volume tile - same border / padding / typography as the
             toggle tiles so it visually belongs to the same row of
             settings. The "VOL" caption + slider + percentage live

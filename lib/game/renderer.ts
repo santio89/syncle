@@ -41,6 +41,35 @@ export type ThemeName = "dark" | "light";
  */
 export type RenderQualityMode = "high" | "performance";
 
+/**
+ * Playfield perspective mode. Mirrors `PerspectiveMode` from
+ * `lib/game/settings` (kept here as a type alias so `renderer.ts`
+ * doesn't pull in the storage layer).
+ *
+ * - `"3d"` → Guitar Hero / Rock Band trapezoid highway. Top edge
+ *            at 50% of the bottom width, rails converge toward
+ *            the top, notes + hold trails scale from small-at-top
+ *            to large-at-judgment-line, beat lines taper to match.
+ *            The shipping default.
+ *
+ * - `"2d"` → osu!mania-style flat layout. `ensureCache` collapses
+ *            `topHalf` to `bottomHalf` so every cached endpoint
+ *            (rails, lane separators, per-lane top/bottom X) sits
+ *            at the same X from top to bottom. `drawTapNote` +
+ *            `drawHoldTrail` pin radius / width to the
+ *            PERSPECTIVE_* constants so notes don't scale with
+ *            progress. Eliminates the 3D-highway-vs-2D-buttons
+ *            mismatch that some players find disorienting.
+ *
+ * Gameplay math is identical in both modes - the playfield's
+ * VERTICAL extent (topY, judgeY, leadTime mapping) is unchanged,
+ * so note timing, hit windows, scoring, and replay events are
+ * bit-identical. Toggling mid-match takes effect on the next
+ * ensureCache invalidation (resize / theme swap / next phase
+ * boundary); the per-frame draw paths just read `opts.perspectiveMode`.
+ */
+export type PerspectiveRenderMode = "2d" | "3d";
+
 export interface RenderOptions {
   /** Seconds of look-ahead - note travels from top to judgment line in this time. */
   leadTime: number;
@@ -61,6 +90,15 @@ export interface RenderOptions {
    * takes effect on the next frame.
    */
   quality: RenderQualityMode;
+  /**
+   * Playfield perspective (`"3d"` = Guitar-Hero-style trapezoid,
+   * `"2d"` = osu!-style flat rectangle). See `PerspectiveRenderMode`
+   * above. Changing this requires a cache rebuild because the
+   * trapezoid corners / rail slopes / per-lane endpoints are baked
+   * in `ensureCache`; the rebuild is triggered by storing the
+   * active mode on the cache and invalidating when it changes.
+   */
+  perspectiveMode: PerspectiveRenderMode;
 }
 
 /**
@@ -285,6 +323,15 @@ interface RenderCache {
   H: number;
   /** Theme the cached gradients were baked for - invalidates the cache on swap. */
   paletteId: ThemeName;
+  /**
+   * Perspective mode the trapezoid + lane endpoints were baked for.
+   * `ensureCache` invalidates on any change because switching modes
+   * re-shapes the rails (converging vs parallel), per-lane endpoints
+   * (laneXTop / laneXBot, separators), and the rail/highway fade
+   * gradient extrapolation. Pure flag check - no runtime math cost
+   * when the mode isn't changing.
+   */
+  perspectiveMode: PerspectiveRenderMode;
   vignette: CanvasGradient;
   highway: CanvasGradient;
   /**
@@ -375,6 +422,29 @@ const SHOCKWAVE_BUDGET = 24;
  *  (notes, gates, particles, shockwaves, beat dot). Saves a multiply per
  *  arc on dense frames (~50+ arcs/frame). */
 const TAU = Math.PI * 2;
+/**
+ * Vertical foreshortening applied to every disc / ring on the highway
+ * surface when `perspectiveMode === "3d"`. The highway itself is a
+ * trapezoid (`topHalf = bottomHalf * 0.5`, see ensureCache) which reads
+ * as "tilted away from viewer" - but drawing notes + lane-gate inputs
+ * as true circles on top of that tilted surface made them look like
+ * they were floating UPRIGHT in mid-air rather than laying flat on the
+ * fret, which is the specific visual cue that was triggering the
+ * "2D notes on a 3D board = dizzy" feedback.
+ *
+ * A plane tilted away by angle θ foreshortens anything on its surface
+ * by cos(θ) in the viewer's vertical axis. 0.55 matches the visual
+ * foreshortening of a Guitar-Hero-style highway (camera ~57° above the
+ * fret plane) - discs and rings on the surface now read as clearly
+ * "laying on the fret" instead of hovering upright, while still staying
+ * tall enough that the inner dot / letter label / arrow indicator
+ * remain perfectly legible.
+ *
+ * In 2D mode this multiplier is `1` (true circles) so `ctx.ellipse`
+ * degenerates to an arc visually; we keep the ellipse call for code
+ * simplicity (one branch at the top of each draw, not four).
+ */
+const PERSPECTIVE_Y_SCALE = 0.55;
 /** Lookahead window in seconds inside which a lane gate "primes" itself. */
 const ANTICIPATION_WINDOW_S = 0.18;
 /**
@@ -571,6 +641,12 @@ export const DEFAULT_RENDER_OPTIONS: RenderOptions = {
   // chose HIGH still see HIGH from frame 1 because the load happens
   // synchronously in the React state initialiser.
   quality: "performance",
+  // Default to "2d" (flat, osu!-style) so the very first frame on a
+  // fresh install renders without the perspective taper that some
+  // players found disorienting. The React state initialiser loads
+  // the persisted preference synchronously, so returning players
+  // who switched to "3d" see their chosen mode from frame 1 too.
+  perspectiveMode: "2d",
 };
 
 /**
@@ -875,7 +951,7 @@ export function drawFrame(
   );
 
   if (!perf) {
-    updateAndDrawShockwaves(ctx, rs, dt, palette);
+    updateAndDrawShockwaves(ctx, rs, dt, palette, opts);
     updateAndDrawParticles(ctx, rs, dt);
   }
 
@@ -908,7 +984,8 @@ function ensureCache(
     rs.cache &&
     rs.cache.W === W &&
     rs.cache.H === H &&
-    rs.cache.paletteId === palette.id
+    rs.cache.paletteId === palette.id &&
+    rs.cache.perspectiveMode === opts.perspectiveMode
   ) {
     return rs.cache;
   }
@@ -938,7 +1015,21 @@ function ensureCache(
   // y) but materially fixes the "boxes touching the highway" feel that
   // the original 294/0.336 numbers produced on common laptop sizes.
   const bottomHalf = Math.min(264, W * 0.31);
-  const topHalf = bottomHalf * 0.5;
+  // Perspective switch - the ONE number that changes the entire
+  // highway geometry.
+  //
+  //   - "3d" → topHalf = bottomHalf * 0.5 (the trapezoid the game
+  //            has always shipped with - rails converge, per-lane
+  //            endpoints differ top vs bottom, beat lines taper).
+  //   - "2d" → topHalf = bottomHalf       (rectangle - rails are
+  //            vertical, per-lane top/bottom X collapse to the
+  //            same column, beat lines stay full-width).
+  //
+  // Every downstream derived value (rail slope, lane X arrays,
+  // separator endpoints, fade-zone extrapolation) reads from
+  // topHalf/topLeftX/topRightX transparently, so no other code
+  // in ensureCache needs to branch on the mode.
+  const topHalf = opts.perspectiveMode === "2d" ? bottomHalf : bottomHalf * 0.5;
   const bottomLeftX = cx - bottomHalf;
   const bottomRightX = cx + bottomHalf;
   const topLeftX = cx - topHalf;
@@ -1102,6 +1193,7 @@ function ensureCache(
   rs.cache = {
     W, H,
     paletteId: palette.id,
+    perspectiveMode: opts.perspectiveMode,
     vignette, highway, railGradient, milestoneVignette,
     cx, bottomLeftX, bottomRightX, topLeftX, topRightX,
     topY, judgeY,
@@ -1382,6 +1474,12 @@ function drawHighway(
     }
   }
 
+  // Same foreshortening factor used by in-flight notes so the lane
+  // gates (fret buttons) read as sitting on the SAME tilted surface,
+  // not floating in front of it. See `PERSPECTIVE_Y_SCALE` for the
+  // rationale and `drawTapNote` for the disc draw that uses it.
+  const gateYScale =
+    opts.perspectiveMode === "3d" ? PERSPECTIVE_Y_SCALE : 1;
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
     drawLaneGate(
       ctx,
@@ -1394,6 +1492,7 @@ function drawHighway(
       rs.laneAnticipation[i] ?? 0,
       palette,
       perf,
+      gateYScale,
     );
   }
 }
@@ -1416,33 +1515,44 @@ function drawTapNote(
   // Lane top/bottom X are baked in `ensureCache` (constant per lane until
   // the canvas resizes). Only the perspective-progress lerp varies
   // per-note - saves 2 lerps per note per frame on dense charts.
+  //
+  // In 2D mode the cached `laneXTop[i] === laneXBot[i]` (ensureCache
+  // collapsed topHalf to bottomHalf), so `lerp(xTop, xBot, _)`
+  // returns the same constant X regardless of progress - notes fall
+  // STRAIGHT DOWN a single vertical lane column, matching the osu!mania
+  // visual. No branch needed here, the collapsed endpoints do the work.
   const xTop = cache.laneXTop[n.lane];
   const xBot = cache.laneXBot[n.lane];
   const x = lerp(xTop, xBot, 1 - progress);
 
-  // Note size scaling tuned for visual presence + minimum perspective-
-  // zoom dizziness:
+  // Note size:
   //
-  //   - was `lerp(11.5, 27.5, ...)` → 2.39 × growth top→bottom. At
-  //     11.5 px the top dots are TINY (the visible colored rim after
-  //     the bg overdraw is only ~3-5 px wide), which is why they
-  //     read as "dull, washed out" against the dark highway. At the
-  //     same time the 2.4 × scale ratio is enough to feel like notes
-  //     are "rushing at you" - exactly the dizziness players were
-  //     reporting on dense charts.
-  //   - now  `lerp(15, 26, ...)`  → 1.73 × growth. Top dots still
-  //     read as smaller (perspective is preserved), but the colored
-  //     rim is ~6-8 px wide so saturation actually registers, AND
-  //     the per-note size delta as it falls is much gentler so the
-  //     incoming column reads as "moving down the highway" rather
-  //     than "expanding outward at the player". Bottom is one px
-  //     under the previous max so it still fits comfortably inside
-  //     the lane-gate inner ring (innerRingR = r - 5 = 33).
+  //   - 3D mode: `lerp(15, 26, 1 - progress)` - notes grow ~1.73× as
+  //     they approach the judgment line, reading as "rushing at you"
+  //     in concert with the converging rails. 15 px at the horizon
+  //     keeps the colored rim perceptible; 26 px at the line fits
+  //     comfortably inside the lane gate's innerRingR (33 px).
   //
-  // Gameplay math is unchanged - note y still tracks songTime exactly,
-  // so timing windows / hit registration / judgments are bit-identical
-  // to the pre-tweak version. This is a pure visual rebalance.
-  const radius = lerp(15, 26, 1 - progress);
+  //   - 2D mode: constant 23 px. This is slightly SMALLER than the
+  //     3D mode's bottom value (26 px) on purpose - in 2D the notes
+  //     don't visually "shrink back" into the distance, so a static
+  //     26 px makes the column feel crowded with a lot of big dots.
+  //     23 px matches the visual density of osu!mania's 4K skins and
+  //     still fills the lane-gate inner ring nicely on contact.
+  //     Gameplay math (y-tracking, timing windows) is unchanged -
+  //     this is purely the rendered disc size.
+  //
+  // In both modes the note y still tracks songTime exactly, so timing
+  // windows / hit registration / judgments are bit-identical.
+  const radius =
+    opts.perspectiveMode === "2d" ? 23 : lerp(15, 26, 1 - progress);
+  // Vertical squash so 3D notes read as "laying flat on the tilted
+  // fret" instead of "upright discs hovering in front of it". A
+  // plane tilted by angle θ foreshortens on-surface shapes by cos(θ);
+  // 0.55 matches the highway's apparent tilt (see PERSPECTIVE_Y_SCALE).
+  // 2D mode gets a perfect circle (yScale = 1) to preserve the flat
+  // osu!-style look where everything lives in the screen plane.
+  const yScale = opts.perspectiveMode === "3d" ? PERSPECTIVE_Y_SCALE : 1;
   const color = LANE_COLORS[n.lane];
 
   // Manual globalAlpha save/restore. Was `ctx.save()/ctx.restore()` -
@@ -1492,18 +1602,18 @@ function drawTapNote(
   // under any GC threshold; perf mode is unchanged).
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(x, y, radius, 0, TAU);
+  ctx.ellipse(x, y, radius, radius * yScale, 0, 0, TAU);
   ctx.fill();
   if (!perf) {
-    drawRadialGlow(ctx, color, x, y, radius, 18, breath);
+    drawRadialGlow(ctx, color, x, y, radius, 18, breath, yScale);
   }
   ctx.fillStyle = palette.noteInner;
   ctx.beginPath();
-  ctx.arc(x, y, radius * 0.6, 0, TAU);
+  ctx.ellipse(x, y, radius * 0.6, radius * 0.6 * yScale, 0, 0, TAU);
   ctx.fill();
   ctx.fillStyle = palette.noteCore;
   ctx.beginPath();
-  ctx.arc(x, y, radius * 0.28, 0, TAU);
+  ctx.ellipse(x, y, radius * 0.28, radius * 0.28 * yScale, 0, 0, TAU);
   ctx.fill();
   ctx.globalAlpha = prevAlpha;
 }
@@ -1555,14 +1665,23 @@ function drawHoldTrail(
   const xHead = lerp(xHeadTop, xHeadBot, 1 - visHead);
   const xTail = lerp(xHeadTop, xHeadBot, 1 - visTail);
 
-  // Width tapers with perspective just like the notes themselves.
-  // Endpoints retuned to match the new tap-note scaling (15→26 instead
-  // of 11.5→27.5) so the ribbon doesn't look thicker/thinner than the
-  // head it connects to. Slightly inset (14 vs 15 at top, 26 vs 26 at
-  // bottom) to keep the visual hint that the ribbon is "behind" the
-  // head - same relative inset as the previous (10.5 / 11.5) pair.
-  const wHead = lerp(14, 26, 1 - visHead);
-  const wTail = lerp(14, 26, 1 - visTail);
+  // Width:
+  //
+  //   - 3D mode: tapers with perspective to match the note head
+  //     sitting on each end. (14 top → 26 bottom; 1 px inset vs the
+  //     head endpoints so the ribbon reads as sitting "behind" the
+  //     head instead of merging with it.)
+  //
+  //   - 2D mode: constant 21 px - 2 px under the 2D note diameter
+  //     so the same "ribbon slightly under the head" cue works
+  //     without the horizontal inset, and small enough that two
+  //     adjacent hold columns don't visually smear into each other.
+  //
+  // The `visHead` / `visTail` endpoints themselves already collapse
+  // to vertical in 2D (cache.laneXTop === cache.laneXBot), so the
+  // trail draws as a plain rectangular strip inside a single column.
+  const wHead = opts.perspectiveMode === "2d" ? 21 : lerp(14, 26, 1 - visHead);
+  const wTail = opts.perspectiveMode === "2d" ? 21 : lerp(14, 26, 1 - visTail);
 
   const color = LANE_COLORS[n.lane];
   const consumed = n.holding === true;
@@ -1641,6 +1760,15 @@ function drawLaneGate(
   anticipation: number,
   palette: ThemePalette,
   perf: boolean,
+  /**
+   * Vertical squash factor for every disc / ring on the gate (outer
+   * ring, anticipation halo, held fill, inner core, white-flash
+   * overlay). Text labels (letter + arrow) stay unscaled - squashing
+   * them would make the key hint unreadable, and they're small
+   * enough relative to the ring that the visual "laying flat" cue
+   * comes through anyway. 1 in 2D mode, PERSPECTIVE_Y_SCALE in 3D.
+   */
+  yScale: number,
 ) {
   // Gate geometry. Tuned so the letter+arrow stack reads as a single,
   // centered glyph block - see LETTER_DY / ARROW_DY below for the exact
@@ -1663,7 +1791,8 @@ function drawLaneGate(
     ctx.shadowColor = color;
     ctx.shadowBlur = 18 * anticipation;
     ctx.beginPath();
-    ctx.arc(x, y, r + 6 + anticipation * 4, 0, TAU);
+    const antR = r + 6 + anticipation * 4;
+    ctx.ellipse(x, y, antR, antR * yScale, 0, 0, TAU);
     ctx.stroke();
     ctx.restore();
   }
@@ -1673,7 +1802,7 @@ function drawLaneGate(
   ctx.strokeStyle = color;
   if (perf) {
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, TAU);
+    ctx.ellipse(x, y, r, r * yScale, 0, 0, TAU);
     ctx.stroke();
   } else {
     // Held / flash glow + a small lift from anticipation so the gate
@@ -1691,8 +1820,11 @@ function drawLaneGate(
     // Both stroke and shadow are the OPAQUE lane color in this
     // path, so the sprite captures the visual exactly - same look,
     // ~10-30x cheaper on integrated GPUs / software fallbacks.
+    // `yScale` squashes the blit dest rect so the ring glow sits on
+    // the tilted fret in 3D mode without invalidating the (circular)
+    // sprite cache.
     const blur = held || holding ? 26 : 8 + flash * 32 + anticipation * 12;
-    drawRingGlow(ctx, color, x, y, r, 4, blur, 1);
+    drawRingGlow(ctx, color, x, y, r, 4, blur, 1, yScale);
   }
 
   // Held / flash fill - extra strong while sustaining a hold.
@@ -1703,7 +1835,7 @@ function drawLaneGate(
   if (fillAlpha > 0) {
     ctx.fillStyle = laneRgba(lane, fillAlpha);
     ctx.beginPath();
-    ctx.arc(x, y, innerRingR, 0, TAU);
+    ctx.ellipse(x, y, innerRingR, innerRingR * yScale, 0, 0, TAU);
     ctx.fill();
   }
 
@@ -1730,13 +1862,13 @@ function drawLaneGate(
   if (flash > 0.05) {
     ctx.strokeStyle = whiteShineRgba(0.55 * flash);
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, TAU);
+    ctx.ellipse(x, y, r, r * yScale, 0, 0, TAU);
     ctx.stroke();
   }
 
   ctx.fillStyle = palette.gateInner;
   ctx.beginPath();
-  ctx.arc(x, y, innerCoreR, 0, TAU);
+  ctx.ellipse(x, y, innerCoreR, innerCoreR * yScale, 0, 0, TAU);
   ctx.fill();
 
   // Label + arrow always render in the lane color so they stay legible on
@@ -2089,9 +2221,14 @@ function updateAndDrawShockwaves(
   rs: RenderState,
   dt: number,
   palette: ThemePalette,
+  opts: RenderOptions,
 ): void {
   const sw = rs.shockwaves;
   if (sw.length === 0) return;
+  // Shockwaves burst FROM the fret button plane, so they share the
+  // gate's perspective squash in 3D mode (rings expand across the
+  // tilted fret, not straight up into screen space). Circles in 2D.
+  const yScale = opts.perspectiveMode === "3d" ? PERSPECTIVE_Y_SCALE : 1;
   let write = 0;
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
@@ -2108,7 +2245,7 @@ function updateAndDrawShockwaves(
     ctx.shadowColor = LANE_COLORS[s.laneIdx];
     ctx.shadowBlur = (s.intense ? 26 : 14) * (1 - t);
     ctx.beginPath();
-    ctx.arc(s.x, s.y, radius, 0, TAU);
+    ctx.ellipse(s.x, s.y, radius, radius * yScale, 0, 0, TAU);
     ctx.stroke();
     if (s.intense && t < 0.4) {
       // White core for the first ~180ms of perfect hits - the splash that
@@ -2117,7 +2254,8 @@ function updateAndDrawShockwaves(
       ctx.lineWidth = 1.5;
       ctx.shadowBlur = 0;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, radius * 0.55, 0, TAU);
+      const coreR = radius * 0.55;
+      ctx.ellipse(s.x, s.y, coreR, coreR * yScale, 0, 0, TAU);
       ctx.stroke();
     }
     if (write !== read) sw[write] = s;

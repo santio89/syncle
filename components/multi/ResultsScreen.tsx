@@ -222,7 +222,17 @@ export function ResultsScreen({
           {standings.map((s) => (
             <li
               key={s.id}
-              className={`grid grid-cols-[28px_minmax(0,1fr)_auto] items-baseline gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
+              // Right cell is a stacked column (score on top, max
+              // combo caption below) so the eye still lands on the
+              // score first - the number that determines the
+              // standings - while the secondary "how streaky was
+              // this run" signal is right there to compare across
+              // the whole room. `items-start` on the grid so the
+              // two-line right cell aligns its top edge with the
+              // rank + name lines; previously `items-baseline`
+              // tried to baseline-align against the multi-line
+              // column and shoved the score half a line down.
+              className={`grid grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-2 border-2 px-3 py-2 font-mono text-[0.79rem] transition-colors ${
                 s.id === me
                   ? "border-accent bg-accent/10"
                   : s.rank === 1
@@ -231,7 +241,7 @@ export function ResultsScreen({
               }`}
             >
               <span
-                className={`text-[11.5px] uppercase tracking-widest ${
+                className={`text-[11.5px] uppercase tracking-widest leading-[1.2] ${
                   s.rank === 1
                     ? "text-accent"
                     : s.rank === 2
@@ -243,7 +253,7 @@ export function ResultsScreen({
               >
                 #{s.rank}
               </span>
-              <span className="min-w-0 truncate text-bone-50">
+              <span className="min-w-0 truncate leading-[1.2] text-bone-50">
                 {s.name}
                 {s.id === me && (
                   <span className="ml-1 text-[9.5px] uppercase text-accent">
@@ -251,8 +261,22 @@ export function ResultsScreen({
                   </span>
                 )}
               </span>
-              <span className="shrink-0 text-right tabular-nums text-bone-50">
-                {s.score.toLocaleString()}
+              <span className="flex shrink-0 flex-col items-end gap-0.5 text-right tabular-nums text-bone-50">
+                <span className="leading-[1.2]">
+                  {s.score.toLocaleString()}
+                </span>
+                {/* Max combo as a secondary caption - same `×N` vocabulary
+                    as the winner hero strip + "Your run" block above so
+                    the three places that show combo all read the same.
+                    Mirrors the solo results card which also surfaces max
+                    combo alongside score / accuracy. Dimmed 0.5 so it
+                    stays clearly secondary to the primary score above. */}
+                <span
+                  className="font-mono text-[9.5px] uppercase leading-none tracking-widest text-bone-50/50"
+                  data-tooltip={`Max combo: ${s.maxCombo.toLocaleString()}`}
+                >
+                  ×{s.maxCombo.toLocaleString()}
+                </span>
               </span>
             </li>
           ))}
