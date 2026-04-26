@@ -523,30 +523,30 @@ const NOTE_WIDTH_RATIO = 0.82;
  * leading edge sliding exactly into the receptor's leading edge is
  * the timing reference, and any size mismatch makes the cue fuzzy.
  *
- * 36 px is tuned for three constraints simultaneously:
+ * 40 px is tuned for three constraints simultaneously:
  *   1. Enough height to fit the receptor's letter + arrow glyph
  *      stack (26 px combined, see LETTER_DY / ARROW_DY below) with
  *      breathing room on both sides.
  *   2. Rectangular notes look clearly rectangular when blurred with
  *      shadowBlur (at 6-10 px blur, a 24 px tile read as oval - the
- *      short axis got Gaussian-rounded into a pill; 42 px keeps the
+ *      short axis got Gaussian-rounded into a pill; 40 px keeps the
  *      rectangle shape dominant).
  *   3. 16th-note spacing at 200 BPM is ~46 px on a 745 px highway
- *      at leadTime 1.2 s - with 42 px tiles that's ~4 px of gap
- *      between them, still readable (tighter than the old 36 px
- *      tiles but consciously chosen: the user asked for "a bit
- *      thicker" slabs, and at 42 px the rectangle reads as a
- *      proper slab rather than a stripe).
+ *      at leadTime 1.2 s - with 40 px tiles that's ~6 px of gap
+ *      between them, still clearly readable on dense streams. This
+ *      is the safe intermediate between the older 36 px tiles
+ *      (~10 px gap, stripe-like) and the 42 px tiles that read as
+ *      crunchy at 200 BPM 16ths (~4 px gap).
  */
-const NOTE_HEIGHT_2D = 42;
+const NOTE_HEIGHT_2D = 40;
 /** 3D mode: note height at the horizon (far end). Foreshortened so
- *  distant notes read as "further away." Keeps the ~0.62 NEAR:FAR
- *  ratio from the pre-42 tuning so perspective strength is stable. */
-const NOTE_HEIGHT_3D_NEAR = 26;
+ *  distant notes read as "further away." Keeps the ~0.625 NEAR:FAR
+ *  ratio so perspective strength stays stable across tunings. */
+const NOTE_HEIGHT_3D_NEAR = 25;
 /** 3D mode: note height at the judge line (near end). Equals
  *  `NOTE_HEIGHT_2D` so the note LOCKS to the receptor size exactly
  *  at the hit point in both modes. */
-const NOTE_HEIGHT_3D_FAR = 42;
+const NOTE_HEIGHT_3D_FAR = 40;
 /** Lane gate (receptor) height. Equals `NOTE_HEIGHT_2D` so a note
  *  at the judge line overlays the receptor with pixel-identical
  *  dimensions - osu!mania's standard "receptor = note" convention.
@@ -554,7 +554,7 @@ const NOTE_HEIGHT_3D_FAR = 42;
  *  height-foreshortened in 3D either (they use trapezoid WIDTH
  *  taper for perspective), so squashing the receptor would re-
  *  introduce exactly the size mismatch we're fixing. */
-const GATE_HEIGHT = 42;
+const GATE_HEIGHT = 40;
 /** Gate border stroke width. 3 px reads as "solid brutalist edge"
  *  without the inner letter glyph getting cramped. */
 const GATE_BORDER = 3;
@@ -570,7 +570,7 @@ const GATE_BORDER = 3;
  * lane (user-requested: "make circles have same width as rectangles").
  *
  * Because the disc stays a PERFECT circle (never scaled per-axis), its
- * height also equals the rect's width - about 3x the rect's 36 px
+ * height also equals the rect's width - about 2.7x the rect's 40 px
  * height. Consecutive notes spaced closer than the disc's diameter
  * will visually overlap. At the default leadTime + BPMs we chart
  * (~220 max) that hasn't been a problem in testing, but if dense
@@ -1641,7 +1641,7 @@ function drawHighway(
   }
 
   // Receptor dimensions are mode-independent (no yScale squash):
-  // notes already match the receptor's 42 px screen height at the
+  // notes already match the receptor's 40 px screen height at the
   // judge line in both 2D and 3D (the note's FAR/near value ==
   // GATE_HEIGHT == NOTE_HEIGHT_2D), so squashing the receptor
   // would re-introduce the exact size mismatch the user reported.
@@ -1700,11 +1700,11 @@ function drawTapNote(
   const progress = lookahead / opts.leadTime;
 
   // Note on-screen vertical extent:
-  //   - 3D: shrinks with distance (26 far → 42 near) so further-
+  //   - 3D: shrinks with distance (25 far → 40 near) so further-
   //     away tiles read as smaller. Near-end value equals
   //     `NOTE_HEIGHT_2D` so the note locks to the receptor's exact
   //     size at the judge line (osu convention).
-  //   - 2D: constant 42 px. Flat playfield, constant tile size,
+  //   - 2D: constant 40 px. Flat playfield, constant tile size,
   //     matches receptor height pixel-for-pixel.
   const h = perspective3D
     ? lerp(NOTE_HEIGHT_3D_NEAR, NOTE_HEIGHT_3D_FAR, 1 - progress)
@@ -1835,8 +1835,9 @@ function drawTapNote(
     //
     // Disc sized off LANE WIDTH, not note height. The rect path
     // dominates the lane horizontally (~107 px at 2D judge line
-    // on a 130 px lane), so sizing circles off the 36 px height
-    // left them reading as tiny dots in a wide channel. The disc
+    // on a 130 px lane), so sizing circles off the 40 px note
+    // height would leave them reading as small dots in a wide
+    // channel. The disc
     // scales with lane width via `NOTE_WIDTH_RATIO *
     // CIRCLE_WIDTH_RATIO` (see the CIRCLE_WIDTH_RATIO doc for the
     // osu-style gutter rationale). The hold ribbon in drawHoldTrail
@@ -2251,9 +2252,9 @@ function drawLaneGate(
     }
   }
 
-  // Label + arrow positioning. Tuned for the shared 42 px tile
+  // Label + arrow positioning. Tuned for the shared 40 px tile
   // height so the letter + arrow stack (22 px + 9 px + gap = ~33 px)
-  // fits with a ~4.5 px breathing margin on each side. Shared
+  // fits with a ~3.5 px breathing margin on each side. Shared
   // across shapes because both rect and circle are centered on
   // (x, y) and have the same vertical extent.
   const LETTER_DY = -6;
@@ -2280,9 +2281,9 @@ function drawLaneGate(
   // 800 (ExtraBold) is the heaviest weight loaded for JetBrains Mono - see
   // app/layout.tsx. Asking for 900 here would silently fall back to 700
   // (the next loaded weight) and make the letter look the same as
-  // font-bold. 22 px is still the sweet spot on the 42 px receptor:
+  // font-bold. 22 px is still the sweet spot on the 40 px receptor:
   // ExtraBold caps at 22 px ≈ 15 px cap height, which leaves the
-  // chevron room to sit legibly beneath with a ~4.5 px inset from
+  // chevron room to sit legibly beneath with a ~3.5 px inset from
   // the receptor's inner edge.
   ctx.font = "800 22px var(--font-mono), ui-monospace, monospace";
   ctx.textAlign = "center";
