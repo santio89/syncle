@@ -529,20 +529,24 @@ const NOTE_WIDTH_RATIO = 0.82;
  *      breathing room on both sides.
  *   2. Rectangular notes look clearly rectangular when blurred with
  *      shadowBlur (at 6-10 px blur, a 24 px tile read as oval - the
- *      short axis got Gaussian-rounded into a pill; 36 px keeps the
+ *      short axis got Gaussian-rounded into a pill; 42 px keeps the
  *      rectangle shape dominant).
  *   3. 16th-note spacing at 200 BPM is ~46 px on a 745 px highway
- *      at leadTime 1.2 s - with 36 px tiles that's 10 px of gap
- *      between them, still clearly readable.
+ *      at leadTime 1.2 s - with 42 px tiles that's ~4 px of gap
+ *      between them, still readable (tighter than the old 36 px
+ *      tiles but consciously chosen: the user asked for "a bit
+ *      thicker" slabs, and at 42 px the rectangle reads as a
+ *      proper slab rather than a stripe).
  */
-const NOTE_HEIGHT_2D = 36;
+const NOTE_HEIGHT_2D = 42;
 /** 3D mode: note height at the horizon (far end). Foreshortened so
- *  distant notes read as "further away." */
-const NOTE_HEIGHT_3D_NEAR = 22;
+ *  distant notes read as "further away." Keeps the ~0.62 NEAR:FAR
+ *  ratio from the pre-42 tuning so perspective strength is stable. */
+const NOTE_HEIGHT_3D_NEAR = 26;
 /** 3D mode: note height at the judge line (near end). Equals
  *  `NOTE_HEIGHT_2D` so the note LOCKS to the receptor size exactly
  *  at the hit point in both modes. */
-const NOTE_HEIGHT_3D_FAR = 36;
+const NOTE_HEIGHT_3D_FAR = 42;
 /** Lane gate (receptor) height. Equals `NOTE_HEIGHT_2D` so a note
  *  at the judge line overlays the receptor with pixel-identical
  *  dimensions - osu!mania's standard "receptor = note" convention.
@@ -550,7 +554,7 @@ const NOTE_HEIGHT_3D_FAR = 36;
  *  height-foreshortened in 3D either (they use trapezoid WIDTH
  *  taper for perspective), so squashing the receptor would re-
  *  introduce exactly the size mismatch we're fixing. */
-const GATE_HEIGHT = 36;
+const GATE_HEIGHT = 42;
 /** Gate border stroke width. 3 px reads as "solid brutalist edge"
  *  without the inner letter glyph getting cramped. */
 const GATE_BORDER = 3;
@@ -1637,7 +1641,7 @@ function drawHighway(
   }
 
   // Receptor dimensions are mode-independent (no yScale squash):
-  // notes already match the receptor's 36 px screen height at the
+  // notes already match the receptor's 42 px screen height at the
   // judge line in both 2D and 3D (the note's FAR/near value ==
   // GATE_HEIGHT == NOTE_HEIGHT_2D), so squashing the receptor
   // would re-introduce the exact size mismatch the user reported.
@@ -1696,11 +1700,11 @@ function drawTapNote(
   const progress = lookahead / opts.leadTime;
 
   // Note on-screen vertical extent:
-  //   - 3D: shrinks with distance (22 far → 36 near) so further-
+  //   - 3D: shrinks with distance (26 far → 42 near) so further-
   //     away tiles read as smaller. Near-end value equals
   //     `NOTE_HEIGHT_2D` so the note locks to the receptor's exact
   //     size at the judge line (osu convention).
-  //   - 2D: constant 36 px. Flat playfield, constant tile size,
+  //   - 2D: constant 42 px. Flat playfield, constant tile size,
   //     matches receptor height pixel-for-pixel.
   const h = perspective3D
     ? lerp(NOTE_HEIGHT_3D_NEAR, NOTE_HEIGHT_3D_FAR, 1 - progress)
@@ -1998,10 +2002,26 @@ function drawHoldTrail(
     ctx.shadowColor = color;
     ctx.shadowBlur = (consumed ? 22 : 10) * alphaMul;
   }
-  // Trapezoid between (xTail±wTail/2, yTail) and (xHead±wHead/2, yHead).
+  // Ribbon body between head and tail. In RECT mode the top edge
+  // is a straight horizontal line (matches the rect tap-note's
+  // crisp edges); in CIRCLE mode the top edge is a semicircle
+  // bulging upward, so the tail "rounds off" and visually echoes
+  // the disc head instead of terminating with a hard rectangle
+  // edge. Arc radius == half the tail width, so in 3D (where
+  // wTail < wHead) the cap shrinks with perspective and stays
+  // proportional to the ribbon.
+  //
+  // Canvas angle convention: 0 = +x (right), π/2 = +y (down),
+  // π = left, 3π/2 = up. Sweeping π → 2π with anticlockwise=false
+  // traverses left → top-left → top → top-right → right, producing
+  // a semicircle that bulges UPWARD (away from the head).
   ctx.beginPath();
   ctx.moveTo(xTail - wTail / 2, yTail);
-  ctx.lineTo(xTail + wTail / 2, yTail);
+  if (opts.noteShape === "circle") {
+    ctx.arc(xTail, yTail, wTail / 2, Math.PI, Math.PI * 2, false);
+  } else {
+    ctx.lineTo(xTail + wTail / 2, yTail);
+  }
   ctx.lineTo(xHead + wHead / 2, yHead);
   ctx.lineTo(xHead - wHead / 2, yHead);
   ctx.closePath();
@@ -2231,9 +2251,9 @@ function drawLaneGate(
     }
   }
 
-  // Label + arrow positioning. Tuned for the shared 36 px tile
+  // Label + arrow positioning. Tuned for the shared 42 px tile
   // height so the letter + arrow stack (22 px + 9 px + gap = ~33 px)
-  // fits with a ~1.5 px breathing margin on each side. Shared
+  // fits with a ~4.5 px breathing margin on each side. Shared
   // across shapes because both rect and circle are centered on
   // (x, y) and have the same vertical extent.
   const LETTER_DY = -6;
@@ -2260,9 +2280,9 @@ function drawLaneGate(
   // 800 (ExtraBold) is the heaviest weight loaded for JetBrains Mono - see
   // app/layout.tsx. Asking for 900 here would silently fall back to 700
   // (the next loaded weight) and make the letter look the same as
-  // font-bold. 22 px is the sweet spot for the new 36 px receptor:
+  // font-bold. 22 px is still the sweet spot on the 42 px receptor:
   // ExtraBold caps at 22 px ≈ 15 px cap height, which leaves the
-  // chevron room to sit legibly beneath with a ~1.5 px inset from
+  // chevron room to sit legibly beneath with a ~4.5 px inset from
   // the receptor's inner edge.
   ctx.font = "800 22px var(--font-mono), ui-monospace, monospace";
   ctx.textAlign = "center";
