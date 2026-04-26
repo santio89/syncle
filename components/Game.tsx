@@ -47,10 +47,14 @@ import {
   loadPerspectiveMode,
   savePerspectiveMode,
   nextPerspectiveMode,
+  loadNoteShape,
+  saveNoteShape,
+  nextNoteShape,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
   type PerspectiveMode,
+  type NoteShape,
 } from "@/lib/game/settings";
 import {
   clearSoloResume,
@@ -88,8 +92,8 @@ const COUNTDOWN_SECONDS = 3;
 // this the player goes straight from "covered screen" → "first note hits"
 // in zero milliseconds for any chart whose first note sits on songTime≈0.
 // Two seconds is enough for the highway to spawn the first wave of notes
-// (leadTime is 1.2s) AND give the player half a second of empty grid to
-// settle before notes start sliding in.
+// (leadTime is 1.2s, osu AR5) AND give the player ~0.8s of empty grid
+// to settle before notes start sliding in.
 const LEAD_IN_SECONDS = 2;
 // Total wall-clock between `audio.start()` being called and the first
 // audible audio sample firing. songTime() reads negative across this
@@ -278,6 +282,16 @@ export default function Game() {
    *  a remount. */
   const [perspectiveMode, setPerspectiveMode] =
     useState<PerspectiveMode>(loadPerspectiveMode);
+  /** Tap-note + receptor shape (`"rect"` = brutalist tiles,
+   *  `"circle"` = classic osu-style discs). Purely cosmetic; timing
+   *  windows + scoring + hit registration are IDENTICAL for both,
+   *  so the choice is persisted locally and never synced to the
+   *  multiplayer wire. Mirrored into `renderOptsRef` so flipping
+   *  the toggle takes effect on the next frame without a remount
+   *  or a cache rebuild (the renderer's geometry cache is shape-
+   *  agnostic - it only holds lane endpoints + widths, not tile
+   *  silhouettes). */
+  const [noteShape, setNoteShape] = useState<NoteShape>(loadNoteShape);
   /** Persistent banner when localStorage / sessionStorage refuses a
    *  write (typical causes: Safari Private Browsing quota, exhausted
    *  per-origin quota, an extension that blocks storage). Surfaces a
@@ -411,6 +425,17 @@ export default function Game() {
     renderOptsRef.current.perspectiveMode = perspectiveMode;
     savePerspectiveMode(perspectiveMode);
   }, [perspectiveMode]);
+
+  // Mirror `noteShape` into the renderer on change (runtime swap)
+  // and persist it. Same pattern as `perspectiveMode` above, but
+  // NO cache rebuild needed: shape is a draw-path branch, the
+  // geometry cache is shape-agnostic. Skips the first-tick write
+  // on reload (loaded value matches loaded value) so the initial
+  // mount doesn't ping localStorage redundantly.
+  useEffect(() => {
+    renderOptsRef.current.noteShape = noteShape;
+    saveNoteShape(noteShape);
+  }, [noteShape]);
 
   // Force-load the JetBrains Mono ExtraBold weight used by the lane-gate
   // letters drawn on the canvas. next/font only downloads weights that are
@@ -1636,6 +1661,10 @@ export default function Game() {
             onCyclePerspectiveMode={() =>
               setPerspectiveMode((cur) => nextPerspectiveMode(cur))
             }
+            noteShape={noteShape}
+            onCycleNoteShape={() =>
+              setNoteShape((cur) => nextNoteShape(cur))
+            }
             strictInputs={strictInputs}
             // Strict Inputs is intentionally READ-ONLY once we're in
             // countdown / playing / paused - flipping the anti-mash
@@ -1696,6 +1725,10 @@ export default function Game() {
               perspectiveMode={perspectiveMode}
               onCyclePerspectiveMode={() =>
                 setPerspectiveMode((cur) => nextPerspectiveMode(cur))
+              }
+              noteShape={noteShape}
+              onCycleNoteShape={() =>
+                setNoteShape((cur) => nextNoteShape(cur))
               }
               strictInputs={strictInputs}
               onToggleStrictInputs={() => setStrictInputs((s) => !s)}
@@ -2056,6 +2089,8 @@ function StartCard({
   onCycleQuality,
   perspectiveMode,
   onCyclePerspectiveMode,
+  noteShape,
+  onCycleNoteShape,
   strictInputs,
   onToggleStrictInputs,
   songSource,
@@ -2102,6 +2137,12 @@ function StartCard({
    *  never affects gameplay math or scoring. */
   perspectiveMode: PerspectiveMode;
   onCyclePerspectiveMode: () => void;
+  /** Note + receptor shape (`"rect"` = brutalist tiles, `"circle"`
+   *  = classic osu-style discs). Purely cosmetic; shares parent
+   *  state with the in-game HUD chip so the choice survives the
+   *  pre-game → in-game transition and vice versa. */
+  noteShape: NoteShape;
+  onCycleNoteShape: () => void;
   /** Strict Inputs (anti-mash protection) toggle. Mirrors the in-game
    *  HUD chip - flipping it here vs there is identical (shared parent
    *  state). Tile renders in the bottom row of the settings grid. */
@@ -2487,21 +2528,17 @@ function StartCard({
           </span>
         </label>
 
-        {/* View / perspective tile - full-width row between the 2x2
-            toggle grid and the Strict Inputs rule. Sits on its own
-            row (sm:col-span-2) because flipping 2D ↔ 3D is the most
-            visually dramatic change in this panel and deserves a
-            dedicated band rather than being lost in the grid. Same
-            structural pattern as the FPS Lock / Quality tiles (whole
-            tile click cycles, right-aligned chip flips to accent when
-            not on the default value) so the player recognises it as
-            a cycling control. "3D" is the shipping default (read as
-            dim), "2D" flips the chip to accent so the player sees
-            they've opted out of the default look. */}
+        {/* View / perspective tile - cosmetic cycle, paired in its own
+            row with Shape. Both tiles are "how the playfield looks"
+            rather than "how gameplay behaves," so they share a band
+            between the audio-toggle grid above and the gameplay-rule
+            row (Strict Inputs) below. "2D" is the shipping default
+            (read as dim), "3D" flips the chip to accent so the
+            player sees they've opted into the Guitar-Hero look. */}
         <button
           type="button"
           onClick={onCyclePerspectiveMode}
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left sm:col-span-2"
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
           data-tooltip={
             perspectiveMode === "3d"
               ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
@@ -2516,7 +2553,7 @@ function StartCard({
             <span
               aria-hidden
               className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                perspectiveMode === "3d" ? "text-bone-50/60" : "text-accent"
+                perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
               }`}
             >
               {perspectiveMode === "3d" ? "3D" : "2D"}
@@ -2524,6 +2561,40 @@ function StartCard({
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
             fret perspective
+          </span>
+        </button>
+
+        {/* Shape tile - cosmetic cycle paired with View. "RECT" is
+            the shipping default (brutalist tiles, read as dim);
+            "CIRC" flips the chip to accent so the player sees
+            they've opted into the classic disc look. Same click-
+            anywhere-to-cycle pattern as View / Quality / FPS Lock. */}
+        <button
+          type="button"
+          onClick={onCycleNoteShape}
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
+          data-tooltip={
+            noteShape === "rect"
+              ? "Rectangles · brutalist tiles, match the lane (default)"
+              : "Circles · classic osu-style discs"
+          }
+          aria-label="Cycle note shape"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Shape
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                noteShape === "circle" ? "text-accent" : "text-bone-50/60"
+              }`}
+            >
+              {noteShape === "circle" ? "CIRC" : "RECT"}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            note style
           </span>
         </button>
 
@@ -2960,6 +3031,8 @@ function HUD({
   onCycleQuality,
   perspectiveMode,
   onCyclePerspectiveMode,
+  noteShape,
+  onCycleNoteShape,
   strictInputs,
   onToggleStrictInputs,
   sfx,
@@ -2992,6 +3065,12 @@ function HUD({
    *  very next frame - no remount, no pop. */
   perspectiveMode: PerspectiveMode;
   onCyclePerspectiveMode: () => void;
+  /** Tap-note + receptor shape (`"rect"` / `"circle"`). Cycled live
+   *  during a match; no cache rebuild needed (shape is a draw-path
+   *  branch, cache holds lane geometry). Mirrors the StartCard
+   *  tile so the same choice applies everywhere. */
+  noteShape: NoteShape;
+  onCycleNoteShape: () => void;
   /** Strict Inputs - anti-mash protection. When ON, an empty press
    *  with no nearby note silently breaks combo. Read-only surface in
    *  the in-match HUD (parent passes `onToggleStrictInputs`
@@ -3388,6 +3467,37 @@ function HUD({
             className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
           >
             {perspectiveMode === "3d" ? "3D" : "2D"}
+          </span>
+        </button>
+        {/* Shape chip - cycles note/receptor silhouette between
+            brutalist rects and classic discs. No gameplay impact
+            (timing windows + scoring + hit registration all
+            identical across shapes). Cache is shape-agnostic, so
+            the flip is instant on the next frame. */}
+        <button
+          type="button"
+          onClick={onCycleNoteShape}
+          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
+          data-tooltip={
+            noteShape === "rect"
+              ? "Rectangles · brutalist tiles, match the lane (default)"
+              : "Circles · classic osu-style discs"
+          }
+          aria-label="Cycle note shape"
+        >
+          <span className="flex flex-col">
+            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+              Shape
+            </span>
+            <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
+              {noteShape === "rect" ? "tiles" : "discs"}
+            </span>
+          </span>
+          <span
+            aria-hidden
+            className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+          >
+            {noteShape === "rect" ? "RECT" : "CIRC"}
           </span>
         </button>
         {/* Strict Inputs HUD chip - anti-mash protection. Lives in

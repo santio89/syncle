@@ -57,20 +57,24 @@ import {
 import {
   loadFpsLock,
   loadMetronome,
+  loadNoteShape,
   loadPerspectiveMode,
   loadRenderQuality,
   loadSfx,
   loadVolume,
   nextFpsLock,
+  nextNoteShape,
   nextPerspectiveMode,
   nextRenderQuality,
   saveFpsLock,
   saveMetronome,
+  saveNoteShape,
   savePerspectiveMode,
   saveRenderQuality,
   saveSfx,
   saveVolume,
   type FpsLock,
+  type NoteShape,
   type PerspectiveMode,
   type RenderQuality,
 } from "@/lib/game/settings";
@@ -652,6 +656,7 @@ function PlayerSettingsModal({
   const [quality, setQualityState] = useState<RenderQuality>(loadRenderQuality);
   const [perspectiveMode, setPerspectiveModeState] =
     useState<PerspectiveMode>(loadPerspectiveMode);
+  const [noteShape, setNoteShapeState] = useState<NoteShape>(loadNoteShape);
 
   // Live-save handlers - persist on every change so closing the lobby
   // tab without a final "save" still keeps the player's choices.
@@ -696,6 +701,16 @@ function PlayerSettingsModal({
     setPerspectiveModeState((cur) => {
       const next = nextPerspectiveMode(cur);
       savePerspectiveMode(next);
+      return next;
+    });
+  }, []);
+  // Note shape - same per-player local cosmetic choice as perspective
+  // mode above. Never synced to the room; each player picks their
+  // own silhouette (rect / circle) independently of everyone else.
+  const onCycleNoteShape = useCallback(() => {
+    setNoteShapeState((cur) => {
+      const next = nextNoteShape(cur);
+      saveNoteShape(next);
       return next;
     });
   }, []);
@@ -1016,41 +1031,70 @@ function PlayerSettingsModal({
         </label>
       </div>
 
-      {/* View / perspective tile - full-width under the 2x2 grid,
-          matching the single-player StartCard layout. Per-player
-          LOCAL preference: never synced over the wire, each player
-          picks the view they're most comfortable with (some get
-          dizzy from the Guitar-Hero perspective fret, some prefer
-          it to the flat osu-style lanes). Gameplay math is
-          identical across modes so scores stay comparable. */}
-      <button
-        type="button"
-        onClick={onCyclePerspectiveMode}
-        className="mt-2 flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
-        data-tooltip={
-          perspectiveMode === "3d"
-            ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
-            : "2D · flat osu!-style lanes, constant note size, parallel rails"
-        }
-        aria-label="Cycle playfield perspective mode"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-            View
+      {/* View + Shape - cosmetic cycle pair under the 2x2 toggle
+          grid. Both are per-player LOCAL preferences (never synced
+          over the wire); each player picks the view + silhouette
+          they're most comfortable with, gameplay math is identical
+          across all combinations so scores stay fully comparable. */}
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={onCyclePerspectiveMode}
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
+          data-tooltip={
+            perspectiveMode === "3d"
+              ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
+              : "2D · flat osu!-style lanes, constant note size, parallel rails"
+          }
+          aria-label="Cycle playfield perspective mode"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              View
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
+              }`}
+            >
+              {perspectiveMode === "3d" ? "3D" : "2D"}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            fret perspective
           </span>
-          <span
-            aria-hidden
-            className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-              perspectiveMode === "3d" ? "text-bone-50/60" : "text-accent"
-            }`}
-          >
-            {perspectiveMode === "3d" ? "3D" : "2D"}
+        </button>
+
+        <button
+          type="button"
+          onClick={onCycleNoteShape}
+          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
+          data-tooltip={
+            noteShape === "rect"
+              ? "Rectangles · brutalist tiles, match the lane (default)"
+              : "Circles · classic osu-style discs"
+          }
+          aria-label="Cycle note shape"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+              Shape
+            </span>
+            <span
+              aria-hidden
+              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                noteShape === "circle" ? "text-accent" : "text-bone-50/60"
+              }`}
+            >
+              {noteShape === "circle" ? "CIRC" : "RECT"}
+            </span>
+          </div>
+          <span className="font-mono text-[9.5px] text-bone-50/40">
+            note style
           </span>
-        </div>
-        <span className="font-mono text-[9.5px] text-bone-50/40">
-          fret perspective
-        </span>
-      </button>
+        </button>
+      </div>
 
       {/* Strict Inputs tile - match-wide anti-mash policy. Host owns
           the toggle (server enforces lobby-phase + host-only flips).

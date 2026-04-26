@@ -67,10 +67,14 @@ import {
   loadPerspectiveMode,
   savePerspectiveMode,
   nextPerspectiveMode,
+  loadNoteShape,
+  saveNoteShape,
+  nextNoteShape,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
   type PerspectiveMode,
+  type NoteShape,
 } from "@/lib/game/settings";
 import {
   createRenderState,
@@ -108,7 +112,7 @@ const SCORE_TICK_MS = 200; // 5 Hz
  * hide the "3 / 2 / 1" overlay this many seconds before audio starts so
  * the player gets a silent runway, and (b) flip the highway from
  * `emptyState` to the real chart inside that window so notes whose
- * onset falls inside `leadTime` (1.2 s) can spawn naturally instead of
+ * onset falls inside `leadTime` (1.2 s, osu AR5) can spawn naturally instead of
  * popping in at the strike line the instant the song begins.
  */
 const MATCH_LEAD_IN_SECONDS = MATCH_LEAD_IN_MS / 1000;
@@ -361,6 +365,11 @@ function CanvasPane({
   // registration) is identical in both modes.
   const [perspectiveMode, setPerspectiveMode] =
     useState<PerspectiveMode>(loadPerspectiveMode);
+  /** Note + receptor shape (`"rect"` / `"circle"`). Local-only;
+   *  purely cosmetic, never synced to the room. Mirrors the single-
+   *  player setting so a choice made in SP survives into MP and
+   *  vice versa. */
+  const [noteShape, setNoteShape] = useState<NoteShape>(loadNoteShape);
   // Strict Inputs (anti-mash protection) - match-wide and host-controlled
   // in multiplayer (unlike SP, where each player owns their own toggle).
   // The host flips it via `actions.setStrictInputs` from the lobby; the
@@ -412,6 +421,14 @@ function CanvasPane({
     renderOptsRef.current.perspectiveMode = perspectiveMode;
     savePerspectiveMode(perspectiveMode);
   }, [perspectiveMode]);
+
+  // Mirror + persist `noteShape`. Same pattern as `perspectiveMode`
+  // minus the cache rebuild: shape is a draw-path branch and the
+  // geometry cache is shape-agnostic.
+  useEffect(() => {
+    renderOptsRef.current.noteShape = noteShape;
+    saveNoteShape(noteShape);
+  }, [noteShape]);
 
   const { theme } = useTheme();
   useEffect(() => {
@@ -1245,7 +1262,7 @@ function CanvasPane({
       //
       //   [overlay]  songTime < -LEAD_IN  → emptyState
       //              "3 / 2 / 1" is on screen; chart notes that fall
-      //              inside the renderer's `leadTime` (1.2s) would
+      //              inside the renderer's `leadTime` (1.2s, osu AR5) would
       //              otherwise flash through the overlay's translucent
       //              backing.
       //
@@ -1461,6 +1478,10 @@ function CanvasPane({
               perspectiveMode={perspectiveMode}
               onCyclePerspectiveMode={() =>
                 setPerspectiveMode((cur) => nextPerspectiveMode(cur))
+              }
+              noteShape={noteShape}
+              onCycleNoteShape={() =>
+                setNoteShape((cur) => nextNoteShape(cur))
               }
               strictInputs={strictInputs}
               isHost={isHost}
@@ -1921,6 +1942,8 @@ function HealthPanel({
   onCycleQuality,
   perspectiveMode,
   onCyclePerspectiveMode,
+  noteShape,
+  onCycleNoteShape,
   strictInputs,
   isHost,
   onSetStrictInputs,
@@ -1952,6 +1975,11 @@ function HealthPanel({
    *  scores stay comparable because gameplay math is identical. */
   perspectiveMode: PerspectiveMode;
   onCyclePerspectiveMode: () => void;
+  /** Note + receptor shape (`"rect"` / `"circle"`). Same local-
+   *  only cosmetic choice as in single-player; each player picks
+   *  their own shape, never synced to the room. */
+  noteShape: NoteShape;
+  onCycleNoteShape: () => void;
   /** Strict Inputs (anti-mash protection) - match-wide, host-controlled.
    *  Surface read-only for non-hosts; only the host's chip toggles it.
    *  Server enforces lobby-phase-only flips, so the in-match HUD chip
@@ -2186,6 +2214,36 @@ function HealthPanel({
           className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
         >
           {perspectiveMode === "3d" ? "3D" : "2D"}
+        </span>
+      </button>
+      {/* Shape chip - cosmetic note/receptor silhouette toggle. Per-
+          player preference (never synced over the wire), same
+          behavior as View above: each player picks their own look
+          without affecting scoring or fairness. */}
+      <button
+        type="button"
+        onClick={onCycleNoteShape}
+        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
+        data-tooltip={
+          noteShape === "rect"
+            ? "Rectangles · brutalist tiles, match the lane (default)"
+            : "Circles · classic osu-style discs"
+        }
+        aria-label="Cycle note shape"
+      >
+        <span className="flex flex-col">
+          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
+            Shape
+          </span>
+          <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
+            {noteShape === "rect" ? "tiles" : "discs"}
+          </span>
+        </span>
+        <span
+          aria-hidden
+          className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+        >
+          {noteShape === "rect" ? "RECT" : "CIRC"}
         </span>
       </button>
       {/* Strict Inputs HUD chip - anti-mash protection. Match-wide

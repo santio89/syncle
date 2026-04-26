@@ -63,6 +63,16 @@ const PERSPECTIVE_KEY = "syncle.perspective";
 // scoring) is identical in both modes, so it's stored as a per-
 // player preference and never synced over the multiplayer wire.
 const DEFAULT_PERSPECTIVE_MODE: PerspectiveMode = "2d";
+const NOTE_SHAPE_KEY = "syncle.noteShape";
+// Rectangles are the shipping default - they match the brutalist
+// theme of the rest of the app (hard-edged cards, buttons, borders,
+// chips) and the osu!mania 4K canonical look. Circles are offered
+// as a secondary mode for players who prefer the classic osu!/
+// rhythm-game disc aesthetic ("the dots from back in the day").
+// Local-only setting like Quality / FPS / Perspective - never
+// synced over the multiplayer wire, two players in the same room
+// can run different note shapes with zero impact on fairness.
+const DEFAULT_NOTE_SHAPE: NoteShape = "rect";
 
 /* -----------------------------------------------------------------------
  * Storage-health signal - fires the first time a settings / resume /
@@ -272,6 +282,58 @@ export function savePerspectiveMode(v: PerspectiveMode): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(PERSPECTIVE_KEY, v);
+  } catch {
+    reportStorageFailure();
+  }
+}
+
+/* -----------------------------------------------------------------------
+ * Note + receptor shape.
+ *
+ * - `"rect"`   → brutalist rectangular tiles (default). Filled lane-
+ *                colored rectangles matching the rest of the app's
+ *                hard-edged design language. In 3D mode they render
+ *                as true single-vanishing-point trapezoids that read
+ *                as "lying flat on the tilted fret." Matches the
+ *                osu!mania 4K canonical look.
+ *
+ * - `"circle"` → classic rhythm-game discs. Filled lane-colored
+ *                circles with a subtle inner core. Drops the 3D
+ *                perspective tilt on the note itself (width taper
+ *                doesn't apply to circles), but the highway still
+ *                foreshortens, so the scene still reads as 3D.
+ *                Pick this if you grew up on osu!/BMS and want the
+ *                "dots falling" look instead of the tile look.
+ *
+ * Gameplay math (timing windows, hit registration, scoring) is
+ * identical in both shapes - purely visual choice. Persists across
+ * sessions; local-only (not synced over multiplayer).
+ * ------------------------------------------------------------------- */
+export type NoteShape = "rect" | "circle";
+
+/** Cycle order for the in-game Shape toggle. */
+export const NOTE_SHAPE_CYCLE: NoteShape[] = ["rect", "circle"];
+
+export function nextNoteShape(current: NoteShape): NoteShape {
+  return current === "rect" ? "circle" : "rect";
+}
+
+export function loadNoteShape(): NoteShape {
+  if (typeof window === "undefined") return DEFAULT_NOTE_SHAPE;
+  try {
+    const raw = window.localStorage.getItem(NOTE_SHAPE_KEY);
+    if (raw === "rect") return "rect";
+    if (raw === "circle") return "circle";
+    return DEFAULT_NOTE_SHAPE;
+  } catch {
+    return DEFAULT_NOTE_SHAPE;
+  }
+}
+
+export function saveNoteShape(v: NoteShape): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(NOTE_SHAPE_KEY, v);
   } catch {
     reportStorageFailure();
   }
