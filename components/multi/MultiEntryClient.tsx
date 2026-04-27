@@ -264,7 +264,6 @@ export default function MultiEntryClient() {
           <JoinPane
             code={code}
             onCode={setCode}
-            cleanCode={cleanCode}
             onSubmit={() => handleJoin()}
             busy={busy === "join"}
             disabled={!canJoin}
@@ -484,7 +483,6 @@ function VisibilityChoice({
 function JoinPane({
   code,
   onCode,
-  cleanCode,
   onSubmit,
   busy,
   disabled,
@@ -492,7 +490,6 @@ function JoinPane({
 }: {
   code: string;
   onCode: (c: string) => void;
-  cleanCode: string;
   onSubmit: () => void;
   busy: boolean;
   disabled: boolean;

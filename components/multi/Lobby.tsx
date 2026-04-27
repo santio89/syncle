@@ -45,6 +45,7 @@ import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import { CopyToast } from "@/components/CopyToast";
 import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
 import ScrollStrip from "@/components/ScrollStrip";
+import { VideoSettingsPopover } from "@/components/VideoSettingsPopover";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
@@ -723,8 +724,10 @@ function PlayerSettingsModal({
   // server's echo on the next snapshot tick. Letting a remembered
   // local preference override the snapshot value would silently undo
   // the host's chosen room policy on the next mount, which is exactly
-  // the surprise we're trying to avoid (also why the SP-style
-  // saveStrictInputs persistence isn't called here).
+  // the surprise we're trying to avoid. Strict inputs is no longer
+  // a solo setting at all (it's now multiplayer-only, host-
+  // controlled), so there's no SP-side `saveStrictInputs` or
+  // localStorage key to reconcile with either.
   const onHostToggleStrictInputs = useCallback(
     (next: boolean) => {
       onSetStrictInputs?.(next);
@@ -919,74 +922,28 @@ function PlayerSettingsModal({
           </button>
         </div>
 
-      {/* 2×2 settings grid: FPS lock + Quality on top, Metronome +
-          Feedback below - same ordering as the single-player
-          StartCard so the two surfaces read as one product. All four
-          tiles share the same width / height and dressing (border,
-          padding, label-row + caption-row) so the grid reads as a
-          uniform block. On narrow widths it collapses to a single
-          column - keyboard / touch targets stay a comfortable size
-          all the way down to phone widths. */}
+      {/* Settings grid: the VIDEO gateway (spans the full width as
+          a visual anchor) collapses the four pure-visual knobs
+          (FPS lock, Quality, View, Shape) into a single click-
+          to-open popover. Metronome + Feedback pair on the row
+          below as before (the two audible-cue toggles). All tiles
+          share the same border / padding / typography so the grid
+          reads as a uniform block. On narrow widths it collapses
+          to a single column - keyboard / touch targets stay a
+          comfortable size all the way down to phone widths. */}
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <button
-          type="button"
-          onClick={onCycleFpsLock}
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
-          data-tooltip={
-            fpsLock == null
-              ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
-              : fpsLock === 30
-                ? "Frame-rate capped at 30 FPS - saves battery on laptops"
-                : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
-          }
-          aria-label="Cycle render FPS lock"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              FPS lock
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                fpsLock == null ? "text-bone-50/60" : "text-accent"
-              }`}
-            >
-              {fpsLock == null ? "OFF" : fpsLock}
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            cycles off · 30 · 60
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onCycleQuality}
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
-          data-tooltip={
-            quality === "high"
-              ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
-              : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
-          }
-          aria-label="Cycle render quality preset"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Quality
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                quality === "high" ? "text-bone-50/60" : "text-accent"
-              }`}
-            >
-              {quality === "high" ? "HIGH" : "PERF"}
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            HIGH = full vfx · PERF = no vfx
-          </span>
-        </button>
+        <VideoSettingsPopover
+          variant="card"
+          fpsLock={fpsLock}
+          onCycleFpsLock={onCycleFpsLock}
+          quality={quality}
+          onCycleQuality={onCycleQuality}
+          perspectiveMode={perspectiveMode}
+          onCyclePerspectiveMode={onCyclePerspectiveMode}
+          noteShape={noteShape}
+          onCycleNoteShape={onCycleNoteShape}
+          className="sm:col-span-2"
+        />
 
         <label
           className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
@@ -1031,71 +988,6 @@ function PlayerSettingsModal({
             press N to toggle in-game
           </span>
         </label>
-      </div>
-
-      {/* View + Shape - cosmetic cycle pair under the 2x2 toggle
-          grid. Both are per-player LOCAL preferences (never synced
-          over the wire); each player picks the view + silhouette
-          they're most comfortable with, gameplay math is identical
-          across all combinations so scores stay fully comparable. */}
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={onCyclePerspectiveMode}
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
-          data-tooltip={
-            perspectiveMode === "3d"
-              ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
-              : "2D · flat osu!-style lanes, constant note size, parallel rails"
-          }
-          aria-label="Cycle playfield perspective mode"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              View
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
-              }`}
-            >
-              {perspectiveMode === "3d" ? "3D" : "2D"}
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            fret perspective
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onCycleNoteShape}
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
-          data-tooltip={
-            noteShape === "rect"
-              ? "Rectangles · brutalist tiles, match the lane (default)"
-              : "Circles · classic osu-style discs"
-          }
-          aria-label="Cycle note shape"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Shape
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                noteShape === "circle" ? "text-accent" : "text-bone-50/60"
-              }`}
-            >
-              {noteShape === "circle" ? "CIRC" : "RECT"}
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            note style
-          </span>
-        </button>
       </div>
 
       {/* Strict Inputs tile - match-wide anti-mash policy. Host owns
@@ -1953,7 +1845,7 @@ function HostPane({
             the list every Next click. */}
         {inSearchMode && searchLoading && (
           <p className="p-3 font-mono text-[0.79rem] text-bone-50/50">
-            Searching “{debouncedQuery}”…
+            Searching "{debouncedQuery}"...
           </p>
         )}
         {!inSearchMode && browseLoading && browseResults === null && (
@@ -1970,7 +1862,7 @@ function HostPane({
           (inSearchMode ? (
             <p className="p-3 font-mono text-[0.79rem] text-bone-50/40">
               {searchPage === 0
-                ? `No 4K mania tracks found for “${debouncedQuery}”.`
+                ? `No 4K mania tracks found for "${debouncedQuery}".`
                 : "No more results on this page - try Prev."}
             </p>
           ) : (

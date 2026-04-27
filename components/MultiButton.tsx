@@ -43,17 +43,32 @@ export function MultiButton({ className = "" }: { className?: string }) {
       // and the visible caps drift below the icon's geometric centre
       // even with `items-center`. Same trick the "Refresh list"
       // button in MultiEntryClient uses for the same reason.
-      className={`inline-flex h-[38px] items-center gap-2 border-2 border-bone-50/60 px-3 leading-none text-bone-50 transition-colors hover:border-accent hover:text-accent active:translate-y-[1px] ${className}`}
+      //
+      // `transform-gpu` forces the Tailwind transform utility onto
+      // `translate3d(…, 0)` instead of the default 2D `translate(…)`,
+      // which promotes the pill into its own GPU compositor layer.
+      // It is NOT the fix for the MultiIcon "split" artifact (see
+      // `MultiIcon` below for the actual fix: dropping
+      // `shapeRendering="crispEdges"`) - GPU compositing alone
+      // doesn't help there because `transition-colors` invalidates
+      // the layer's texture on every colour tick. Kept anyway as a
+      // cheap defensive layer: it prevents the compositor from
+      // promoting / demoting the pill mid-interaction, which
+      // eliminates one class of paint-order jitter on top of the
+      // AA fix.
+      className={`inline-flex h-[38px] items-center gap-2 border-2 border-bone-50/60 px-3 leading-none text-bone-50 transition-colors transform-gpu hover:border-accent hover:text-accent active:translate-y-[1px] ${className}`}
       // aria-label kept explicit for screen readers (the visible
       // text is a single word so the label IS the destination, but
       // an explicit aria-label is cheap insurance against any AT
       // that reads only the icon).
       aria-label="Multiplayer rooms"
-      // Tooltip becomes a value-add line ("what does this do?")
-      // instead of just echoing the visible label. Short enough to
-      // not feel verbose; matches the brut-tooltip line-length of
-      // the rest of the header chips.
-      data-tooltip="Play live with friends · up to 50 per room"
+      // Tooltip is a short value-add line ("what does this do?")
+      // rather than echoing the visible label. Deliberately skips
+      // the old room-capacity tagline - the live `{count}/{max}`
+      // counter in the room list is the right place for that
+      // number, and padding the tooltip with it read as marketing
+      // copy next to the rest of the app's terse chip tooltips.
+      data-tooltip="Play live with friends"
     >
       <MultiIcon size={14} />
       {/* Tracking matches the wordmark + nav text in the same header
@@ -70,12 +85,33 @@ export function MultiButton({ className = "" }: { className?: string }) {
 }
 
 /**
- * 2×2 grid of solid 8-unit squares, separated by a 4-unit gutter,
+ * 2×2 grid of solid 7-unit squares, separated by a 2-unit gutter,
  * centered in the 24×24 viewport. Filled (not stroked) so the icon
  * reads as four distinct "players" at this small size - an outlined
  * version got muddy below 20px. Exported so footer / inline copy
  * can use the same glyph as `MultiButton` instead of the loose `░`
  * unicode character (which doesn't match weight at small sizes).
+ *
+ * NO `shapeRendering="crispEdges"`. The earlier version had it - it
+ * pairs nicely with the brutalist theme in theory - but at the
+ * default render size (14 px on a 24-unit viewBox → 1 viewBox unit
+ * ≈ 0.58 CSS px), the 2-unit gutter between dots works out to
+ * ~1.17 CSS px. That's deep in the sub-pixel danger zone: `crispEdges`
+ * snaps each rect independently to the nearest device pixel, and the
+ * gutter can round to 1 or 2 device px depending on the button's
+ * current paint state. Any re-paint (hover transition mid-flight,
+ * `active:translate-y-[1px]` sink, scroll composite) can re-snap the
+ * two rows' gutters to different values, and the grid visibly
+ * "splits" for the duration of that paint.
+ *
+ * Dropping the hint lets the browser anti-alias at the real
+ * sub-pixel position - deterministic, paint-stable, and visually
+ * imperceptible at 14 px (the AA halo is < 0.3 CSS px). The dots
+ * stay crisp-looking because the fill is solid + integer-cornered;
+ * the brutalist weight comes from the fill, not from snap-to-grid.
+ * Same rationale would apply to any future `MultiIcon` use at small
+ * sizes, so it's baked into the component rather than left as a
+ * caller concern.
  */
 export function MultiIcon({ size = 18 }: { size?: number }) {
   return (
@@ -84,7 +120,6 @@ export function MultiIcon({ size = 18 }: { size?: number }) {
       height={size}
       viewBox="0 0 24 24"
       fill="currentColor"
-      shapeRendering="crispEdges"
       aria-hidden="true"
     >
       <rect x="4"  y="4"  width="7" height="7" />

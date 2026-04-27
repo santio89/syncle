@@ -96,10 +96,14 @@ export const TIMING = {
    *     so the rule reads as "if you couldn't possibly have been
    *     reacting to a note here, don't reward the press".
    *
-   * Only consulted when `strictInputs` is on (see lib/game/settings).
-   * With the setting off the engine never invokes the check and
-   * every empty press is silent + free, matching pre-Strict
-   * behavior 1:1.
+   * Only consulted when `strictInputs` is on. In solo that's
+   * always true (hardcoded in `components/Game.tsx`; no user
+   * toggle, no localStorage, to keep home-page scoreboards
+   * comparable across players). In multi the host flips it via
+   * `RoomSnapshot.strictInputs` + the `host:setStrictInputs`
+   * socket event (`lib/multi/protocol.ts`). With the setting
+   * off the engine never invokes the check and every empty
+   * press is silent + free, matching pre-Strict behavior 1:1.
    */
   spamGrace: 0.22,
 } as const;

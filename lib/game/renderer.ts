@@ -1108,7 +1108,7 @@ export function drawFrame(
 
   drawHighway(
     ctx, state, songTime, opts, rs,
-    firstBeat, beatLen, beatsToDraw, beatPulse, isDownbeat, cache, palette, perf, breath,
+    firstBeat, beatLen, beatsToDraw, beatPulse, cache, palette, perf, breath,
   );
 
   if (!perf) {
@@ -1116,9 +1116,9 @@ export function drawFrame(
   updateAndDrawParticles(ctx, rs, dt);
   }
 
-  drawCanvasCombo(ctx, rs, cache, palette, perf);
+  drawCanvasCombo(ctx, rs, cache, perf);
   drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache, perf);
-  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette, cache, perf);
+  drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, cache, perf);
   if (!perf) {
   drawMilestoneVignette(ctx, rs, W, H, cache);
   }
@@ -1391,7 +1391,6 @@ function drawHighway(
   beatLen: number,
   beatsToDraw: number,
   beatPulse: number,
-  isDownbeat: boolean,
   cache: RenderCache,
   palette: ThemePalette,
   perf: boolean,
@@ -1553,7 +1552,7 @@ function drawHighway(
       }
     }
     if (trailAlpha <= 0.01) continue;
-    drawHoldTrail(ctx, n, songTime, opts, palette, trailAlpha, cache, perf);
+    drawHoldTrail(ctx, n, songTime, opts, trailAlpha, cache, perf);
   }
   // Reset anticipation each frame; we re-derive it from the upcoming notes.
   for (let i = 0; i < rs.laneAnticipation.length; i++) rs.laneAnticipation[i] = 0;
@@ -1595,7 +1594,7 @@ function drawHighway(
       const v = a * a;
       if (v > rs.laneAnticipation[n.lane]) rs.laneAnticipation[n.lane] = v;
     }
-    drawTapNote(ctx, n, lookahead, opts, palette, alpha, cache, perf, breath);
+    drawTapNote(ctx, n, lookahead, opts, alpha, cache, perf, breath);
   }
 
   // Judgment line - subtle pulse on the beat AND on combo milestones.
@@ -1696,7 +1695,6 @@ function drawTapNote(
   n: Note,
   lookahead: number,
   opts: RenderOptions,
-  palette: ThemePalette,
   alpha: number,
   cache: RenderCache,
   perf: boolean,
@@ -1925,7 +1923,6 @@ function drawHoldTrail(
   n: Note,
   songTime: number,
   opts: RenderOptions,
-  palette: ThemePalette,
   alphaMul: number,
   cache: RenderCache,
   perf: boolean,
@@ -2579,7 +2576,6 @@ function drawCanvasCombo(
   ctx: CanvasRenderingContext2D,
   rs: RenderState,
   cache: RenderCache,
-  palette: ThemePalette,
   perf: boolean,
 ): void {
   if (rs.combo < 10) return;
@@ -2704,7 +2700,6 @@ function drawBeatDot(
   y: number,
   pulse: number,
   isDownbeat: boolean,
-  palette: ThemePalette,
   cache: RenderCache,
   perf: boolean,
 ) {

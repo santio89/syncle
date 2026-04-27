@@ -42,8 +42,6 @@ import {
   loadRenderQuality,
   saveRenderQuality,
   nextRenderQuality,
-  loadStrictInputs,
-  saveStrictInputs,
   loadPerspectiveMode,
   savePerspectiveMode,
   nextPerspectiveMode,
@@ -69,6 +67,7 @@ import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
 import { RefreshSongButton } from "@/components/RefreshSongButton";
 import ScrollStrip from "@/components/ScrollStrip";
 import TouchLanes from "@/components/TouchLanes";
+import { VideoSettingsPopover } from "@/components/VideoSettingsPopover";
 
 type Phase =
   | "idle"
@@ -255,20 +254,28 @@ export default function Game() {
    *  across sessions; mirrored into `renderOptsRef` so toggling takes
    *  effect on the very next frame. */
   const [quality, setQuality] = useState<RenderQuality>(loadRenderQuality);
-  /** Strict Inputs (anti-mash protection). When ON, an empty key
-   *  press with NO unjudged note in the same lane within ±SPAM_GRACE
-   *  silently breaks combo + drops health a touch - making panic
-   *  mash a net negative. When OFF, empty presses are silently
-   *  ignored (legacy osu!mania behavior). Persisted across sessions;
-   *  read via `strictInputsRef` from the input handler so toggling
-   *  it mid-match takes effect on the very next press without a
-   *  remount. */
-  const [strictInputs, setStrictInputs] = useState<boolean>(loadStrictInputs);
-  const strictInputsRef = useRef<boolean>(loadStrictInputs());
-  useEffect(() => {
-    strictInputsRef.current = strictInputs;
-    saveStrictInputs(strictInputs);
-  }, [strictInputs]);
+  /**
+   * Strict Inputs (anti-mash protection) is ALWAYS ON in solo.
+   *
+   * It is now a multiplayer-only TOGGLE (host-controlled via
+   * `RoomSnapshot.strictInputs`); solo never exposes a UI for it
+   * and never reads / writes the legacy `syncle.strictInputs`
+   * localStorage key. Rationale: the home-page scoreboards track
+   * only solo plays, and strict=on is the fairness-protective
+   * default that keeps panic-mash from inflating personal bests.
+   * If we let the solo toggle still exist, two players grinding
+   * the same track could post wildly different "best" scores
+   * depending on whether they remembered to flip it off - that
+   * defeats the point of the scoreboard.
+   *
+   * Kept as a `useRef` (no setter) so the input handler's
+   * `strictInputsRef.current` read path is identical to the
+   * multiplayer branch in `MultiGame.tsx`, which genuinely does
+   * toggle at runtime off the room snapshot. The const-ref shape
+   * means we can delete the React state + effect that previously
+   * mirrored localStorage on every flip.
+   */
+  const strictInputsRef = useRef<boolean>(true);
   /** Playfield perspective preset (`"3d"` = Guitar-Hero-style
    *  trapezoid highway with converging rails and notes that scale
    *  with depth, `"2d"` = osu!-style flat rectangle with parallel
@@ -1665,18 +1672,6 @@ export default function Game() {
             onCycleNoteShape={() =>
               setNoteShape((cur) => nextNoteShape(cur))
             }
-            strictInputs={strictInputs}
-            // Strict Inputs is intentionally READ-ONLY once we're in
-            // countdown / playing / paused - flipping the anti-mash
-            // policy mid-run would let a spammer switch to forgiving
-            // scoring the moment a streak is on the line and still
-            // keep the combo they built under the strict rule.
-            // Locking it to the menus (StartCard) keeps the score
-            // shown on the results screen attributable to a single
-            // ruleset for the full run. Passing `undefined` here
-            // tells the HUD to render the checkbox as locked and
-            // flash a "Only editable in the menu" hint on click.
-            onToggleStrictInputs={undefined}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
             songDuration={displayMeta?.duration ?? null}
@@ -1730,8 +1725,6 @@ export default function Game() {
               onCycleNoteShape={() =>
                 setNoteShape((cur) => nextNoteShape(cur))
               }
-              strictInputs={strictInputs}
-              onToggleStrictInputs={() => setStrictInputs((s) => !s)}
             songSource={songSource}
             chartMode={chartMode}
             onChangeMode={setChartMode}
@@ -2091,8 +2084,6 @@ function StartCard({
   onCyclePerspectiveMode,
   noteShape,
   onCycleNoteShape,
-  strictInputs,
-  onToggleStrictInputs,
   songSource,
   chartMode,
   onChangeMode,
@@ -2143,11 +2134,6 @@ function StartCard({
    *  pre-game → in-game transition and vice versa. */
   noteShape: NoteShape;
   onCycleNoteShape: () => void;
-  /** Strict Inputs (anti-mash protection) toggle. Mirrors the in-game
-   *  HUD chip - flipping it here vs there is identical (shared parent
-   *  state). Tile renders in the bottom row of the settings grid. */
-  strictInputs: boolean;
-  onToggleStrictInputs: () => void;
   songSource: "osu" | "fallback" | null;
   chartMode: ChartMode;
   onChangeMode: (m: ChartMode) => void;
@@ -2391,104 +2377,45 @@ function StartCard({
       {/* Tile grid for the pre-game settings panel. On mobile (< sm)
           everything stacks in a single column so each tile gets the
           full width and the captions / chips stay readable on a
-          narrow screen. From `sm` up we switch to the 2x2 layout -
-          top row: FPS Lock cycler on the left, Quality preset on the
-          right (the two render-budget knobs paired so the perf
-          controls sit at the top of the panel); bottom row:
-          Metronome toggle on the left, Input Feedback toggle on the
-          right (the two audible-cue toggles paired). All four tiles
-          share the same border / padding / typography treatment so
-          they read as one cohesive panel, and each settings tile
-          mirrors the in-game HUD's state - toggling here is the
-          same as toggling in the HUD chip during play. */}
+          narrow screen. From `sm` up we switch to a 2-col layout -
+          top row: the full-width "VIDEO" gateway (click opens a
+          popover with the four pure-visual knobs: FPS lock,
+          Quality, View, Shape); middle row: Metronome + Feedback
+          (the two audible-cue toggles paired); bottom row: Music
+          volume (full-width slider). All tiles share the same
+          border / padding / typography treatment so they read as
+          one cohesive panel, and each setting tile mirrors the
+          in-game HUD's state - toggling here is the same as
+          toggling in the HUD chip during play. */}
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {/* Settings tiles. All four (FPS lock, Metronome, Feedback,
-            Quality) share the same border / padding / typography
-            treatment so they read as one cohesive 2x2 panel, and
-            each setting tile mirrors the in-game HUD's state -
-            toggling here is the same as toggling in the HUD chip
-            during play. The full-width "Stats on this track" panel
-            below the toggles carries the per-(song, mode) history. */}
+        {/* Settings tiles. The VIDEO popover + Metronome + Feedback
+            tiles all share the same border / padding / typography
+            treatment so they read as one cohesive 2-col panel, and
+            each toggle mirrors the in-game HUD's state - toggling
+            here is the same as toggling in the HUD chip during play.
+            The full-width "Stats on this track" panel below these
+            toggles carries the per-(song, mode) history. */}
 
-        {/* Tile order is read top-to-bottom, left-to-right by the 2-up
-            grid: FPS lock / Quality on the top row (the two
-            render-budget controls, paired so the perf knobs sit
-            together at the top of the panel), Metronome / Feedback
-            on the bottom row (the two audio-output toggles, also
-            paired). */}
-        {/* FPS lock tile - the entire tile is the click target (acts
-            like the <label> tiles next to it), so clicking anywhere on
-            the card - including the "FPS LOCK" caption - cycles
-            off → 30 → 60 → off, mirroring the in-game HUD's LOCK pill.
-            The right-aligned chip is a styled span (not a real button)
-            specifically so a click on it doesn't double-fire - the
-            outer <button> already owns the click. The chip flips to
-            the accent color when capped so the active state matches
-            the HUD pill exactly. */}
-        <button
-          type="button"
-          onClick={onCycleFpsLock}
-          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
-          data-tooltip={
-            fpsLock == null
-              ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
-              : fpsLock === 30
-                ? "Frame-rate capped at 30 FPS - saves battery on laptops"
-                : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
-          }
-          aria-label="Cycle render FPS lock"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              FPS lock
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                fpsLock == null ? "text-bone-50/60" : "text-accent"
-              }`}
-            >
-              {fpsLock == null ? "OFF" : fpsLock}
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            cycles off · 30 · 60
-          </span>
-        </button>
-        {/* Quality preset tile - same affordance vocabulary as the
-            FPS lock tile (whole tile click cycles, right chip flips
-            to accent when not on the default value). The default
-            ("HIGH") reads in dim text + the alternative ("PERF") in
-            accent so the player gets a visual confirmation that
-            they've opted out of the default look. */}
-        <button
-          type="button"
-          onClick={onCycleQuality}
-          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer text-left"
-          data-tooltip={
-            quality === "high"
-              ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
-              : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
-          }
-          aria-label="Cycle render quality preset"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Quality
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                quality === "high" ? "text-bone-50/60" : "text-accent"
-              }`}
-            >
-              {quality === "high" ? "HIGH" : "PERF"}
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            HIGH = full vfx · PERF = no vfx
-          </span>
-        </button>
+        {/* Tile order: the "VIDEO" gateway (spans the full grid width
+            for visual prominence) collapses the four pure-visual
+            knobs (FPS lock / Quality / View / Shape) into a single
+            click-to-open popover; below it the two audio toggles
+            (Metronome / Feedback) keep their original side-by-side
+            pairing. Strict Inputs has moved out of solo entirely
+            (now a multiplayer-only, host-controlled setting) so
+            there's no gameplay-rule row here anymore. */}
+        <VideoSettingsPopover
+          variant="card"
+          fpsLock={fpsLock}
+          onCycleFpsLock={onCycleFpsLock}
+          quality={quality}
+          onCycleQuality={onCycleQuality}
+          perspectiveMode={perspectiveMode}
+          onCyclePerspectiveMode={onCyclePerspectiveMode}
+          noteShape={noteShape}
+          onCycleNoteShape={onCycleNoteShape}
+          className="sm:col-span-2"
+        />
         <label
           className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer"
           data-tooltip="Audible click track on every beat (key: M)"
@@ -2526,106 +2453,6 @@ function StartCard({
           <span className="font-mono text-[9.5px] text-bone-50/40">
             press N to toggle in-game
           </span>
-        </label>
-
-        {/* View / perspective tile - cosmetic cycle, paired in its own
-            row with Shape. Both tiles are "how the playfield looks"
-            rather than "how gameplay behaves," so they share a band
-            between the audio-toggle grid above and the gameplay-rule
-            row (Strict Inputs) below. "2D" is the shipping default
-            (read as dim), "3D" flips the chip to accent so the
-            player sees they've opted into the Guitar-Hero look. */}
-        <button
-          type="button"
-          onClick={onCyclePerspectiveMode}
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
-          data-tooltip={
-            perspectiveMode === "3d"
-              ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
-              : "2D · flat osu!-style lanes, constant note size, parallel rails"
-          }
-          aria-label="Cycle playfield perspective mode"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              View
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
-              }`}
-            >
-              {perspectiveMode === "3d" ? "3D" : "2D"}
-            </span>
-      </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            fret perspective
-          </span>
-        </button>
-
-        {/* Shape tile - cosmetic cycle paired with View. "RECT" is
-            the shipping default (brutalist tiles, read as dim);
-            "CIRC" flips the chip to accent so the player sees
-            they've opted into the classic disc look. Same click-
-            anywhere-to-cycle pattern as View / Quality / FPS Lock. */}
-        <button
-          type="button"
-          onClick={onCycleNoteShape}
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 text-left"
-          data-tooltip={
-            noteShape === "rect"
-              ? "Rectangles · brutalist tiles, match the lane (default)"
-              : "Circles · classic osu-style discs"
-          }
-          aria-label="Cycle note shape"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Shape
-            </span>
-            <span
-              aria-hidden
-              className={`font-mono text-[10px] uppercase tracking-widest transition-colors ${
-                noteShape === "circle" ? "text-accent" : "text-bone-50/60"
-              }`}
-            >
-              {noteShape === "circle" ? "CIRC" : "RECT"}
-            </span>
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            note style
-          </span>
-        </button>
-
-        {/* Strict Inputs tile - full-width row beneath the 2x2 toggle
-            grid. Lives on its own row (sm:col-span-2) because it's the
-            only GAMEPLAY-rule toggle in this panel - Quality / FPS
-            Lock are render-budget knobs, Metronome / Feedback are
-            audio knobs. Strict Inputs changes how presses are scored,
-            so it deserves its own visual band rather than being
-            shoehorned next to a cosmetic toggle. */}
-        <label
-          className="flex cursor-pointer items-center justify-between gap-3 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 sm:col-span-2"
-          data-tooltip="Press a key with no note coming up = silent combo break (anti-mash)"
-        >
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Strict inputs
-            </span>
-            <span className="font-mono text-[9.5px] text-bone-50/40">
-              {strictInputs
-                ? "empty presses break combo"
-                : "no penalty for empty presses"}
-            </span>
-          </div>
-          <input
-            type="checkbox"
-            checked={strictInputs}
-            onChange={onToggleStrictInputs}
-            className="h-[1.05rem] w-[1.05rem] accent-accent"
-            aria-label="Toggle strict inputs"
-          />
         </label>
 
         {/* Music volume - full-width slider tucked into the 2x2 toggle
@@ -2929,91 +2756,6 @@ function KeyCap({
   );
 }
 
-/**
- * Read-only Strict Inputs chip for the in-match HUD. When
- * `onToggleStrictInputs` is provided, clicks flip the checkbox and
- * the tooltip explains the active state. When it's `undefined` (the
- * path taken from the HUD call site - policy is menu-only mid-run),
- * the checkbox renders as locked: clicks are intercepted
- * (`preventDefault()`), and a transient "Only editable in the menu"
- * callout flashes next to the chip for 1.4 s so the input is
- * acknowledged and the rule is stated.
- *
- * Extracted because the flash hook (`useState` for the locked-
- * callout visibility) can't live inline inside the main HUD JSX
- * without also restructuring the HUD signature. Keeping this as a
- * small sibling component lets the HUD stay a pure function of
- * props.
- */
-function StrictInputsHudChip({
-  strictInputs,
-  onToggleStrictInputs,
-}: {
-  strictInputs: boolean;
-  onToggleStrictInputs?: () => void;
-}) {
-  const [lockedFlash, setLockedFlash] = useState(false);
-  const editable = !!onToggleStrictInputs;
-  const tooltip = editable
-    ? strictInputs
-      ? "ON · empty press with no nearby note silently breaks combo (anti-mash)"
-      : "OFF · empty presses are free"
-    : `Locked mid-match - change in the menu. Currently ${
-        strictInputs ? "ON" : "OFF"
-      }.`;
-  const onLockedClick = (e: React.MouseEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    setLockedFlash(true);
-    // 1400 ms matches the lobby's guest flash duration so both
-    // locked-by-policy surfaces in the app feel identical.
-    window.setTimeout(() => setLockedFlash(false), 1400);
-  };
-  return (
-    <label
-      className={`pointer-events-auto relative flex items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 ${
-        editable ? "cursor-pointer" : "cursor-not-allowed"
-      }`}
-      data-tooltip={tooltip}
-    >
-      <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-        Strict
-      </span>
-      <input
-        type="checkbox"
-        checked={strictInputs}
-        onChange={editable ? onToggleStrictInputs : undefined}
-        onClick={editable ? undefined : onLockedClick}
-        // `readOnly` (not `disabled`) so the checkbox is still
-        // keyboard-focusable and the click handler above still
-        // fires - a `disabled` input wouldn't dispatch onClick at
-        // all and the flash would never show.
-        readOnly={!editable}
-        className={`h-[14px] w-[14px] accent-accent ${
-          editable ? "cursor-pointer" : "cursor-not-allowed"
-        }`}
-        aria-label="Strict inputs (anti-mash)"
-        aria-readonly={!editable || undefined}
-      />
-      {lockedFlash && (
-        // Transient callout: absolutely positioned ABOVE the chip
-        // so it doesn't reflow the neighboring HUD tiles when it
-        // flashes, and floats into the breathing room above the
-        // right-rail stack instead of fighting for horizontal
-        // space (the canvas edge / score card sit on either side).
-        // `pointer-events-none` because the callout itself isn't
-        // interactive - it's just feedback for the click that
-        // triggered it.
-        <span
-          className="pointer-events-none absolute bottom-[calc(100%+0.3rem)] right-0 z-10 whitespace-nowrap border border-accent/60 bg-ink-900/95 px-2 py-1 font-mono text-[9.2px] uppercase tracking-widest text-accent"
-          role="status"
-        >
-          Only editable in the menu
-        </span>
-      )}
-    </label>
-  );
-}
-
 // ---------------------------------------------------------------------------
 function HUD({
   stats,
@@ -3033,8 +2775,6 @@ function HUD({
   onCyclePerspectiveMode,
   noteShape,
   onCycleNoteShape,
-  strictInputs,
-  onToggleStrictInputs,
   sfx,
   onToggleSfx,
   songTitle,
@@ -3071,16 +2811,6 @@ function HUD({
    *  tile so the same choice applies everywhere. */
   noteShape: NoteShape;
   onCycleNoteShape: () => void;
-  /** Strict Inputs - anti-mash protection. When ON, an empty press
-   *  with no nearby note silently breaks combo. Read-only surface in
-   *  the in-match HUD (parent passes `onToggleStrictInputs`
-   *  undefined) so a player can't swap scoring rules mid-run; flips
-   *  happen back at the StartCard. */
-  strictInputs: boolean;
-  /** Provided only when a flip is legal (outside the in-match HUD,
-   *  i.e. never here - see the parent). `undefined` -> render the
-   *  chip as locked + flash "Only editable in the menu" on click. */
-  onToggleStrictInputs?: () => void;
   /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
@@ -3363,170 +3093,34 @@ function HUD({
             aria-keyshortcuts="N"
           />
         </label>
-        {/* FPS lock tile - entire tile is the click target (same
-            pattern as the StartCard FPS lock tile in the pre-game
-            menu). Two-column layout: the left column stacks the
-            "FPS LOCK" caption over the live `### fps` readout (so
-            the caption and the metric it relates to read top-to-
-            bottom), the right column shows the current cap as
-            plain accent / dim text - no chip border, just the
-            value, so the tile feels less busy than the other
-            settings rows. */}
-        <button
-          type="button"
-          onClick={onCycleFpsLock}
-          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-          data-tooltip={
-            fpsLock == null
-              ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
-              : fpsLock === 30
-                ? "Frame-rate capped at 30 FPS - saves battery on laptops"
-                : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
-          }
-          aria-label="Cycle render FPS lock"
-        >
-          <span className="flex flex-col">
-            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-              FPS lock
-            </span>
-            <span className="font-mono text-[9.2px] tabular-nums tracking-widest text-bone-50/40">
-              {fps || "-"}fps
-            </span>
-          </span>
-          <span
-            aria-hidden
-            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-              fpsLock == null ? "text-bone-50/60" : "text-accent"
-            }`}
-          >
-            {fpsLock == null ? "OFF" : fpsLock}
-          </span>
-        </button>
-        {/* Quality tile - same affordance vocabulary as the FPS-lock
-            tile (full-tile click target, left caption / right value).
-            The current preset reads in plain accent text instead of a
-            chip border so the row visually rhymes with FPS lock above
-            it. Toggling cycles HIGH ↔ PERF; the rAF loop picks the
-            new value up on its very next frame (no remount, no
-            stutter - same pattern as `fpsLockRef`). */}
-        <button
-          type="button"
-          onClick={onCycleQuality}
-          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-          data-tooltip={
-            quality === "high"
-              ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
-              : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
-          }
-          aria-label="Cycle render quality preset"
-        >
-          <span className="flex flex-col">
-            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-              Quality
-            </span>
-            <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-              {quality === "high" ? "full vfx" : "no vfx"}
-            </span>
-          </span>
-          <span
-            aria-hidden
-            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-              quality === "high" ? "text-bone-50/60" : "text-accent"
-            }`}
-          >
-            {quality === "high" ? "HIGH" : "PERF"}
-          </span>
-        </button>
-        {/* View / perspective chip - mirrors the StartCard's View tile
-            in the pre-game panel. Same HUD chip vocabulary (full-tile
-            click target, left caption + sub-label, right value). "2D"
-            is the shipping default and renders dim; "3D" flips to
-            accent so the player sees they've opted into the Guitar-
-            Hero look. Toggling flips the playfield on the very next
-            frame - renderer's ensureCache invalidates on the mode
-            change and re-bakes the trapezoid corners + per-lane
-            endpoints in one go, so there's no pop or remount. */}
-        <button
-          type="button"
-          onClick={onCyclePerspectiveMode}
-          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-          data-tooltip={
-            perspectiveMode === "3d"
-              ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
-              : "2D · flat osu!-style lanes, constant note size, parallel rails"
-          }
-          aria-label="Cycle playfield perspective mode"
-        >
-          <span className="flex flex-col">
-            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-              View
-            </span>
-            <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-              fret perspective
-            </span>
-          </span>
-          <span
-            aria-hidden
-            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-              perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
-            }`}
-          >
-            {perspectiveMode === "3d" ? "3D" : "2D"}
-          </span>
-        </button>
-        {/* Shape chip - cycles note/receptor silhouette between
-            brutalist rects and classic discs. No gameplay impact
-            (timing windows + scoring + hit registration all
-            identical across shapes). Cache is shape-agnostic, so
-            the flip is instant on the next frame. "RECT" is the
-            shipping default (dim); "CIRC" flips to accent so the
-            player sees they've opted into the classic disc look. */}
-        <button
-          type="button"
-          onClick={onCycleNoteShape}
-          className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-          data-tooltip={
-            noteShape === "rect"
-              ? "Rectangles · brutalist tiles, match the lane (default)"
-              : "Circles · classic osu-style discs"
-          }
-          aria-label="Cycle note shape"
-        >
-          <span className="flex flex-col">
-            <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-              Shape
-            </span>
-            <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-              {noteShape === "rect" ? "tiles" : "discs"}
-            </span>
-          </span>
-          <span
-            aria-hidden
-            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-              noteShape === "circle" ? "text-accent" : "text-bone-50/60"
-            }`}
-          >
-            {noteShape === "rect" ? "RECT" : "CIRC"}
-          </span>
-        </button>
-        {/* Strict Inputs HUD chip - anti-mash protection. Lives in
-            the right-rail settings stack alongside Metronome /
-            Feedback / FPS / Quality / Vol. Same chip vocabulary
-            (border, padding, mono caption) as the toggle rows above.
-            The on/off chip uses the same accent / dim color scheme
-            as Quality so "ON" (the protective default) reads as the
-            active state.
-            READ-ONLY mid-run: the parent never passes a setter here
-            (see call site comment) so flipping the policy mid-
-            countdown / -song is impossible. Click on the locked
-            checkbox flashes a transient "Only editable in the menu"
-            callout for ~1.4 s so the click is acknowledged and the
-            rule is stated - same pattern as the multiplayer lobby's
-            "Only the host can change this" guest flash. */}
-        <StrictInputsHudChip
-          strictInputs={strictInputs}
-          onToggleStrictInputs={onToggleStrictInputs}
-        />
+        {/* VIDEO gateway chip - collapses the four pure-visual knobs
+            (FPS lock, Quality, View, Shape) behind a single click
+            target. Same HUD chip vocabulary as Metronome / Feedback
+            above (border, padding, mono caption) so the row reads as
+            one cohesive stack. Shows the live `fps` value under the
+            caption to preserve the old standalone FPS-lock tile's
+            headline metric. Hidden below `sm` to match the
+            individual tiles it replaced - narrow-viewport players
+            still get Metronome / Feedback / Vol in this rail; they
+            just pick their video preferences in the StartCard
+            before the run.
+
+            Strict Inputs is no longer surfaced in the solo HUD
+            because it is now a multiplayer-only setting. */}
+        <div className="hidden sm:block">
+          <VideoSettingsPopover
+            variant="chip"
+            fpsLock={fpsLock}
+            onCycleFpsLock={onCycleFpsLock}
+            quality={quality}
+            onCycleQuality={onCycleQuality}
+            perspectiveMode={perspectiveMode}
+            onCyclePerspectiveMode={onCyclePerspectiveMode}
+            noteShape={noteShape}
+            onCycleNoteShape={onCycleNoteShape}
+            fps={fps}
+          />
+        </div>
         {/* Volume tile - same border / padding / typography as the
             toggle tiles so it visually belongs to the same row of
             settings. The "VOL" caption + slider + percentage live

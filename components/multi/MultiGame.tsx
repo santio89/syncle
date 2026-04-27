@@ -46,6 +46,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import TouchLanes from "@/components/TouchLanes";
 import { useTheme } from "@/components/ThemeProvider";
+import { VideoSettingsPopover } from "@/components/VideoSettingsPopover";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
@@ -89,7 +90,6 @@ import {
   TOTAL_LANES,
 } from "@/lib/game/types";
 import {
-  MATCH_INTRO_PROMPT_MS,
   MATCH_LEAD_IN_MS,
   MATCH_OVERLAY_MS,
   type LiveScore,
@@ -1465,7 +1465,6 @@ function CanvasPane({
               songDuration={loaded?.meta.duration ?? null}
             />
             <HealthPanel
-              stats={stats}
               volume={volume}
               onVolume={setVolume}
               metronome={metronome}
@@ -1930,7 +1929,6 @@ function PerformancePanel({
  * (the parent column is `w-fit`).
  */
 function HealthPanel({
-  stats,
   volume,
   onVolume,
   metronome,
@@ -1954,7 +1952,6 @@ function HealthPanel({
   songDuration,
   songProgress,
 }: {
-  stats: PlayerStats;
   volume: number;
   onVolume: (v: number) => void;
   metronome: boolean;
@@ -2113,151 +2110,35 @@ function HealthPanel({
           aria-keyshortcuts="N"
         />
       </label>
-      {/* FPS lock tile - same two-column layout as the single-
-          player HUD: left column stacks "FPS LOCK" caption over
-          the live `### fps` readout, right column shows the cap
-          (OFF / 30 / 60) as plain accent / dim text. The audio
-          engine + server-driven start timestamps are unaffected
-          by the cap so room sync stays exact regardless of which
-          lock the player picks. */}
-      <button
-        type="button"
-        onClick={onCycleFpsLock}
-        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-        data-tooltip={
-          fpsLock == null
-            ? "Frame-rate uncapped - cap to 30 / 60 FPS to save battery"
-            : fpsLock === 30
-              ? "Frame-rate capped at 30 FPS - saves battery on laptops"
-              : "Frame-rate capped at 60 FPS - matches a typical monitor refresh"
-        }
-        aria-label="Cycle render FPS lock"
-      >
-        <span className="flex flex-col">
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            FPS lock
-          </span>
-          <span className="font-mono text-[9.2px] tabular-nums tracking-widest text-bone-50/40">
-            {fps}fps
-          </span>
-        </span>
-        <span
-          aria-hidden
-          className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-            fpsLock == null ? "text-bone-50/60" : "text-accent"
-          }`}
-        >
-          {fpsLock == null ? "OFF" : fpsLock}
-        </span>
-      </button>
-      {/* Quality preset tile - see Game.tsx HUD for the full design
-          rationale. Same affordance as the FPS-lock tile above:
-          whole-tile click target, left caption + readout, right
-          chip flips to accent when not on the default value.
-          The HIGH ↔ PERF toggle is read on the very next rAF tick
-          via `renderOptsRef.current.quality`, so a player who
-          notices a frame-drop mid-match can switch live and feel
-          the change immediately without leaving the room. */}
-      <button
-        type="button"
-        onClick={onCycleQuality}
-        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-        data-tooltip={
-          quality === "high"
-            ? "HIGH · full VFX: shadow glows, particles, shockwaves, milestone vignette"
-            : "PERFORMANCE · VFX disabled for steady frame rate on weaker GPUs"
-        }
-        aria-label="Cycle render quality preset"
-      >
-        <span className="flex flex-col">
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            Quality
-          </span>
-          <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-            {quality === "high" ? "full vfx" : "no vfx"}
-          </span>
-        </span>
-        <span
-          aria-hidden
-          className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-            quality === "high" ? "text-bone-50/60" : "text-accent"
-          }`}
-        >
-          {quality === "high" ? "HIGH" : "PERF"}
-        </span>
-      </button>
-      {/* View / perspective chip - mirrors the single-player HUD's
-          View chip and the lobby's PlayerSettingsModal tile. Per-
-          player preference (never synced over the wire) so each
-          player in the room can pick their own playfield view -
-          gameplay math is identical across modes, so scores stay
-          fully comparable. Live toggle via `renderOptsRef.current
-          .perspectiveMode` + ensureCache invalidation, same frame-
-          accurate pattern as Quality above. "2D" is the shipping
-          default (dim); "3D" flips to accent so the player sees
-          they've opted into the Guitar-Hero look. */}
-      <button
-        type="button"
-        onClick={onCyclePerspectiveMode}
-        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-        data-tooltip={
-          perspectiveMode === "3d"
-            ? "3D · Guitar Hero-style perspective highway, notes scale with depth"
-            : "2D · flat osu!-style lanes, constant note size, parallel rails"
-        }
-        aria-label="Cycle playfield perspective mode"
-      >
-        <span className="flex flex-col">
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            View
-          </span>
-          <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-            fret perspective
-          </span>
-        </span>
-        <span
-          aria-hidden
-          className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-            perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
-          }`}
-        >
-          {perspectiveMode === "3d" ? "3D" : "2D"}
-        </span>
-      </button>
-      {/* Shape chip - cosmetic note/receptor silhouette toggle. Per-
-          player preference (never synced over the wire), same
-          behavior as View above: each player picks their own look
-          without affecting scoring or fairness. "RECT" is the
-          shipping default (dim); "CIRC" flips to accent so the
-          player sees they've opted into the classic disc look. */}
-      <button
-        type="button"
-        onClick={onCycleNoteShape}
-        className="pointer-events-auto hidden cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left sm:flex"
-        data-tooltip={
-          noteShape === "rect"
-            ? "Rectangles · brutalist tiles, match the lane (default)"
-            : "Circles · classic osu-style discs"
-        }
-        aria-label="Cycle note shape"
-      >
-        <span className="flex flex-col">
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            Shape
-          </span>
-          <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-            {noteShape === "rect" ? "tiles" : "discs"}
-          </span>
-        </span>
-        <span
-          aria-hidden
-          className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
-            noteShape === "circle" ? "text-accent" : "text-bone-50/60"
-          }`}
-        >
-          {noteShape === "rect" ? "RECT" : "CIRC"}
-        </span>
-      </button>
+      {/* VIDEO gateway chip - collapses the four pure-visual knobs
+          (FPS lock, Quality, View, Shape) behind a single click
+          target. Same HUD chip vocabulary as Metronome / Feedback
+          above so the row reads as one cohesive stack. Shows the
+          live `fps` value under the caption to preserve the old
+          standalone FPS-lock tile's headline metric. Hidden below
+          `sm` to match the individual tiles it replaced - narrow-
+          viewport players still get Metronome / Feedback / Vol /
+          Strict in this rail; they pick their video preferences
+          in the lobby's PlayerSettingsModal before the match.
+
+          All four sub-settings are per-player LOCAL preferences
+          (never synced over the wire); gameplay math is identical
+          across every combination so scores stay fully comparable
+          between players regardless of who picked what look. */}
+      <div className="hidden sm:block">
+        <VideoSettingsPopover
+          variant="chip"
+          fpsLock={fpsLock}
+          onCycleFpsLock={onCycleFpsLock}
+          quality={quality}
+          onCycleQuality={onCycleQuality}
+          perspectiveMode={perspectiveMode}
+          onCyclePerspectiveMode={onCyclePerspectiveMode}
+          noteShape={noteShape}
+          onCycleNoteShape={onCycleNoteShape}
+          fps={fps}
+        />
+      </div>
       {/* Strict Inputs HUD chip - anti-mash protection. Match-wide
           and host-controlled in multi (unlike SP). Server only
           accepts flips during the lobby phase, so even the host's

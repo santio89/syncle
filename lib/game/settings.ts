@@ -28,16 +28,17 @@ const METRONOME_KEY = "syncle.metronome";
 // the StartCard / HUD / Lobby tile (key: M); the choice persists in
 // `METRONOME_KEY` across sessions.
 const DEFAULT_METRONOME = false;
-const STRICT_INPUTS_KEY = "syncle.strictInputs";
-// On by default - without it, players who panic-mash all four lanes
-// at high frequency get rewarded with perfect/great judgments because
-// every press lands within the generous (±160 ms) "good" window of
-// SOME note in SOME lane. This converts spam into a silent combo
-// break (see `GameState.markEmptyPress`), which preserves the
-// "honest mistime is fine" feel while making bad-faith mash visibly
-// cost the player. Players who want classic osu!mania scoring (no
-// penalty for unrelated taps) can flip it off in the settings tile.
-const DEFAULT_STRICT_INPUTS = true;
+// Strict Inputs (anti-mash combo-break on empty presses) is
+// USER-CONFIGURABLE in multiplayer only (host-controlled via
+// `RoomSnapshot.strictInputs` in `lib/multi/protocol.ts`, flipped
+// from `PlayerSettingsModal` in the lobby). In solo the behavior
+// is ALWAYS ON - no toggle, no localStorage - so home-page
+// leaderboards stay comparable across players (otherwise a
+// solo player who'd flipped strict off could rack up inflated
+// "best" scores by panic-mashing). The previous
+// `syncle.strictInputs` localStorage key is no longer read or
+// written; orphaned entries from older installs will stay in
+// localStorage but are harmless (nothing reads them).
 const QUALITY_KEY = "syncle.quality";
 // High (Quality) is the default - the canvas is tuned to look its
 // best with the full VFX reel (particles, shockwaves, glow halos,
@@ -414,47 +415,9 @@ export function saveMetronome(on: boolean): void {
 }
 
 /**
- * Strict Inputs (anti-mash protection) toggle.
- *
- * When ON: an empty key press with NO unjudged note in the same lane
- * within ±TIMING.spamGrace (~220 ms) silently breaks the player's
- * combo and applies a small health drop. No on-screen MISS popup, no
- * song wobble - the combo number visibly dropping is the entire
- * feedback. This makes panic-mashing all four lanes a net negative
- * even on charts with wide hit windows, while leaving honest
- * early/late presses (note actually approaching) completely
- * unpenalized.
- *
- * When OFF: empty presses are silently ignored and play only the
- * existing soft "tick" SFX - the legacy osu!mania-style behavior. No
- * combo / health / score impact whatsoever.
- *
- * Scope:
- *   - SINGLE PLAYER: persisted locally (this module). Loaded on solo
- *     boot, saved whenever the player toggles it in StartCard.
- *   - MULTIPLAYER: NOT loaded from localStorage. The room's snapshot
- *     is the source of truth (`RoomSnapshot.strictInputs`), the host
- *     sets it for the whole match in the lobby, and every guest's
- *     engine enforces the SAME value. Guests cannot override, and
- *     the multiplayer value never writes back to localStorage so it
- *     can't stomp the player's solo preference.
+ * Strict Inputs has no load / save helpers on purpose - solo is
+ * hardcoded on (for scoreboard parity) and the multiplayer value
+ * lives on `RoomSnapshot.strictInputs` (server-authoritative). See
+ * the top-of-file comment on the removed `STRICT_INPUTS_KEY` for
+ * the full rationale.
  */
-export function loadStrictInputs(): boolean {
-  if (typeof window === "undefined") return DEFAULT_STRICT_INPUTS;
-  try {
-    const raw = window.localStorage.getItem(STRICT_INPUTS_KEY);
-    if (raw == null) return DEFAULT_STRICT_INPUTS;
-    return raw === "1" || raw === "true" || raw === "on";
-  } catch {
-    return DEFAULT_STRICT_INPUTS;
-  }
-}
-
-export function saveStrictInputs(on: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STRICT_INPUTS_KEY, on ? "1" : "0");
-  } catch {
-    reportStorageFailure();
-  }
-}
