@@ -350,15 +350,36 @@ export function VideoSettingsPopover(props: VideoSettingsPopoverProps) {
           aria-modal="false"
           aria-labelledby={headingId}
         >
-          {/* Fully-opaque surface (not `bg-ink-900/95`) because even a
-              5% alpha window lets the canvas / colored HUD text behind
-              the popover echo through the heading - user feedback
-              flagged "FEEDBACK" / song lyrics bleeding in as a
-              legibility hit. Solid ink-900 blocks all of it; the
-              backdrop-filter on the base `.brut-card` class keeps
-              running but has no visible effect once alpha=100%, so we
-              also drop the redundant inline `backdrop-blur` utility. */}
-          <div className="brut-card flex flex-col gap-2 border-2 border-bone-50/30 bg-ink-900 p-3">
+          {/* Fully-opaque surface. We deliberately do NOT add the
+              `.brut-card` utility here even though every other
+              floating surface in the app uses it - `.brut-card` sets
+              its background as a SHORTHAND (`background: rgb(var(--surface) / 0.6)`)
+              defined LATER in `globals.css` than `@tailwind utilities`,
+              which means it silently wins the cascade against any
+              `bg-*` Tailwind utility we'd add and pins the panel to
+              60 % alpha no matter what. On top of that, `.brut-card`
+              also runs `backdrop-filter: blur(22px) saturate(120%)`
+              which actively samples and blurs whatever is painted
+              behind it - including the live note canvas and the
+              HUD's "FEEDBACK" / combo / lyric overlays - producing
+              the noisy / glitchy bleed-through users flagged on the
+              Video popover specifically (other brut-cards sit over
+              calmer page backgrounds, so the same surface treatment
+              reads fine there).
+              Fix: drop `brut-card`, keep the solid `bg-ink-900`
+              (Tailwind utility, no shorthand fight to lose), and
+              re-add the brutalist drop shadow via inline style so
+              the panel still has the same offset-block depth as
+              `LeaveConfirmModal` / `PlayerSettingsModal` etc.
+              `rgb(var(--shadow))` is theme-aware (bone-white shadow
+              in dark mode, near-black ink in light mode) - same
+              token `.brut-card` itself uses for its shadow, so
+              there's no visual divergence from the rest of the
+              floating-surface family. */}
+          <div
+            className="flex flex-col gap-2 border-2 border-bone-50/30 bg-ink-900 p-3"
+            style={{ boxShadow: "6px 6px 0 0 rgb(var(--shadow))" }}
+          >
             <div className="flex items-baseline justify-between gap-3">
               <p
                 id={headingId}
