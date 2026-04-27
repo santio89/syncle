@@ -2990,7 +2990,7 @@ function HUD({
                 the song info where the player's eye naturally
                 lands when they want to "stop the song". */}
             <div className="flex items-center justify-between gap-2">
-              <p className="truncate font-mono text-[8.2px] uppercase tracking-widest text-bone-50/45 sm:text-[9.2px]">
+              <p className="truncate font-mono text-[9.2px] uppercase tracking-widest text-bone-50/45 sm:text-[10.2px]">
                 ♪ Now playing
               </p>
               <button
@@ -3017,14 +3017,14 @@ function HUD({
                 pointer events on the title/artist lets the global
                 tooltip layer pick them up on hover. */}
             <p
-              className="pointer-events-auto mt-2 line-clamp-2 break-words font-mono text-[10.2px] font-bold leading-tight text-bone-50/90 sm:text-[11.2px]"
+              className="pointer-events-auto mt-2 line-clamp-2 break-words font-mono text-[11.5px] font-bold leading-tight text-bone-50/90 sm:text-[12.5px]"
               data-tooltip={`Song: ${songTitle}${songArtist ? `\nArtist: ${songArtist}` : ""}`}
             >
               {songTitle}
             </p>
             {songArtist && (
               <p
-                className="pointer-events-auto mt-1 line-clamp-2 break-words font-mono text-[9.2px] leading-tight text-bone-50/50 sm:text-[10.2px]"
+                className="pointer-events-auto mt-1 line-clamp-2 break-words font-mono text-[10.2px] leading-tight text-bone-50/50 sm:text-[11.2px]"
                 data-tooltip={`Song: ${songTitle}\nArtist: ${songArtist}`}
               >
                 {songArtist}
@@ -3033,7 +3033,7 @@ function HUD({
             {songDuration && songDuration > 0 && (
               <div className="mt-2.5 flex items-center gap-2">
                 <div
-                  className="relative h-[3px] flex-1 border border-bone-50/25 bg-bone-50/5"
+                  className="relative h-[4px] flex-1 border border-bone-50/25 bg-bone-50/5"
                   role="progressbar"
                   aria-label="Song progress"
                   aria-valuemin={0}
@@ -3045,7 +3045,7 @@ function HUD({
                     style={{ width: `${Math.min(100, Math.max(0, songProgress * 100))}%` }}
                   />
                 </div>
-                <span className="shrink-0 font-mono text-[8.2px] tabular-nums text-bone-50/45 sm:text-[9.2px]">
+                <span className="shrink-0 font-mono text-[9.2px] tabular-nums text-bone-50/45 sm:text-[10.2px]">
                   {formatDuration(songProgress * songDuration)}
                   <span className="text-bone-50/30">
                     {" / "}
