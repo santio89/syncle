@@ -307,7 +307,16 @@ export function VideoSettingsPopover(props: VideoSettingsPopoverProps) {
       ref={triggerRef}
       type="button"
       onClick={toggle}
-      className={`pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left${className ? ` ${className}` : ""}`}
+      // `w-full` so the chip spans the full width of the in-match
+      // right-rail stack and visually matches its siblings (Metronome
+      // / Feedback `<label>` rows + the Volume `<div>`, all of which
+      // are block-level and fill the rail by default). Without it,
+      // the button shrinks to content - which left a visibly narrower
+      // VIDEO chip floating on the left while every other row in the
+      // same column stretched edge-to-edge, breaking the rail's
+      // grid rhythm. The `text-left` keeps caption + sub-label
+      // anchored against the left edge once we widen.
+      className={`pointer-events-auto flex w-full cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2 text-left${className ? ` ${className}` : ""}`}
       data-tooltip="FPS lock, quality, view, shape"
       aria-label="Open video settings"
       aria-haspopup="dialog"
