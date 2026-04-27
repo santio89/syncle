@@ -2575,7 +2575,7 @@ function StartCard({
             music-only control. */}
         <div
           className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 sm:col-span-2"
-          data-tooltip="Master volume - song, feedback, metronome"
+          data-tooltip="Song · feedback · metronome"
         >
         <div className="flex items-center justify-between gap-3">
           <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
@@ -3230,7 +3230,7 @@ function HUD({
             tile on the narrow mobile card. */}
         <div
           className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Master volume - song, feedback, metronome"
+          data-tooltip="Song · feedback · metronome"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             vol

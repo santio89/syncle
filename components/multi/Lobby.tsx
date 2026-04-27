@@ -1127,7 +1127,7 @@ function PlayerSettingsModal({
           control compact while still showing the live value. */}
       <div
         className="mt-2 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-        data-tooltip="Master volume - song, feedback, metronome"
+        data-tooltip="Song · feedback · metronome"
       >
         <div className="flex items-center justify-between gap-3">
           <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">

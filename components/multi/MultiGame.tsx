@@ -2235,7 +2235,7 @@ function HealthPanel({
       })()}
       <div
         className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Master volume - song, feedback, metronome"
+        data-tooltip="Song · feedback · metronome"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           vol
