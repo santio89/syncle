@@ -322,11 +322,14 @@ export default function MultiRoomPage() {
       (phase === "countdown" || phase === "playing") && loadedChart === null;
     if (!isLoadingPhase && !isReconnectRecovery) return;
 
-    // The host's chosen difficulty is communicated via the `phase:loading`
-    // event (kept off the snapshot to avoid renegotiating mid-play). If we
-    // somehow missed the event (joined right at phase change, or the
-    // socket reconnected past the loading phase), fall back to "easy" -
-    // the server will still gate hits + the load works regardless.
+    // The host's chosen difficulty lives on the room snapshot as
+    // `selectedMode`, and `_doStartLoading` sets it on the server before
+    // broadcasting `phase:loading`. The only window in which it could be
+    // null on a real client is a cold join where we receive the snapshot
+    // before the host has ever tapped a difficulty - which also means the
+    // room is in `lobby` and this effect would have returned above. Fall
+    // back to "easy" purely as a belt-and-suspenders default for the
+    // reconnect-recovery branch.
     const targetMode: ChartMode = selectedMode ?? "easy";
 
     const key = `${song.beatmapsetId}:${targetMode}`;
@@ -1010,7 +1013,7 @@ function InvalidCodeScreen({ code, onBack }: { code: string; onBack: () => void 
         </p>
         <h1 className="font-display text-[1.97rem] font-bold">{code || "-"}</h1>
         <p className="text-[0.92rem] text-bone-50/70">
-          Room codes are 6 characters, A–Z and 2–9. Double-check what your
+          Room codes are 6 characters, A-Z and 2-9. Double-check what your
           friend sent and try again.
         </p>
         <button onClick={onBack} className="brut-btn-accent px-6 py-3">

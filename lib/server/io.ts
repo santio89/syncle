@@ -2025,9 +2025,9 @@ class RoomRegistry {
    * Returns `true` only when the player exists in the room AND their
    * previous socket has dropped (i.e. they're inside the disconnect
    * grace window). The `room:rejoin` handler uses this to decide
-   * whether to emit a "reconnected" system notice - without the
+   * whether to emit a "connected" system notice - without the
    * gate, every fresh page mount on `/multi/[code]` emits a bogus
-   * "reconnected" right after the initial `${name} joined`, because
+   * "connected" right after the initial `${name} joined`, because
    * the page's `useRoomSocket` always re-runs the rejoin path on
    * connect when a stored session exists (even if that session was
    * written 200 ms earlier by the join action and the player never
@@ -2107,10 +2107,22 @@ export function wireSocketServer(io: IO): void {
           reg.hasRoom(code) &&
           reg.hasPlayer(code, payload.sessionId)
         ) {
+          // `room:join` is also the reattach path for a page reload
+          // that already has a sessionId cached (clients call this
+          // before falling through to `room:rejoin`). Mirror the
+          // rejoin notice logic so a player who actually dropped and
+          // came back is announced once, while a cheap tab-mount /
+          // duplicate-connect stays silent. Without this parity, the
+          // chat feed could miss reconnects depending on which
+          // handler the client happened to use.
+          const wasOffline = reg.isPlayerOffline(code, payload.sessionId);
           const p = reg.rejoin(code, payload.sessionId, socket.id);
           if (name) p.name = name;
           socket.join(`room:${code}`);
           ack?.(ackOk({ code, sessionId: p.id }));
+          if (wasOffline) {
+            reg.emitNotice(code, "info", `${p.name} connected`);
+          }
           reg.emitSnapshot(code);
           return;
         }
@@ -2136,20 +2148,20 @@ export function wireSocketServer(io: IO): void {
         // Capture liveness BEFORE the rejoin (which clears socketId
         // → new socketId atomically). A "real" reconnect means the
         // player's previous socket had dropped - that's the case we
-        // want to surface as a "reconnected" system notice so the
+        // want to surface as a "connected" system notice so the
         // rest of the room knows they're back. A no-op rejoin (e.g.
         // the page mounting on /multi/[code] right after the initial
         // /multi join wrote the session 200 ms ago) finds the socket
         // still alive and shouldn't print anything; printing
-        // "reconnected" there is a phantom that confused players
-        // every single first connection. The first-time "joined"
-        // notice is owned by the `room:join` handler above.
+        // "connected" there would be a phantom on every first
+        // connection. The first-time "joined" notice is owned by
+        // the `room:join` handler above.
         const wasOffline = reg.isPlayerOffline(code, payload.sessionId);
         const p = reg.rejoin(code, payload.sessionId, socket.id);
         socket.join(`room:${code}`);
         ack?.(ackOk({ code }));
         if (wasOffline) {
-          reg.emitNotice(code, "info", `${p.name} reconnected`);
+          reg.emitNotice(code, "info", `${p.name} connected`);
         }
         reg.emitSnapshot(code);
       } catch (e) {
@@ -2471,7 +2483,13 @@ export function wireSocketServer(io: IO): void {
     socket.on("client:loadFailed", (payload) => {
       const ref = reg.refOf(socket.id);
       if (!ref) return;
-      reg.markLoadFailed(ref.code, ref.sessionId, payload?.reason ?? "unknown");
+      // Trust boundary: the reason string lands verbatim in the room
+      // notice feed as "<name> couldn't load: <reason>". Clamp length
+      // and strip control characters so a malicious client can't
+      // flood chat / line-wrap the UI / ship raw control codes.
+      const raw = typeof payload?.reason === "string" ? payload.reason : "unknown";
+      const reason = raw.replace(/[\u0000-\u001F\u007F]+/g, " ").slice(0, 120) || "unknown";
+      reg.markLoadFailed(ref.code, ref.sessionId, reason);
     });
 
     socket.on("client:scoreUpdate", (payload) => {

@@ -1224,8 +1224,10 @@ function CanvasPane({
             lastScheduledBeatRef.current = bi;
             continue;
           }
-          // Multiplayer: metronome is ON to keep pace, but quieter (handled
-          // inside the engine's scheduleClick - same code path as solo).
+          // Beats are always scheduled so audio scheduling stays warm -
+          // the actual click is gated downstream by `AudioEngine.scheduleClick`,
+          // which emits nothing when the player's metronome setting is OFF
+          // (same code path as solo).
           audio.scheduleClick(audio.ctxTimeAt(beatSongTime), bi % 4 === 0);
           lastScheduledBeatRef.current = bi;
         }
@@ -2177,7 +2179,9 @@ function HealthPanel({
         </span>
         <span
           aria-hidden
-          className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+          className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
+            quality === "high" ? "text-bone-50/60" : "text-accent"
+          }`}
         >
           {quality === "high" ? "HIGH" : "PERF"}
         </span>
@@ -2189,7 +2193,9 @@ function HealthPanel({
           gameplay math is identical across modes, so scores stay
           fully comparable. Live toggle via `renderOptsRef.current
           .perspectiveMode` + ensureCache invalidation, same frame-
-          accurate pattern as Quality above. */}
+          accurate pattern as Quality above. "2D" is the shipping
+          default (dim); "3D" flips to accent so the player sees
+          they've opted into the Guitar-Hero look. */}
       <button
         type="button"
         onClick={onCyclePerspectiveMode}
@@ -2206,12 +2212,14 @@ function HealthPanel({
             View
           </span>
           <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-            {perspectiveMode === "3d" ? "perspective" : "flat"}
+            fret perspective
           </span>
         </span>
         <span
           aria-hidden
-          className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+          className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
+            perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
+          }`}
         >
           {perspectiveMode === "3d" ? "3D" : "2D"}
         </span>
@@ -2219,7 +2227,9 @@ function HealthPanel({
       {/* Shape chip - cosmetic note/receptor silhouette toggle. Per-
           player preference (never synced over the wire), same
           behavior as View above: each player picks their own look
-          without affecting scoring or fairness. */}
+          without affecting scoring or fairness. "RECT" is the
+          shipping default (dim); "CIRC" flips to accent so the
+          player sees they've opted into the classic disc look. */}
       <button
         type="button"
         onClick={onCycleNoteShape}
@@ -2241,7 +2251,9 @@ function HealthPanel({
         </span>
         <span
           aria-hidden
-          className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+          className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
+            noteShape === "circle" ? "text-accent" : "text-bone-50/60"
+          }`}
         >
           {noteShape === "rect" ? "RECT" : "CIRC"}
         </span>

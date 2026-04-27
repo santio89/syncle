@@ -7,6 +7,12 @@ out/
 .DS_Store
 .vscode/
 
+# TypeScript incremental build cache - regenerated every `tsc`/build run,
+# dirties `git status` after every typecheck. Was previously tracked by
+# accident; if you have it checked in from an older commit, run
+# `git rm --cached tsconfig.tsbuildinfo` once to untrack it.
+*.tsbuildinfo
+
 # Local-only AI agent onboarding docs (see docs/AGENTS.md). Kept out of
 # the public repo on purpose - internal context, not user-facing.
 docs/

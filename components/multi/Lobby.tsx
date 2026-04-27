@@ -537,7 +537,7 @@ function PlayerRoster({
  * pattern reads as a toggle, not a swap between two different
  * buttons.
  *
- * Tooltip copy adapts to the current state - "click to un-ready"
+ * Tooltip copy adapts to the current state - "toggle off to un-ready"
  * vs "mark yourself ready so the host knows you're set" - because a
  * single static tooltip would feel misleading on the toggled-on
  * state.
@@ -569,7 +569,7 @@ function MarkReadyButton({
       }`}
       data-tooltip={
         me.lobbyReady
-          ? "Click to un-ready"
+          ? "Toggle off to un-ready"
           : "Mark yourself ready so the host knows you're set"
       }
     >
@@ -639,14 +639,16 @@ function PlayerSettingsModal({
    *  the round-trip echo from the server (no optimistic state churn
    *  fighting the snapshot). */
   roomStrictInputs: boolean;
-  /** Current room phase. Server only accepts Strict Inputs flips
-   *  during `lobby`; outside that the host's checkbox locks down too
-   *  (parent passes `onSetStrictInputs={undefined}`), but the caption
-   *  uses this to explain WHY it's locked. */
+  /** Current room phase. The modal is only reachable from the Lobby
+   *  component (which itself only renders in `"lobby"` phase), so in
+   *  practice this is always `"lobby"`; it's still threaded so the
+   *  caption/tooltip can evolve without this contract changing. */
   roomPhase: RoomSnapshot["phase"];
-  /** Provided only when `isHost` AND a flip is legal in the current
-   *  phase. `undefined` → the Strict Inputs row renders read-only with
-   *  a "set by host" caption. */
+  /** Provided only when `isHost`. Guests pass `undefined`, which puts
+   *  the Strict Inputs row into intercept-on-click mode (flashes a
+   *  "host-only" callout instead of mutating state). Server-side
+   *  enforcement is the authoritative guard; this prop is purely
+   *  about what the host's checkbox does. */
   onSetStrictInputs?: (next: boolean) => void;
 }) {
   const [volume, setVolumeState] = useState<number>(loadVolume);
@@ -953,7 +955,7 @@ function PlayerSettingsModal({
             </span>
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
-            click to cycle off / 30 / 60
+            cycles off · 30 · 60
           </span>
         </button>
 

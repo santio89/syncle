@@ -1134,8 +1134,8 @@ export default function Game() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const phase = phaseRef.current;
-      if (phase !== "playing" && phase !== "countdown" && phase !== "paused")
-        return;
+    if (phase !== "playing" && phase !== "countdown" && phase !== "paused")
+      return;
       // Don't hijack key events while a text input or textarea has focus -
       // future-proofs against in-game chat / pause-menu fields without
       // accidentally muting D/F/J/K when the player just clicked a slider.
@@ -1708,18 +1708,18 @@ export default function Game() {
             {storageBlocked && (
               <StorageBlockedBanner onDismiss={() => setStorageBlocked(false)} />
             )}
-            <StartCard
-              meta={displayMeta}
-              onStart={start}
+          <StartCard
+            meta={displayMeta}
+            onStart={start}
               onRefresh={refreshSong}
-              loading={phase === "loading"}
-              error={error ?? previewError}
-              metronome={metronome}
-              onToggleMetronome={() => setMetronome((m) => !m)}
-              sfx={sfx}
-              onToggleSfx={() => setSfx((s) => !s)}
-              fpsLock={fpsLock}
-              onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
+            loading={phase === "loading"}
+            error={error ?? previewError}
+            metronome={metronome}
+            onToggleMetronome={() => setMetronome((m) => !m)}
+            sfx={sfx}
+            onToggleSfx={() => setSfx((s) => !s)}
+            fpsLock={fpsLock}
+            onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
               quality={quality}
               onCycleQuality={() => setQuality((cur) => nextRenderQuality(cur))}
               perspectiveMode={perspectiveMode}
@@ -1732,20 +1732,20 @@ export default function Game() {
               }
               strictInputs={strictInputs}
               onToggleStrictInputs={() => setStrictInputs((s) => !s)}
-              songSource={songSource}
-              chartMode={chartMode}
-              onChangeMode={setChartMode}
-              modeAvailability={modeAvailability}
-              chartLength={chartLength}
-              rawNoteCount={rawNoteCount}
-              best={best}
-              volume={volume}
-              onVolume={setVolume}
-              progressMsg={progressMsg}
-              mirror={mirror}
-              beatmapsetId={beatmapsetId}
-              touchOnly={touchOnly}
-            />
+            songSource={songSource}
+            chartMode={chartMode}
+            onChangeMode={setChartMode}
+            modeAvailability={modeAvailability}
+            chartLength={chartLength}
+            rawNoteCount={rawNoteCount}
+            best={best}
+            volume={volume}
+            onVolume={setVolume}
+            progressMsg={progressMsg}
+            mirror={mirror}
+            beatmapsetId={beatmapsetId}
+            touchOnly={touchOnly}
+          />
           </div>
         </Overlay>
       )}
@@ -1765,7 +1765,7 @@ export default function Game() {
                 : "Get ready"}
             </p>
             {countdownStage.kind === "number" && (
-              <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none text-bone-50 drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
+            <p className="mt-2 font-display text-[clamp(6.3rem,18.9vw,12.6rem)] font-bold leading-none text-bone-50 drop-shadow-[0_0_30px_rgba(61,169,255,0.6)]">
                 {countdownStage.n}
               </p>
             )}
@@ -2233,18 +2233,18 @@ function StartCard({
             both the initial chart fetch (meta still null) AND any
             subsequent re-roll triggered by the user themselves. */}
         <div className="flex shrink-0 items-center gap-2">
-          {ready && songSource && (
-            <span
-              className="font-mono text-[9.5px] uppercase tracking-widest text-accent/70"
-              data-tooltip={
-                mirror
-                  ? `Pulled from ${mirror} at runtime`
+        {ready && songSource && (
+          <span
+            className="font-mono text-[9.5px] uppercase tracking-widest text-accent/70"
+            data-tooltip={
+              mirror
+                ? `Pulled from ${mirror} at runtime`
                   : "Bundled chart used as a fallback when mirrors are unreachable"
-              }
-            >
+            }
+          >
               {mirror ? `via ${mirror}` : "bundled chart"}
-            </span>
-          )}
+          </span>
+        )}
           <RefreshSongButton
             onClick={onRefresh}
             loading={!ready || loading}
@@ -2374,15 +2374,15 @@ function StartCard({
         >
           {(["easy", "normal", "hard", "insane", "expert"] as ChartMode[]).map(
             (m) => (
-              <ModeButton
-                key={m}
-                mode={m}
-                enabled={modeAvailability.available[m]}
-                selected={chartMode === m}
-                onPick={onChangeMode}
-                noteCount={modeAvailability.noteCounts[m]}
-                nps={modeAvailability.npsByMode[m]}
-              />
+            <ModeButton
+              key={m}
+              mode={m}
+              enabled={modeAvailability.available[m]}
+              selected={chartMode === m}
+              onPick={onChangeMode}
+              noteCount={modeAvailability.noteCounts[m]}
+              nps={modeAvailability.npsByMode[m]}
+            />
             ),
           )}
         </ScrollStrip>
@@ -2452,7 +2452,7 @@ function StartCard({
             </span>
           </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
-            click to cycle off / 30 / 60
+            cycles off · 30 · 60
           </span>
         </button>
         {/* Quality preset tile - same affordance vocabulary as the
@@ -2558,7 +2558,7 @@ function StartCard({
             >
               {perspectiveMode === "3d" ? "3D" : "2D"}
             </span>
-          </div>
+      </div>
           <span className="font-mono text-[9.5px] text-bone-50/40">
             fret perspective
           </span>
@@ -2637,24 +2637,24 @@ function StartCard({
           className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 sm:col-span-2"
           data-tooltip="Song playback volume - separate from feedback SFX"
         >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Music volume
-            </span>
-            <span className="font-mono text-[10.5px] text-bone-50/40 tabular-nums">
-              {Math.round(volume * 100)}%
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(e) => onVolume(parseFloat(e.target.value))}
-            className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
-            aria-label="Music volume"
-          />
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
+            Music volume
+          </span>
+          <span className="font-mono text-[10.5px] text-bone-50/40 tabular-nums">
+            {Math.round(volume * 100)}%
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={volume}
+          onChange={(e) => onVolume(parseFloat(e.target.value))}
+          className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
+          aria-label="Music volume"
+        />
         </div>
       </div>
 
@@ -3430,18 +3430,21 @@ function HUD({
           </span>
           <span
             aria-hidden
-            className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
+              quality === "high" ? "text-bone-50/60" : "text-accent"
+            }`}
           >
             {quality === "high" ? "HIGH" : "PERF"}
           </span>
         </button>
         {/* View / perspective chip - mirrors the StartCard's View tile
             in the pre-game panel. Same HUD chip vocabulary (full-tile
-            click target, left caption + sub-label, right value in
-            accent). Toggling flips the playfield between the 3D
-            trapezoid highway and the flat 2D rectangle on the very
-            next frame - renderer's ensureCache invalidates on the
-            mode change and re-bakes the trapezoid corners + per-lane
+            click target, left caption + sub-label, right value). "2D"
+            is the shipping default and renders dim; "3D" flips to
+            accent so the player sees they've opted into the Guitar-
+            Hero look. Toggling flips the playfield on the very next
+            frame - renderer's ensureCache invalidates on the mode
+            change and re-bakes the trapezoid corners + per-lane
             endpoints in one go, so there's no pop or remount. */}
         <button
           type="button"
@@ -3459,12 +3462,14 @@ function HUD({
               View
             </span>
             <span className="font-mono text-[9.2px] tracking-widest text-bone-50/40">
-              {perspectiveMode === "3d" ? "perspective" : "flat"}
+              fret perspective
             </span>
           </span>
           <span
             aria-hidden
-            className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
+              perspectiveMode === "3d" ? "text-accent" : "text-bone-50/60"
+            }`}
           >
             {perspectiveMode === "3d" ? "3D" : "2D"}
           </span>
@@ -3473,7 +3478,9 @@ function HUD({
             brutalist rects and classic discs. No gameplay impact
             (timing windows + scoring + hit registration all
             identical across shapes). Cache is shape-agnostic, so
-            the flip is instant on the next frame. */}
+            the flip is instant on the next frame. "RECT" is the
+            shipping default (dim); "CIRC" flips to accent so the
+            player sees they've opted into the classic disc look. */}
         <button
           type="button"
           onClick={onCycleNoteShape}
@@ -3495,7 +3502,9 @@ function HUD({
           </span>
           <span
             aria-hidden
-            className="font-mono text-[9.2px] uppercase tracking-widest tabular-nums text-accent"
+            className={`font-mono text-[9.2px] uppercase tracking-widest tabular-nums transition-colors ${
+              noteShape === "circle" ? "text-accent" : "text-bone-50/60"
+            }`}
           >
             {noteShape === "rect" ? "RECT" : "CIRC"}
           </span>

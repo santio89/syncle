@@ -429,10 +429,15 @@ export function saveMetronome(on: boolean): void {
  * existing soft "tick" SFX - the legacy osu!mania-style behavior. No
  * combo / health / score impact whatsoever.
  *
- * Local-only setting (mirrors Quality / FPS Lock / Metronome) - never
- * synced over the multiplayer wire. Two players in the same room can
- * run different Strict Inputs modes; each player's own engine
- * applies their own preference to their own inputs.
+ * Scope:
+ *   - SINGLE PLAYER: persisted locally (this module). Loaded on solo
+ *     boot, saved whenever the player toggles it in StartCard.
+ *   - MULTIPLAYER: NOT loaded from localStorage. The room's snapshot
+ *     is the source of truth (`RoomSnapshot.strictInputs`), the host
+ *     sets it for the whole match in the lobby, and every guest's
+ *     engine enforces the SAME value. Guests cannot override, and
+ *     the multiplayer value never writes back to localStorage so it
+ *     can't stomp the player's solo preference.
  */
 export function loadStrictInputs(): boolean {
   if (typeof window === "undefined") return DEFAULT_STRICT_INPUTS;

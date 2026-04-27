@@ -454,27 +454,22 @@ const SHOCKWAVE_BUDGET = 24;
  *  arc on dense frames (~50+ arcs/frame). */
 const TAU = Math.PI * 2;
 /**
- * Vertical foreshortening applied to on-highway shapes that need to
- * squash with the fret plane in 3D mode - currently the lane-gate
- * receptor height, its anticipation halo, note glow halos, and
- * shockwaves.
- *
- * Brutalist notes themselves are TRAPEZOIDS in 3D (true single-
- * vanishing-point perspective, see `drawTapNote`), so they don't
- * need this multiplier - the lane-XTop / XBot interpolation
- * already produces the correct perspective taper. This constant
- * now applies only to auxiliary circular overlays (halos,
- * shockwaves, receptor height) that are still drawn as ellipses
- * for simplicity.
+ * Vertical foreshortening applied to on-highway SHOCKWAVES in 3D mode
+ * (lane-hit VFX drawn as ellipses so they read as laying on the tilted
+ * fret instead of facing the camera). Currently `PERSPECTIVE_Y_SCALE`
+ * is referenced ONLY by `updateAndDrawShockwaves` - brutalist notes,
+ * receptor gates, hold ribbons, and judgment halos all derive their
+ * tilt from the lane-XTop / XBot trapezoid geometry and don't need an
+ * explicit squash multiplier.
  *
  * A plane tilted away by angle θ foreshortens anything on its
- * surface by cos(θ) in the viewer's vertical axis. 0.55 matches
- * the visual foreshortening of a Guitar-Hero-style highway
- * (camera ~57° above the fret plane) - overlays read as clearly
- * "laying on the fret" instead of hovering upright.
+ * surface by cos(θ) in the viewer's vertical axis. 0.55 matches the
+ * visual foreshortening of a Guitar-Hero-style highway (camera ~57°
+ * above the fret plane) - ellipses read as clearly "laying on the
+ * fret" instead of hovering upright.
  *
- * In 2D mode this multiplier is `1` (no squash) so the same
- * overlays render as axis-aligned circles / rectangles.
+ * In 2D mode this multiplier is `1` (no squash) so shockwaves render
+ * as axis-aligned circles.
  */
 const PERSPECTIVE_Y_SCALE = 0.55;
 
@@ -500,11 +495,13 @@ const PERSPECTIVE_Y_SCALE = 0.55;
  *      one continuous shape (head → ribbon → tail) instead of
  *      mixing a disc head with a rectangular body.
  *
- * These constants are tuned so 2D and 3D read as the same instrument
- * at slightly different angles: the 3D band (14 near → 26 far) brackets
- * the 2D constant (24) so perceived rhythm spacing stays identical
- * between modes. Width is always lane-width-proportional so the notes
- * scale to any viewport instead of staying pixel-fixed.
+ * Heights are tuned so 2D and 3D read as the same instrument at
+ * slightly different angles: the 3D band (`NOTE_HEIGHT_3D_NEAR` →
+ * `NOTE_HEIGHT_3D_FAR`) brackets the 2D constant (`NOTE_HEIGHT_2D`)
+ * so perceived rhythm spacing stays identical between modes. Width
+ * is always lane-width-proportional so the notes scale to any
+ * viewport instead of staying pixel-fixed. See the individual
+ * constants below for the current tuned values.
  * --------------------------------------------------------------------- */
 
 /**
@@ -559,32 +556,39 @@ const GATE_HEIGHT = 40;
  *  without the inner letter glyph getting cramped. */
 const GATE_BORDER = 3;
 /**
- * Circle-mode diameter as a fraction of the rect's lane-proportional
- * WIDTH (= `halfW * 2`, where `halfW = laneHalfWidth * NOTE_WIDTH_RATIO`).
+ * Circle mode: rendered as a PERFECT CIRCLE sized off the rect's
+ * slab HEIGHT, not its width:
+ *   r = h * 0.5
+ *   → diameter = h (40 px 2D, 25→40 px tapered in 3D)
  *
- * Circles are sized off the rect's WIDTH, not its HEIGHT (sizing off
- * height would leave them looking like tiny dots in a wide lane - the
- * rect dominates the lane horizontally at ~107 px on a 130 px lane at
- * the 2D judge line). At 1.0 the disc's diameter is EXACTLY the rect's
- * width, so swapping SHAPE keeps the same horizontal footprint on the
- * lane (user-requested: "make circles have same width as rectangles").
+ * The shape stays a literal circle (rx === ry, never an ellipse) at
+ * every depth. 3D perspective comes for free because `h` tapers from
+ * 25 px at the horizon to 40 px at the judge line: distant circles
+ * read as smaller discs, close circles read as bigger discs, same
+ * cue Guitar Hero and osu!mania use. No axis-per-axis scaling means
+ * no "stretched oval" look - the user explicitly asked for this
+ * after the ellipse iteration ("circles should be perfect circles,
+ * not ovals").
  *
- * Because the disc stays a PERFECT circle (never scaled per-axis), its
- * height also equals the rect's width - about 2.7x the rect's 40 px
- * height. Consecutive notes spaced closer than the disc's diameter
- * will visually overlap. At the default leadTime + BPMs we chart
- * (~220 max) that hasn't been a problem in testing, but if dense
- * bursts crumple into solid bars in the future the dial to turn is
- * here (0.85 gives a visible gutter without losing the "fills the
- * lane" read).
+ * Sizing off `h` (rather than lane width) is what keeps dense
+ * streams from crumpling. A previous iteration sized discs off lane
+ * WIDTH (r ≈ halfW, ~54 px radius on the default lane → ~108 px
+ * diameter), which left each disc covering ~2.7× the rect's 40 px
+ * slab; 16th-notes at 200 BPM (~46 px spacing) stacked into solid
+ * columns. Diameter = h ports the rect's no-overlap budget verbatim
+ * into circle mode: if a stream reads cleanly as rects, it reads
+ * cleanly as circles.
  *
- * Hold trails in circle mode also use this ratio (multiplied through
- * `NOTE_WIDTH_RATIO`) so the sustain ribbon matches the disc's
- * diameter exactly instead of the full lane-rect width - at 1.0 they
- * end up identical to the rect-mode ribbon, which is the intended
- * behavior when circle and rect share a horizontal footprint.
+ * Trade-off: circles take up less horizontal real estate than rects
+ * do (a ~40 px disc in a ~130 px lane vs the rect's ~107 px slab).
+ * That matches the osu!/GH convention - "small hit circle centered
+ * in a wide lane" - and is the visual signal the user reached for
+ * when asking for this shape mode in the first place. Hold trails
+ * in circle mode follow the same rule: ribbon width = h (= circle
+ * diameter) instead of the full lane-rect width, so a sustain
+ * reads as a narrow cylinder growing out of its head disc rather
+ * than a lane-wide bar with a round head glued on.
  */
-const CIRCLE_WIDTH_RATIO = 1.0;
 
 /** Lookahead window in seconds inside which a lane gate "primes" itself. */
 const ANTICIPATION_WINDOW_S = 0.18;
@@ -685,8 +689,9 @@ const SPAWN_FADE_PROGRESS = 0.95;
 const COMBO_MILESTONES = [25, 50, 100, 200, 350, 500, 750, 1000] as const;
 
 /**
- * Pre-parsed lane colors. `withAlpha("#3da9ff", a)` does 3 parseInts every
- * call; the particle hot loop calls it ~200×/frame. Pre-parsing once and
+ * Pre-parsed lane colors. A naive `rgba(r,g,b,a)` builder that does three
+ * `parseInt`s per call was the shape of the old `withAlpha` helper; the
+ * particle hot loop calls into this ~200× per frame. Pre-parsing once and
  * using a templated rgba() string drops that to a single string concat.
  */
 interface RGB { r: number; g: number; b: number; }
@@ -835,7 +840,7 @@ export function createRenderState(): RenderState {
  *        ~10 createLinearGradient / createRadialGradient calls plus a
  *        bunch of trapezoid math. Measured at 8–25 ms on a mid-range
  *        laptop, longer on integrated GPUs.
- *     2. JIT-compile drawTapNote / drawHoldNote / drawJudgmentText /
+ *     2. JIT-compile drawTapNote / drawHoldTrail / drawJudgmentText /
  *        the particle path. V8 keeps these in the interpreter until
  *        they're called several times - the very first call can spend
  *        4–10 ms in the parse+baseline tier alone.
@@ -1063,7 +1068,7 @@ export function drawFrame(
   // in case the player flipped the toggle mid-match while pools
   // were non-empty.
   if (!perf) {
-    drainHits(rs, cache);
+  drainHits(rs, cache);
   } else {
     rs.pendingHits.length = 0;
     if (rs.particles.length) rs.particles.length = 0;
@@ -1107,15 +1112,15 @@ export function drawFrame(
   );
 
   if (!perf) {
-    updateAndDrawShockwaves(ctx, rs, dt, palette, opts);
-    updateAndDrawParticles(ctx, rs, dt);
+    updateAndDrawShockwaves(ctx, rs, dt, opts);
+  updateAndDrawParticles(ctx, rs, dt);
   }
 
   drawCanvasCombo(ctx, rs, cache, palette, perf);
   drawJudgmentPopups(ctx, rs.recentEvents, songTime, cache.judgeY - 50, cache, perf);
   drawBeatDot(ctx, W - 28, 28, beatPulse, isDownbeat, palette, cache, perf);
   if (!perf) {
-    drawMilestoneVignette(ctx, rs, W, H, cache);
+  drawMilestoneVignette(ctx, rs, W, H, cache);
   }
 }
 
@@ -1428,8 +1433,8 @@ function drawHighway(
   // integrated GPUs) and let the gradient stroke alone read as the
   // accent. Same color identity, no offscreen pass per draw.
   if (!perf) {
-    ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.95);
-    ctx.shadowBlur = 22;
+  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.95);
+  ctx.shadowBlur = 22;
   }
   ctx.beginPath();
   ctx.moveTo(cache.visTopLeftX, cache.topYVisual);
@@ -1453,7 +1458,7 @@ function drawHighway(
   ctx.strokeStyle = palette.laneSeparator;
   ctx.lineWidth = 1;
   const sepBotY = cache.judgeY + 50;
-  ctx.beginPath();
+    ctx.beginPath();
   for (let i = 0; i < cache.separatorTopX.length; i++) {
     ctx.moveTo(cache.separatorTopX[i], cache.topY);
     ctx.lineTo(cache.separatorBotX[i], sepBotY);
@@ -1605,8 +1610,8 @@ function drawHighway(
   );
   ctx.lineWidth = 2 + ms * 1;
   if (!perf) {
-    ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.85);
-    ctx.shadowBlur = 14 + beatPulse * 14 + ms * 22;
+  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.85);
+  ctx.shadowBlur = 14 + beatPulse * 14 + ms * 22;
   }
   ctx.beginPath();
   ctx.moveTo(cache.bottomLeftX + 4, cache.judgeY);
@@ -1622,21 +1627,21 @@ function drawHighway(
   // (b) it draws with shadowBlur per-lane per-frame, which is expensive
   // on integrated GPUs.
   if (!perf) {
-    for (let i = 0; i < MAIN_LANE_COUNT; i++) {
-      const flash = rs.laneFlash[i] ?? 0;
-      if (flash <= 0.05) continue;
-      const x = cache.laneX[i];
-      const w = 36 + flash * 28;
-      ctx.save();
-      ctx.strokeStyle = laneRgba(i, 0.35 + flash * 0.55);
-      ctx.shadowColor = LANE_COLORS[i];
-      ctx.shadowBlur = 14 + flash * 18;
-      ctx.lineWidth = 3 + flash * 2;
-      ctx.beginPath();
-      ctx.moveTo(x - w / 2, cache.judgeY);
-      ctx.lineTo(x + w / 2, cache.judgeY);
-      ctx.stroke();
-      ctx.restore();
+  for (let i = 0; i < MAIN_LANE_COUNT; i++) {
+    const flash = rs.laneFlash[i] ?? 0;
+    if (flash <= 0.05) continue;
+    const x = cache.laneX[i];
+    const w = 36 + flash * 28;
+    ctx.save();
+    ctx.strokeStyle = laneRgba(i, 0.35 + flash * 0.55);
+    ctx.shadowColor = LANE_COLORS[i];
+    ctx.shadowBlur = 14 + flash * 18;
+    ctx.lineWidth = 3 + flash * 2;
+    ctx.beginPath();
+    ctx.moveTo(x - w / 2, cache.judgeY);
+    ctx.lineTo(x + w / 2, cache.judgeY);
+    ctx.stroke();
+    ctx.restore();
     }
   }
 
@@ -1665,9 +1670,12 @@ function drawHighway(
       // the judge line - receptor footprint locks to the landing
       // zone exactly (for rect mode in 2D and as the gate's AXIS
       // half-width in 3D, which is then perspective-corrected per
-      // upper/lower half inside drawLaneGate). Circle mode uses
-      // this value * CIRCLE_WIDTH_RATIO so disc and note diameters
-      // match at the judge line.
+      // upper/lower half inside drawLaneGate). Circle mode IGNORES
+      // this value: circle receptors size off GATE_HEIGHT directly
+      // (radius = GATE_HEIGHT * 0.5) so the ring stays a perfect
+      // circle whose diameter matches the incoming note's diameter
+      // at impact, independent of lane width. Threaded anyway so
+      // the signature stays stable across shape toggles.
       cache.laneHalfWidthBot * NOTE_WIDTH_RATIO,
       opts.laneHeld[i] ?? false,
       rs.laneFlash[i] ?? 0,
@@ -1805,20 +1813,20 @@ function drawTapNote(
       ctx.shadowBlur = 6 + breath * 4;
     }
 
-    ctx.fillStyle = color;
-    ctx.beginPath();
+  ctx.fillStyle = color;
+  ctx.beginPath();
     ctx.moveTo(xTopCenter - halfWTop, yTop);
     ctx.lineTo(xTopCenter + halfWTop, yTop);
     ctx.lineTo(xBotCenter + halfWBot, yBot);
     ctx.lineTo(xBotCenter - halfWBot, yBot);
     ctx.closePath();
-    ctx.fill();
+  ctx.fill();
 
     if (!perf) {
-      ctx.shadowBlur = 0;
+  ctx.shadowBlur = 0;
       ctx.strokeStyle = whiteShineRgba(0.5);
       ctx.lineWidth = 1.25;
-      ctx.beginPath();
+  ctx.beginPath();
       ctx.moveTo(xTopCenter - halfWTop, yTop);
       ctx.lineTo(xTopCenter + halfWTop, yTop);
       ctx.stroke();
@@ -1826,32 +1834,36 @@ function drawTapNote(
 
     ctx.strokeStyle = "rgba(0,0,0,0.4)";
     ctx.lineWidth = 1;
-    ctx.beginPath();
+  ctx.beginPath();
     ctx.moveTo(xBotCenter - halfWBot, yBot);
     ctx.lineTo(xBotCenter + halfWBot, yBot);
     ctx.stroke();
   } else {
-    // --- CIRCLE (classic osu!) path -------------------------------
+    // --- CIRCLE (classic osu! / GH) path --------------------------
     //
-    // Disc sized off LANE WIDTH, not note height. The rect path
-    // dominates the lane horizontally (~107 px at 2D judge line
-    // on a 130 px lane), so sizing circles off the 40 px note
-    // height would leave them reading as small dots in a wide
-    // channel. The disc
-    // scales with lane width via `NOTE_WIDTH_RATIO *
-    // CIRCLE_WIDTH_RATIO` (see the CIRCLE_WIDTH_RATIO doc for the
-    // osu-style gutter rationale). The hold ribbon in drawHoldTrail
-    // picks up the same product so sustains match the head diameter.
+    // Perfect circle with radius = h * 0.5 (diameter = h, same
+    // vertical footprint as the rect slab at this progress). See
+    // the header doc on `const` sizing for the full rationale; the
+    // short version is:
+    //   - Using `h` (not lane width) for the diameter keeps circles
+    //     from crumpling on dense streams (no overlap budget
+    //     mismatch with rect mode).
+    //   - Keeping rx === ry keeps the shape a LITERAL circle at
+    //     every depth - user requested this explicitly after the
+    //     ellipse iteration ("circles should be perfect circles,
+    //     not ovals").
     //
-    // 3D perspective on the disc reduces to its Y foreshortening -
-    // `halfWAt` already shrinks with distance (top of highway is
-    // narrower than the judge line in 3D), so the radius scales
-    // naturally without a separate squash pass. Horizontal
-    // perspective is conveyed by the converging rails around it.
-    const halfWAt =
-      lerp(cache.laneHalfWidthTop, cache.laneHalfWidthBot, 1 - progress) *
-      NOTE_WIDTH_RATIO;
-    const r = halfWAt * CIRCLE_WIDTH_RATIO;
+    // 3D PERSPECTIVE inherits from `h`'s own taper (25 px far →
+    // 40 px near): distant circles render smaller, near circles
+    // render bigger, each still a perfect circle. That's the same
+    // depth cue Guitar Hero and osu!mania (with circle skin) both
+    // use - the circle's SIZE encodes depth, no axis-per-axis
+    // squash needed. A circle lying flat on a forward-tilted plane
+    // technically projects as an ellipse, but at our highway's
+    // tilt angle the ry/rx compression works out to ≈ 0.9+ which
+    // is imperceptible; shipping an actual ellipse read as a
+    // stretched oval rather than a tilted circle in practice.
+    const r = h * 0.5;
     const xCenter = lerp(laneTopX, laneBotX, 1 - progress);
 
     // Soft outer glow via shadowBlur on the disc fill. Same blur
@@ -1863,7 +1875,6 @@ function drawTapNote(
       ctx.shadowBlur = 8 + breath * 5;
     }
 
-    // Solid lane-colored disc.
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(xCenter, yCenter, r, 0, Math.PI * 2);
@@ -1879,7 +1890,6 @@ function drawTapNote(
       ctx.strokeStyle = whiteShineRgba(0.45);
       ctx.lineWidth = 1.25;
       ctx.beginPath();
-      // Top quadrant arc (from 200° to 340° in radians).
       ctx.arc(xCenter, yCenter, r * 0.78, Math.PI * 1.1, Math.PI * 1.9);
       ctx.stroke();
     }
@@ -1951,37 +1961,60 @@ function drawHoldTrail(
   const xHead = lerp(xHeadTop, xHeadBot, 1 - visHead);
   const xTail = lerp(xHeadTop, xHeadBot, 1 - visTail);
 
-  // Width: matches the head note shape so the head / body / tail of
-  // a hold all read as one continuous shape. In RECT mode the ribbon
-  // uses the full lane-rect width (`NOTE_WIDTH_RATIO`); in CIRCLE
-  // mode it narrows to the disc's diameter (`NOTE_WIDTH_RATIO *
-  // CIRCLE_WIDTH_RATIO`) so the sustain ribbon is exactly as wide as
-  // the head circle - otherwise the ribbon jutted out past the disc
-  // on both sides and looked like two mismatched shapes glued
-  // together (user-reported: "hold note for circles should have
-  // same width as the circle").
+  // Width: matches the head note's horizontal footprint so head,
+  // body and tail all read as one continuous shape.
+  //   - RECT mode: ribbon half-width = lane half-width * NOTE_WIDTH_RATIO
+  //     (= the rect tile's halfW). Full lane-filling bar.
+  //   - CIRCLE mode: ribbon half-width = h / 2 (= the circle's
+  //     radius at each progress). The ribbon ends up as a narrow
+  //     cylinder growing out of the head disc, matching the Guitar
+  //     Hero reference image (circle head + rounded cylinder body
+  //     + rounded top cap at the tail).
   //
-  // In 2D mode the `laneHalfWidthTop === laneHalfWidthBot` (ensureCache
-  // collapse), so wHead === wTail === a constant width - the trail
-  // renders as a plain vertical column. In 3D the ribbon tapers with
-  // perspective (narrower at the far end, wider at the near end) so
-  // it reads as one continuous shape laying on the tilted fret.
-  const shapeWidthRatio =
-    opts.noteShape === "circle"
-      ? NOTE_WIDTH_RATIO * CIRCLE_WIDTH_RATIO
-      : NOTE_WIDTH_RATIO;
+  // In 2D the cache has `laneHalfWidthTop === laneHalfWidthBot` and
+  // `h` is constant (NOTE_HEIGHT_2D), so wHead === wTail - the
+  // trail renders as a plain vertical column in either mode. In 3D
+  // both modes taper with perspective: rect mode tapers via the
+  // lane's lerp, circle mode tapers via `h`'s 25→40 px taper.
+  // Either way the ribbon reads as one continuous shape laying on
+  // the tilted fret.
+  const perspective3DForRibbon = opts.perspectiveMode === "3d";
+  const hHeadForRibbon = perspective3DForRibbon
+    ? lerp(NOTE_HEIGHT_3D_NEAR, NOTE_HEIGHT_3D_FAR, 1 - visHead)
+    : NOTE_HEIGHT_2D;
+  const hTailForRibbon = perspective3DForRibbon
+    ? lerp(NOTE_HEIGHT_3D_NEAR, NOTE_HEIGHT_3D_FAR, 1 - visTail)
+    : NOTE_HEIGHT_2D;
   const halfWHead =
-    lerp(cache.laneHalfWidthTop, cache.laneHalfWidthBot, 1 - visHead) *
-    shapeWidthRatio;
+    opts.noteShape === "circle"
+      ? hHeadForRibbon * 0.5
+      : lerp(cache.laneHalfWidthTop, cache.laneHalfWidthBot, 1 - visHead) *
+        NOTE_WIDTH_RATIO;
   const halfWTail =
-    lerp(cache.laneHalfWidthTop, cache.laneHalfWidthBot, 1 - visTail) *
-    shapeWidthRatio;
+    opts.noteShape === "circle"
+      ? hTailForRibbon * 0.5
+      : lerp(cache.laneHalfWidthTop, cache.laneHalfWidthBot, 1 - visTail) *
+        NOTE_WIDTH_RATIO;
   const wHead = halfWHead * 2;
   const wTail = halfWTail * 2;
 
   const color = LANE_COLORS[n.lane];
-  const consumed = n.holding === true;
-  const alpha = consumed ? 0.85 : n.tailJudged === "miss" ? 0.18 : 0.55;
+  // Fixed fill / stroke alpha so the ribbon reads as the same color
+  // whether or not the player is currently pressing the key. Earlier
+  // iterations branched alpha on `n.holding` (0.55 approaching, 0.85
+  // held, 0.18 missed) so the trail visibly jumped brighter on press
+  // and dimmer on release - and because the engine briefly flips
+  // `holding` back to `false` between state ticks on a fresh press or
+  // a micro-release, players saw a 1-frame "darkening stutter" that
+  // read as a rendering bug. Keeping both phases at one constant
+  // makes the color stable from spawn through sustain, across rect
+  // and circle shapes and all four lanes. The "miss" fade is handled
+  // by the JUDGED_FADE_S alpha multiplier threaded in from the
+  // caller (drawHighway / trailAlpha), so we don't need a separate
+  // dim tier here - the ribbon just fades out cleanly instead of
+  // flipping to a dim tier first and then fading.
+  const FILL_ALPHA = 0.85;
+  const STROKE_ALPHA = 1;
 
   // Manual globalAlpha save/restore. Previously `ctx.save()/restore()`,
   // dropped because the only state we leak on the way out is fillStyle/
@@ -1991,26 +2024,32 @@ function drawHoldTrail(
   // state-stack ops per visible hold per frame.
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = alphaMul;
-  ctx.fillStyle = laneRgba(n.lane, alpha);
-  // Same "near the line" gating as drawTapNote - a hold trail's shadow
-  // is the most expensive part of its draw, but visually only matters
-  // when the head is close to the judge line OR the note is being
-  // actively sustained (consumed). Far-up trails skip the blur entirely.
-  // Performance mode drops it everywhere; the colored ribbon body is
-  // still drawn so the sustain remains obvious.
+  ctx.fillStyle = laneRgba(n.lane, FILL_ALPHA);
+  // Shadow blur stays constant whether the note is being held or just
+  // approaching, for the same reason as the fill alpha above: flipping
+  // from "glow 10" to "glow 22" on press was another visible brightness
+  // jump. We keep the "only glow near the judge line" gate because the
+  // blur is this function's heaviest cost and the halo isn't visible
+  // on far-away ribbons anyway - but once the ribbon enters that
+  // window the halo is steady. Performance mode drops the blur
+  // everywhere; the colored ribbon body is still drawn so the sustain
+  // remains obvious.
   const trailNearLine = !perf && (visHead < 0.55 || visTail < 0.55);
-  if (!perf && (consumed || trailNearLine)) {
+  if (!perf && trailNearLine) {
     ctx.shadowColor = color;
-    ctx.shadowBlur = (consumed ? 22 : 10) * alphaMul;
+    ctx.shadowBlur = 18 * alphaMul;
   }
   // Ribbon body between head and tail. In RECT mode the top edge
   // is a straight horizontal line (matches the rect tap-note's
-  // crisp edges); in CIRCLE mode the top edge is a semicircle
-  // bulging upward, so the tail "rounds off" and visually echoes
-  // the disc head instead of terminating with a hard rectangle
-  // edge. Arc radius == half the tail width, so in 3D (where
-  // wTail < wHead) the cap shrinks with perspective and stays
-  // proportional to the ribbon.
+  // crisp edges); in CIRCLE mode the top edge is a PERFECT
+  // SEMICIRCLE bulging upward whose radius = wTail / 2. Because
+  // the ribbon's half-width in circle mode is already h_tail * 0.5
+  // (see the halfWTail computation above), wTail / 2 === h_tail
+  // * 0.5 === the tail circle's radius - so the cap is the EXACT
+  // top half of the perfect circle a tap-note at this progress
+  // would draw. The ribbon grows out of the head circle and
+  // terminates with an identical-radius round cap, matching the
+  // Guitar Hero cylinder look in the reference image.
   //
   // Canvas angle convention: 0 = +x (right), π/2 = +y (down),
   // π = left, 3π/2 = up. Sweeping π → 2π with anticlockwise=false
@@ -2028,9 +2067,11 @@ function drawHoldTrail(
   ctx.closePath();
   ctx.fill();
 
-  // Thin bright outline so the trail reads even on dark bg.
+  // Thin bright outline so the trail reads even on dark bg. Stroke
+  // alpha stays constant (was previously `consumed ? 1 : 0.7`, which
+  // also contributed to the press-jump flicker).
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = laneRgba(n.lane, consumed ? 1 : 0.7);
+  ctx.strokeStyle = laneRgba(n.lane, STROKE_ALPHA);
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.globalAlpha = prevAlpha;
@@ -2054,13 +2095,15 @@ function drawLaneGate(
   x: number,
   y: number,
   /**
-   * Receptor half-width in canvas px for RECT mode. Same formula
-   * as a note's half-width at the judge line:
+   * Receptor half-width in canvas px. Same formula as a note's
+   * half-width at the judge line:
    *   `cache.laneHalfWidthBot * NOTE_WIDTH_RATIO`
    * Threaded from the call site so the rectangular receptor locks
-   * to the note's landing footprint. Ignored in CIRCLE mode, which
-   * uses `GATE_RADIUS` so the disc matches the note diameter
-   * instead of the lane width.
+   * to the note's landing footprint. UNUSED by the circle path -
+   * circle receptors size off `GATE_HEIGHT` (not lane width), same
+   * way circle tap-notes size off `h` instead of lane half-width,
+   * so the ring stays a perfect circle whose diameter equals the
+   * incoming note's diameter at impact.
    */
   halfW: number,
   held: boolean,
@@ -2086,17 +2129,23 @@ function drawLaneGate(
    */
   cache: RenderCache,
   /**
-   * True when the user is playing in 3D perspective mode. Gate
-   * rect geometry mirrors the tap-note trapezoid at progress=0 so
-   * the incoming note and the resting receptor share the exact
-   * same vanishing-point tapering; 2D mode skips the trapezoid
-   * math entirely and draws an axis-aligned rect.
+   * True when the user is playing in 3D perspective mode. In rect
+   * mode the gate geometry mirrors the tap-note trapezoid at
+   * progress=0 so the incoming note and the resting receptor share
+   * the exact same vanishing-point tapering. In circle mode the
+   * receptor stays a perfect circle whose diameter equals
+   * `GATE_HEIGHT` (= the incoming note's diameter at progress=0),
+   * so 3D mode doesn't change the shape - the perspective cue in
+   * circle mode is encoded in the NOTE's size taper as it travels
+   * the highway, not in the receptor. 2D mode skips the trapezoid
+   * math entirely in rect mode for a perf win; the flag is just
+   * ignored in circle mode.
    */
   perspective3D: boolean,
 ) {
   const color = LANE_COLORS[lane];
 
-  ctx.save();
+    ctx.save();
 
   // Shared inner-fill state: lane color on hold / flash, fallback
   // to the dark "empty slot" palette tone otherwise. Drawn first
@@ -2201,14 +2250,14 @@ function drawLaneGate(
     if (!perf) {
       ctx.shadowColor = color;
       ctx.shadowBlur = borderBlur;
-    }
+  }
     ctx.strokeStyle = color;
     ctx.lineWidth = GATE_BORDER;
     ctx.stroke();
 
     // Reset shadow so subsequent overlays + text don't double-blur
     // (shadowBlur on text is expensive AND visually wrong here).
-    ctx.shadowBlur = 0;
+  ctx.shadowBlur = 0;
 
     if (flash > 0.05) {
       ctx.strokeStyle = whiteShineRgba(0.55 * flash);
@@ -2218,13 +2267,22 @@ function drawLaneGate(
   } else {
     // --- CIRCLE receptor ------------------------------------------
     //
-    // Disc centered at (x, y) with radius = `halfW * CIRCLE_WIDTH_RATIO`
-    // (same formula the tap-note uses at the judge line), so note
-    // and receptor LOCK to the same diameter on landing. Matches
-    // osu!mania convention: the circle receptor is literally the
-    // same size as the note that's about to land on it. Scales
-    // automatically with lane width when the highway resizes.
-    const r = halfW * CIRCLE_WIDTH_RATIO;
+    // Perfect circle with radius = GATE_HEIGHT * 0.5 (20 px
+    // diameter 40 px). Matches the tap-note at progress=0 pixel-
+    // for-pixel (that note also has r = h*0.5 where h = 40 px at
+    // the judge line), so an incoming disc LOCKS into the receptor
+    // ring at impact with zero size mismatch.
+    //
+    // Stays a perfect circle in both 2D and 3D. Perspective mode
+    // doesn't tilt the ring - that would turn it into an ellipse,
+    // which the user explicitly rejected after the last iteration.
+    // The depth cue lives in the note's size taper (small at the
+    // horizon, full size at the judge line where it matches this
+    // ring) rather than in the receptor's shape. This matches the
+    // Guitar Hero / osu! convention in the reference images: round
+    // receptor rings at the near edge, notes get visibly smaller
+    // as they recede up the fretboard.
+    const r = GATE_HEIGHT * 0.5;
 
     ctx.fillStyle = innerFillStyle;
     ctx.beginPath();
@@ -2466,7 +2524,7 @@ function drawJudgmentPopups(
     ctx.fillStyle = rgbaFromLut(palette.rgba, alpha);
     if (!perf) {
       ctx.shadowColor = palette.rgb;
-      ctx.shadowBlur = 12 * alpha;
+    ctx.shadowBlur = 12 * alpha;
     }
     ctx.fillText(label, x, y + yOff);
   }
@@ -2543,8 +2601,8 @@ function drawCanvasCombo(
   ctx.font = comboFontDisplay(size);
   ctx.fillStyle = rgbaFromLut(cache.accentRgba, alpha);
   if (!perf) {
-    ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.6);
-    ctx.shadowBlur = 18 + ms * 28;
+  ctx.shadowColor = rgbaFromLut(cache.accentRgba, 0.6);
+  ctx.shadowBlur = 18 + ms * 28;
   }
   ctx.fillText(comboDigitsStr, cache.cx, y);
   ctx.shadowBlur = 0;
@@ -2596,7 +2654,6 @@ function updateAndDrawShockwaves(
   ctx: CanvasRenderingContext2D,
   rs: RenderState,
   dt: number,
-  palette: ThemePalette,
   opts: RenderOptions,
 ): void {
   const sw = rs.shockwaves;
@@ -2639,8 +2696,6 @@ function updateAndDrawShockwaves(
   }
   ctx.restore();
   sw.length = write;
-  // Reference palette param so it stays in scope for future use (mute warn)
-  void palette;
 }
 
 function drawBeatDot(
@@ -2665,7 +2720,7 @@ function drawBeatDot(
     // Solid (alpha 1) entry of the same LUT - the shadow only cares
     // about the RGB channels.
     ctx.shadowColor = rgbaFromLut(lut, 1);
-    ctx.shadowBlur = 8 + pulse * 16;
+  ctx.shadowBlur = 8 + pulse * 16;
   }
   ctx.fillStyle = rgbaFromLut(lut, 0.35 + pulse * 0.65);
   ctx.beginPath();
@@ -2798,16 +2853,3 @@ function clamp(v: number, lo: number, hi: number) {
   if (!Number.isFinite(v)) return lo;
   return v < lo ? lo : v > hi ? hi : v;
 }
-
-/**
- * Convert "#rrggbb" to "rgba(r,g,b,a)". Slow path - three parseInts each call.
- * Prefer the pre-parsed `rgba(LANE_RGB[i], a)` form on per-frame hot paths.
- * Kept here for one-off colors (popup grades, beat dot variants).
- */
-function withAlpha(hex: string, a: number) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${a})`;
-}
-
