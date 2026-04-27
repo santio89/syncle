@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { prefetchOnIntent } from "@/lib/prefetch";
 
 /**
  * Header multiplayer entry button - labeled pill that pairs the
@@ -69,6 +70,14 @@ export function MultiButton({ className = "" }: { className?: string }) {
       // number, and padding the tooltip with it read as marketing
       // copy next to the rest of the app's terse chip tooltips.
       data-tooltip="Play live with friends"
+      // Intent-prefetch the /multi chunk on hover / focus. Same
+      // layered strategy as the homepage's PLAY CTA: the homepage
+      // already idle-prefetches both heavy chunks, but this header
+      // pill is reachable from `/play` and `/multi/[code]` too -
+      // pages that have NOT idle-prefetched - so the hover handler
+      // is the warm-up path for cross-route navigation. See
+      // `lib/prefetch` for the full rationale.
+      {...prefetchOnIntent("multi")}
     >
       <MultiIcon size={14} />
       {/* Tracking matches the wordmark + nav text in the same header

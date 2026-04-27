@@ -46,6 +46,7 @@ import { CopyToast } from "@/components/CopyToast";
 import { DifficultyRangeBadge } from "@/components/DifficultyRangeBadge";
 import ScrollStrip from "@/components/ScrollStrip";
 import { VideoSettingsPopover } from "@/components/VideoSettingsPopover";
+import { GameplaySettingsPopover } from "@/components/GameplaySettingsPopover";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import type { ChartMode, ModeAvailability } from "@/lib/game/chart";
@@ -57,6 +58,7 @@ import {
 } from "@/lib/game/chart";
 import {
   loadFpsLock,
+  loadKeybinds,
   loadMetronome,
   loadNoteShape,
   loadPerspectiveMode,
@@ -67,7 +69,12 @@ import {
   nextNoteShape,
   nextPerspectiveMode,
   nextRenderQuality,
+  DEFAULT_FPS_LOCK,
+  DEFAULT_QUALITY,
+  DEFAULT_PERSPECTIVE_MODE,
+  DEFAULT_NOTE_SHAPE,
   saveFpsLock,
+  saveKeybinds,
   saveMetronome,
   saveNoteShape,
   savePerspectiveMode,
@@ -75,6 +82,7 @@ import {
   saveSfx,
   saveVolume,
   type FpsLock,
+  type KeyBindings,
   type NoteShape,
   type PerspectiveMode,
   type RenderQuality,
@@ -586,7 +594,7 @@ function MarkReadyButton({
 /**
  * Compact settings panel mirroring the single-player StartCard's
  * settings strip (FPS lock + Metronome + Feedback as a tile row,
- * Quality + Music volume in their own tiles below). Rendered as a
+ * Quality + Volume in their own tiles below). Rendered as a
  * centered modal overlay - opened via the "Settings" text-button
  * next to the copy-code button in the right-hand controls box
  * (HostPane / GuestPane header). Used to live as an always-on card
@@ -660,6 +668,14 @@ function PlayerSettingsModal({
   const [perspectiveMode, setPerspectiveModeState] =
     useState<PerspectiveMode>(loadPerspectiveMode);
   const [noteShape, setNoteShapeState] = useState<NoteShape>(loadNoteShape);
+  // Per-lane keybinds (4 lanes x 2 slots). Shared persistence key
+  // with single-player so a player's bindings carry across modes.
+  // Per-player local preference - never synced to the room. The
+  // `MultiGame` keydown handler reads from `keybindsMapRef`, which
+  // hydrates from the same localStorage entry on mount, so changes
+  // committed here apply on the next match without any extra
+  // plumbing through the lobby state.
+  const [keybinds, setKeybindsState] = useState<KeyBindings>(loadKeybinds);
 
   // Live-save handlers - persist on every change so closing the lobby
   // tab without a final "save" still keeps the player's choices.
@@ -680,6 +696,10 @@ function PlayerSettingsModal({
       saveSfx(next);
       return next;
     });
+  }, []);
+  const onChangeKeybinds = useCallback((next: KeyBindings) => {
+    setKeybindsState(next);
+    saveKeybinds(next);
   }, []);
   const onCycleFpsLock = useCallback(() => {
     setFpsLockState((cur) => {
@@ -716,6 +736,24 @@ function PlayerSettingsModal({
       saveNoteShape(next);
       return next;
     });
+  }, []);
+  // One-click "Reset to defaults" for the VIDEO popover. Snaps all
+  // four pure-visual sub-settings (FPS lock / Quality / View /
+  // Shape) back to their shipping defaults and persists each -
+  // unlike the solo Game.tsx version which relies on shared save-
+  // on-change effects, the lobby modal owns persistence inline in
+  // each cycle handler, so this reset likewise writes through
+  // directly to localStorage to stay consistent with the rest of
+  // the modal's save pattern.
+  const onResetVideoSettings = useCallback(() => {
+    setFpsLockState(DEFAULT_FPS_LOCK);
+    saveFpsLock(DEFAULT_FPS_LOCK);
+    setQualityState(DEFAULT_QUALITY);
+    saveRenderQuality(DEFAULT_QUALITY);
+    setPerspectiveModeState(DEFAULT_PERSPECTIVE_MODE);
+    savePerspectiveMode(DEFAULT_PERSPECTIVE_MODE);
+    setNoteShapeState(DEFAULT_NOTE_SHAPE);
+    saveNoteShape(DEFAULT_NOTE_SHAPE);
   }, []);
   // Host-side handler for the match-wide Strict Inputs toggle. We
   // purposefully DON'T mirror the value into local component state or
@@ -922,15 +960,14 @@ function PlayerSettingsModal({
           </button>
         </div>
 
-      {/* Settings grid: the VIDEO gateway (spans the full width as
-          a visual anchor) collapses the four pure-visual knobs
-          (FPS lock, Quality, View, Shape) into a single click-
-          to-open popover. Metronome + Feedback pair on the row
-          below as before (the two audible-cue toggles). All tiles
-          share the same border / padding / typography so the grid
-          reads as a uniform block. On narrow widths it collapses
-          to a single column - keyboard / touch targets stay a
-          comfortable size all the way down to phone widths. */}
+      {/* Settings grid: two full-width gateway cards stack vertically.
+          VIDEO collapses the four pure-visual knobs (FPS lock,
+          Quality, View, Shape); GAMEPLAY collapses the audible cue
+          toggles (Metronome / Feedback) and the lane keybinds
+          editor. Both cards share the same border / padding /
+          typography so the modal reads as a uniform block. On
+          narrow widths the grid collapses to a single column - the
+          cards already span both columns regardless. */}
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <VideoSettingsPopover
           variant="card"
@@ -942,52 +979,20 @@ function PlayerSettingsModal({
           onCyclePerspectiveMode={onCyclePerspectiveMode}
           noteShape={noteShape}
           onCycleNoteShape={onCycleNoteShape}
+          onReset={onResetVideoSettings}
           className="sm:col-span-2"
         />
 
-        <label
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-          data-tooltip="Audible click track on every beat (key: M)"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Metronome
-            </span>
-            <input
-              type="checkbox"
-              checked={metronome}
-              onChange={onToggleMetronome}
-              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
-              aria-label="Toggle metronome"
-              aria-keyshortcuts="M"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press M to toggle in-game
-          </span>
-        </label>
-
-        <label
-          className="flex cursor-pointer flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-          data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Feedback
-            </span>
-            <input
-              type="checkbox"
-              checked={sfx}
-              onChange={onToggleSfx}
-              className="h-[1.05rem] w-[1.05rem] cursor-pointer accent-accent"
-              aria-label="Toggle input sound effects"
-              aria-keyshortcuts="N"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press N to toggle in-game
-          </span>
-        </label>
+        <GameplaySettingsPopover
+          variant="card"
+          metronome={metronome}
+          onToggleMetronome={onToggleMetronome}
+          sfx={sfx}
+          onToggleSfx={onToggleSfx}
+          keybinds={keybinds}
+          onChangeKeybinds={onChangeKeybinds}
+          className="sm:col-span-2"
+        />
       </div>
 
       {/* Strict Inputs tile - match-wide anti-mash policy. Host owns
@@ -1122,11 +1127,11 @@ function PlayerSettingsModal({
           control compact while still showing the live value. */}
       <div
         className="mt-2 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2"
-        data-tooltip="Song playback volume - separate from feedback SFX"
+        data-tooltip="Master volume - song, feedback, metronome"
       >
         <div className="flex items-center justify-between gap-3">
           <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-            Music volume
+            Volume
           </span>
           <span className="font-mono text-[10.5px] tabular-nums text-bone-50/40">
             {Math.round(volume * 100)}%
@@ -1140,7 +1145,7 @@ function PlayerSettingsModal({
           value={volume}
           onChange={(e) => onVolume(parseFloat(e.target.value))}
           className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
-          aria-label="Music volume"
+          aria-label="Volume"
         />
       </div>
       </div>

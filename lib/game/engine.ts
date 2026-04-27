@@ -233,6 +233,39 @@ export class GameState {
   /**
    * Release a held lane. Judges the tail of any active hold.
    * Returns a tail event if one was emitted.
+   *
+   * Early-release leniency (osu!std slider-tail analogue):
+   *   Historically ANY release more than 180 ms before the tail was
+   *   an instant `miss` - combo broken, health penalty, the works.
+   *   That felt overly punitive in two common cases players surfaced
+   *   via the community:
+   *     1. A player holds ALMOST the entire LN but lifts a hair
+   *        early (fatigue, ergonomic re-grip, misjudged the length).
+   *     2. A player makes it most of the way through a 2-3 s slider-
+   *        like hold and drops the tail in the last few hundred ms.
+   *   In osu!std the equivalent (missing the slider-end after
+   *   following the slider body) doesn't break combo - you just
+   *   don't earn max combo on that object. We port the same
+   *   forgiveness here, BUT with a guard so holds don't become
+   *   free combo extenders: if the player press-releases the head
+   *   instantly, the release is still a hard miss.
+   *
+   * Rule:
+   *   - Held for at least 65 % of the hold's total length OR released
+   *     within 0.40 s of the tail → demote from `miss` to `good`
+   *     (combo preserved, partial score via JUDGMENT_SCORE.good,
+   *     accuracy takes the hit as a regular `good`).
+   *   - Held less than that → stay a `miss` (combo breaks, same as
+   *     before). Anyone who presses-then-drops a multi-second hold
+   *     has dropped the slider, not flubbed the tail.
+   *
+   * The 0.40 s absolute window is a safety net for SHORT holds (e.g.
+   * a 0.3 s hold where 65 % held = 0.2 s - too strict). It's the
+   * widest forgiveness distance from the tail that still reads as
+   * "aimed at the tail". Past 0.40 s before the end, the only way
+   * to qualify is via the held-fraction rule, which correctly
+   * rejects "instant release after head" on any reasonably-sized
+   * hold.
    */
   release(lane: number, songTime: number): JudgmentEvent | null {
     const n = this.activeHold[lane];
@@ -246,8 +279,16 @@ export class GameState {
 
     let judgment: Judgment;
     if (delta < -0.18) {
-      // Released way too early - tail miss + combo break.
-      judgment = "miss";
+      // Released before the tail's timing window opens. Decide
+      // whether to soften the miss into a `good` tail (osu!std
+      // slider-tail leniency) or keep the combo-breaking miss.
+      const total = end - n.t;
+      // Guard `total <= 0` defensively - a degenerate zero-length
+      // "hold" from a bad chart shouldn't divide-by-zero here. Treat
+      // it as fully held so the forgiveness path takes it.
+      const heldFraction = total > 0 ? Math.max(0, songTime - n.t) / total : 1;
+      const forgiven = heldFraction >= 0.65 || -delta <= 0.40;
+      judgment = forgiven ? "good" : "miss";
     } else if (abs <= TIMING.perfect) judgment = "perfect";
     else if (abs <= TIMING.great)    judgment = "great";
     else if (abs <= TIMING.good)     judgment = "good";

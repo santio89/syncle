@@ -18,6 +18,7 @@ import {
 import { SongMeta } from "@/lib/game/types";
 import { bestKey, RunBest, loadBest } from "@/lib/game/best";
 import { LifetimeStats, loadStats } from "@/lib/game/stats";
+import { prefetchOnIntent, schedulePrefetchAll } from "@/lib/prefetch";
 
 function formatDuration(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -142,6 +143,14 @@ export default function HomePage() {
     };
   }, [fetchSong]);
 
+  // Background-warm both heavy route chunks (Game.tsx for /play,
+  // MultiEntryClient.tsx for /multi) on the next idle tick. By the
+  // time the user clicks PLAY or MULTIPLAYER, the chunk is already
+  // cached and the destination route mounts the real component
+  // instantly instead of paint-flashing through its loading skeleton.
+  // See `lib/prefetch` for the full rationale + dedupe story.
+  useEffect(() => schedulePrefetchAll(), []);
+
   return (
     <main className="relative flex min-h-[100dvh] flex-col overflow-x-hidden">
       {/* GradientBg's wrapper fills <main> via `absolute inset-0`, the
@@ -226,6 +235,14 @@ export default function HomePage() {
                 ? `Song: ${load.meta.title}\nArtist: ${load.meta.artist}`
                 : undefined
             }
+            // Intent-prefetch the /play chunk on hover / focus so even
+            // a user who races past the idle prefetch (or who arrived
+            // here so quickly that the idle callback hasn't fired yet)
+            // still gets a warm cache before the click commits. See
+            // `lib/prefetch.prefetchOnIntent` for why this is layered
+            // on top of the homepage idle prefetch instead of replacing
+            // it.
+            {...prefetchOnIntent("play")}
             // `relative z-10` keeps the CTA above the GradientBg canvas,
             // which is `pointer-events-none absolute inset-0` on <main>
             // and JS-positioned to center on this very element.
@@ -464,6 +481,7 @@ export default function HomePage() {
                 <Link
                   href="/play"
                   aria-label={`Play ${load.meta.title}`}
+                  {...prefetchOnIntent("play")}
                   className="inline-flex shrink-0 items-center gap-2 border-2 border-bone-50 px-3 py-1.5 font-display text-[0.92rem] font-bold tracking-widest text-bone-50 transition-colors hover:border-accent hover:text-accent"
                 >
                   <span className="text-[1.05rem] leading-none">▶</span>
@@ -538,6 +556,7 @@ export default function HomePage() {
             we use everywhere a forward action sits in a row. */}
         <Link
           href="/multi"
+          {...prefetchOnIntent("multi")}
           className="group inline-flex items-center gap-2 text-bone-50/60 hover:text-accent transition-colors"
           data-tooltip="Multiplayer"
         >

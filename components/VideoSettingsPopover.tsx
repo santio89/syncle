@@ -81,6 +81,17 @@ export interface VideoSettingsPopoverProps {
   noteShape: NoteShape;
   onCycleNoteShape: () => void;
   /**
+   * Reset all four sub-settings (FPS lock / Quality / View / Shape)
+   * back to their shipping defaults. The parent owns persistence +
+   * state, so the popover just calls this and trusts the caller to
+   * update every piece. Same contract as `GameplaySettingsPopover`'s
+   * Keybinds reset (call-site handler, popover renders the button).
+   * The button disables itself when every sub-setting is ALREADY on
+   * its default value, so the player doesn't think the click did
+   * nothing - disabled + tooltip explain why.
+   */
+  onReset: () => void;
+  /**
    * Trigger dressing - see the file header. `"card"` for the
    * pre-match grids, `"chip"` for the in-match right-rail stack.
    */
@@ -110,7 +121,7 @@ export interface VideoSettingsPopoverProps {
  * clip against the viewport bottom. An over-estimate is safe - worst
  * case we flip early and open above with 8 px of extra headroom.
  */
-const PANEL_ESTIMATED_H = 240;
+const PANEL_ESTIMATED_H = 280;
 const PANEL_WIDTH = 320;
 const VIEWPORT_PAD = 8;
 
@@ -139,6 +150,7 @@ export function VideoSettingsPopover(props: VideoSettingsPopoverProps) {
     onCyclePerspectiveMode,
     noteShape,
     onCycleNoteShape,
+    onReset,
     variant,
     fps,
     className,
@@ -530,6 +542,40 @@ export function VideoSettingsPopover(props: VideoSettingsPopoverProps) {
                 </span>
               </button>
             </div>
+
+            {/* Reset-to-defaults button. Mirrors the
+                `GameplaySettingsPopover` keybinds-reset affordance
+                exactly (self-end, small font-mono caption, hover →
+                accent) so both popovers carry the same rescue
+                action. Disabled when every sub-setting is already
+                on its default value (reused `highlighted` signal,
+                which is the same `anyNonDefault` predicate the
+                trigger pill uses for its accent highlight) - the
+                button then greys out and its tooltip explains why
+                the click is inert instead of fooling the player
+                into thinking the reset didn't fire. The parent
+                owns persistence, so `onReset` is a single callback
+                that snaps FPS / Quality / View / Shape back to
+                defaults via the caller's existing save-on-set
+                effects. */}
+            <button
+              type="button"
+              onClick={onReset}
+              disabled={!highlighted}
+              className={`mt-1 self-end border px-2 py-1 font-mono text-[9.5px] uppercase tracking-widest transition-colors ${
+                highlighted
+                  ? "cursor-pointer border-bone-50/30 bg-ink-900/60 text-bone-50/70 hover:border-accent hover:text-accent"
+                  : "cursor-not-allowed border-bone-50/15 bg-ink-900/40 text-bone-50/30"
+              }`}
+              data-tooltip={
+                highlighted
+                  ? "Reset FPS lock, Quality, View, Shape to defaults"
+                  : "Already on defaults"
+              }
+              aria-label="Reset video settings to defaults"
+            >
+              Reset to defaults
+            </button>
           </div>
         </div>,
         portalHost,

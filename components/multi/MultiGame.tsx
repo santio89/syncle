@@ -47,6 +47,7 @@ import { ArrowIcon } from "@/components/icons/ArrowIcon";
 import TouchLanes from "@/components/TouchLanes";
 import { useTheme } from "@/components/ThemeProvider";
 import { VideoSettingsPopover } from "@/components/VideoSettingsPopover";
+import { GameplaySettingsPopover } from "@/components/GameplaySettingsPopover";
 import type { RoomActions } from "@/hooks/useRoomSocket";
 import { AudioEngine } from "@/lib/game/audio";
 import { GameState, isHold } from "@/lib/game/engine";
@@ -71,11 +72,20 @@ import {
   loadNoteShape,
   saveNoteShape,
   nextNoteShape,
+  DEFAULT_FPS_LOCK,
+  DEFAULT_QUALITY,
+  DEFAULT_PERSPECTIVE_MODE,
+  DEFAULT_NOTE_SHAPE,
+  loadKeybinds,
+  saveKeybinds,
+  keybindsToLaneMap,
+  deriveLaneLabels,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
   type PerspectiveMode,
   type NoteShape,
+  type KeyBindings,
 } from "@/lib/game/settings";
 import {
   createRenderState,
@@ -97,12 +107,13 @@ import {
   type ScoreboardEntry,
 } from "@/lib/multi/protocol";
 
-const KEY_TO_LANE: Record<string, number> = {
-  KeyD: 0, ArrowLeft: 0,
-  KeyF: 1, ArrowDown: 1,
-  KeyJ: 2, ArrowUp: 2,
-  KeyK: 3, ArrowRight: 3,
-};
+// Lane key map is now player-configurable - see `lib/game/settings`
+// `KeyBindings` (4 lanes x 2 slots, persisted to localStorage and
+// shared with single-player). The keydown handler reads off the live
+// `keybindsMapRef` so a rebind made from the GameplaySettingsPopover
+// (lobby pre-match or in-match HUD chip) takes effect on the very
+// next keypress without re-mounting the listener. Defaults to the
+// osu!mania 4K layout (D/F/J/K + arrow keys) on first launch.
 
 const SCORE_TICK_MS = 200; // 5 Hz
 
@@ -370,6 +381,37 @@ function CanvasPane({
    *  player setting so a choice made in SP survives into MP and
    *  vice versa. */
   const [noteShape, setNoteShape] = useState<NoteShape>(loadNoteShape);
+  // Per-lane keybinds (4 lanes x 2 slots). Shared persistence key with
+  // single-player so a player's bindings carry across modes. The
+  // GameplaySettingsPopover (in the HealthPanel chip) updates this
+  // state and persists; `keybindsMapRef` mirrors a flat `code -> lane`
+  // map for the keydown / keyup hot path so a rebind takes effect on
+  // the very next press without re-mounting the listeners.
+  const [keybinds, setKeybindsState] = useState<KeyBindings>(loadKeybinds);
+  const keybindsMapRef = useRef<Record<string, number>>(
+    keybindsToLaneMap(keybinds),
+  );
+  useEffect(() => {
+    keybindsMapRef.current = keybindsToLaneMap(keybinds);
+  }, [keybinds]);
+  const onChangeKeybinds = useCallback((next: KeyBindings) => {
+    setKeybindsState(next);
+    saveKeybinds(next);
+  }, []);
+
+  // One-click "Reset to defaults" for the VIDEO popover. Snaps all
+  // four pure-visual sub-settings back to their shipping defaults.
+  // State setters drive existing save-on-change effects elsewhere
+  // in this component, so we don't need to call each `save*` helper
+  // here - the effects pick up the new value on the next tick. One
+  // shared reference threaded to the HealthPanel so both chip
+  // popover opens resolve to the same reset semantics.
+  const onResetVideoSettings = useCallback(() => {
+    setFpsLock(DEFAULT_FPS_LOCK);
+    setQuality(DEFAULT_QUALITY);
+    setPerspectiveMode(DEFAULT_PERSPECTIVE_MODE);
+    setNoteShape(DEFAULT_NOTE_SHAPE);
+  }, []);
   // Strict Inputs (anti-mash protection) - match-wide and host-controlled
   // in multiplayer (unlike SP, where each player owns their own toggle).
   // The host flips it via `actions.setStrictInputs` from the lobby; the
@@ -429,6 +471,15 @@ function CanvasPane({
     renderOptsRef.current.noteShape = noteShape;
     saveNoteShape(noteShape);
   }, [noteShape]);
+
+  // Mirror the player's keybinds into the renderer so each receptor
+  // paints the player's primary key for that lane (D / F / J / K
+  // by default, but any rebind shows up immediately). The renderer
+  // already falls back to `LANE_LABEL[lane]` when an entry is empty,
+  // so single-key custom bindings still produce a legible label.
+  useEffect(() => {
+    renderOptsRef.current.laneLabels = deriveLaneLabels(keybinds);
+  }, [keybinds]);
 
   const { theme } = useTheme();
   useEffect(() => {
@@ -930,7 +981,7 @@ function CanvasPane({
         e.preventDefault();
         return;
       }
-      const lane = KEY_TO_LANE[e.code];
+      const lane = keybindsMapRef.current[e.code];
       if (lane === undefined) return;
       if (e.repeat) return;
       e.preventDefault();
@@ -959,7 +1010,7 @@ function CanvasPane({
       // until they retap that lane - confusing in the middle of a
       // song. Releasing is always safe (no-op if not held). Same
       // rationale as Game.tsx onKeyUp.
-      const lane = KEY_TO_LANE[e.code];
+      const lane = keybindsMapRef.current[e.code];
       if (lane === undefined) return;
       releaseLane(lane, e.timeStamp);
     };
@@ -1471,6 +1522,8 @@ function CanvasPane({
               onToggleMetronome={() => setMetronome((m) => !m)}
               sfx={sfx}
               onToggleSfx={() => setSfx((s) => !s)}
+              keybinds={keybinds}
+              onChangeKeybinds={onChangeKeybinds}
               fps={fps}
               fpsLock={fpsLock}
               onCycleFpsLock={() => setFpsLock((cur) => nextFpsLock(cur))}
@@ -1484,6 +1537,7 @@ function CanvasPane({
               onCycleNoteShape={() =>
                 setNoteShape((cur) => nextNoteShape(cur))
               }
+              onResetVideoSettings={onResetVideoSettings}
               strictInputs={strictInputs}
               isHost={isHost}
               // HealthPanel is only rendered mid-match (loading/
@@ -1935,6 +1989,8 @@ function HealthPanel({
   onToggleMetronome,
   sfx,
   onToggleSfx,
+  keybinds,
+  onChangeKeybinds,
   fps,
   fpsLock,
   onCycleFpsLock,
@@ -1944,6 +2000,7 @@ function HealthPanel({
   onCyclePerspectiveMode,
   noteShape,
   onCycleNoteShape,
+  onResetVideoSettings,
   strictInputs,
   isHost,
   onSetStrictInputs,
@@ -1959,6 +2016,13 @@ function HealthPanel({
   /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
+  /** Per-lane keybinds (4 lanes x 2 slots). Surfaces inside the
+   *  in-match `GameplaySettingsPopover` chip so the player can
+   *  rebind mid-song; the change takes effect on the very next
+   *  keypress (the engine reads via `keybindsMapRef`). Per-player
+   *  local preference - never synced to the room. */
+  keybinds: KeyBindings;
+  onChangeKeybinds: (next: KeyBindings) => void;
   fps: number;
   fpsLock: FpsLock;
   onCycleFpsLock: () => void;
@@ -1979,6 +2043,11 @@ function HealthPanel({
    *  their own shape, never synced to the room. */
   noteShape: NoteShape;
   onCycleNoteShape: () => void;
+  /** One-click "Reset to defaults" for the in-match VIDEO popover.
+   *  Mirrors the single-player HUD's reset button - resets FPS /
+   *  Quality / View / Shape back to their shipping defaults in
+   *  one pass. Local-only (never synced to the room). */
+  onResetVideoSettings: () => void;
   /** Strict Inputs (anti-mash protection) - match-wide, host-controlled.
    *  Surface read-only for non-hosts; only the host's chip toggles it.
    *  Server enforces lobby-phase-only flips, so the in-match HUD chip
@@ -2074,57 +2143,23 @@ function HealthPanel({
           )}
         </div>
       )}
-      {/* Metronome tile - `<label>` so clicking anywhere on the
-          tile (caption included) toggles the checkbox. Same
-          aesthetic as the StartCard's pre-game toggle tiles, just
-          scaled down for HUD density. */}
-      <label
-        className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Audible click track on every beat (key: M)"
-      >
-        <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-          Metronome
-        </span>
-        <input
-          type="checkbox"
-          checked={metronome}
-          onChange={onToggleMetronome}
-          className="h-[14px] w-[14px] cursor-pointer accent-accent"
-          aria-label="Toggle metronome"
-          aria-keyshortcuts="M"
-        />
-      </label>
-      <label
-        className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
-      >
-        <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-          Feedback
-        </span>
-        <input
-          type="checkbox"
-          checked={sfx}
-          onChange={onToggleSfx}
-          className="h-[14px] w-[14px] cursor-pointer accent-accent"
-          aria-label="Toggle input sound effects"
-          aria-keyshortcuts="N"
-        />
-      </label>
-      {/* VIDEO gateway chip - collapses the four pure-visual knobs
-          (FPS lock, Quality, View, Shape) behind a single click
-          target. Same HUD chip vocabulary as Metronome / Feedback
-          above so the row reads as one cohesive stack. Shows the
-          live `fps` value under the caption to preserve the old
-          standalone FPS-lock tile's headline metric. Hidden below
-          `sm` to match the individual tiles it replaced - narrow-
-          viewport players still get Metronome / Feedback / Vol /
-          Strict in this rail; they pick their video preferences
-          in the lobby's PlayerSettingsModal before the match.
+      {/* VIDEO + GAMEPLAY gateway chips - paired full-width chips
+          in the right rail. VIDEO collapses the four pure-visual
+          knobs (FPS lock, Quality, View, Shape); GAMEPLAY collapses
+          Metronome / Feedback / Keybinds. VIDEO's caption shows the
+          live `fps` value to preserve the old standalone FPS-lock
+          tile's headline metric. Hidden below `sm` to match the
+          tiles they replaced - narrow-viewport players still get
+          Volume / Strict in this rail; they pick their gameplay +
+          video preferences in the lobby's PlayerSettingsModal
+          before the match.
 
-          All four sub-settings are per-player LOCAL preferences
-          (never synced over the wire); gameplay math is identical
-          across every combination so scores stay fully comparable
-          between players regardless of who picked what look. */}
+          All sub-settings except Strict (room-wide, host-controlled
+          - rendered separately below) are per-player LOCAL
+          preferences (never synced over the wire); gameplay math
+          is identical across every combination so scores stay fully
+          comparable between players regardless of who picked what
+          look or which lane keys. */}
       <div className="hidden sm:block">
         <VideoSettingsPopover
           variant="chip"
@@ -2136,7 +2171,19 @@ function HealthPanel({
           onCyclePerspectiveMode={onCyclePerspectiveMode}
           noteShape={noteShape}
           onCycleNoteShape={onCycleNoteShape}
+          onReset={onResetVideoSettings}
           fps={fps}
+        />
+      </div>
+      <div className="hidden sm:block">
+        <GameplaySettingsPopover
+          variant="chip"
+          metronome={metronome}
+          onToggleMetronome={onToggleMetronome}
+          sfx={sfx}
+          onToggleSfx={onToggleSfx}
+          keybinds={keybinds}
+          onChangeKeybinds={onChangeKeybinds}
         />
       </div>
       {/* Strict Inputs HUD chip - anti-mash protection. Match-wide
@@ -2188,7 +2235,7 @@ function HealthPanel({
       })()}
       <div
         className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-        data-tooltip="Song playback volume - separate from feedback SFX"
+        data-tooltip="Master volume - song, feedback, metronome"
       >
         <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
           vol
@@ -2204,7 +2251,7 @@ function HealthPanel({
           // UA intrinsic min-width on <input type="range"> would
           // otherwise overflow the tile on narrow viewports.
           className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
-          aria-label="Music volume"
+          aria-label="Volume"
         />
         <span className="hidden sm:inline font-mono text-[9.2px] tabular-nums text-bone-50/40 w-7 text-right">
           {Math.round(volume * 100)}

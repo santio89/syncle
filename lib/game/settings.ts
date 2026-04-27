@@ -6,7 +6,12 @@
  */
 
 const VOL_KEY = "syncle.volume";
-// Default music volume on first launch (when no persisted value is found).
+// Default master volume on first launch (when no persisted value is
+// found). This slider is the MASTER bus - `AudioEngine.setVolume()`
+// ramps both the song gain AND the SFX gain in lockstep, so it
+// controls music, hit feedback, metronome, and milestone cues
+// together. UI labels call it "Volume" (not "Music volume") for
+// this reason.
 // 0.5 = 50% - half of the perceptually-tapered slider, which lands at
 // roughly 44% perceived loudness with the song bus's quadratic curve
 // and ~70% perceived on the SFX bus's gentler square-root curve. This
@@ -18,6 +23,13 @@ const VOL_KEY = "syncle.volume";
 // more now that the taper is honest end-to-end.
 const DEFAULT_VOLUME = 0.5;
 const FPS_LOCK_KEY = "syncle.fpsLock";
+// Uncapped by default - the rAF loop runs one draw per vblank, which
+// matches the player's monitor refresh rate out of the box. Exported
+// so VIDEO's "Reset to defaults" can snap back to `null` without each
+// call site having to hardcode the sentinel. Players who want to save
+// battery (30 FPS) or match a 60 Hz monitor exactly (60 FPS) can cycle
+// from the Video popover; the choice persists in `FPS_LOCK_KEY`.
+export const DEFAULT_FPS_LOCK: FpsLock = null;
 const SFX_KEY = "syncle.sfx";
 const DEFAULT_SFX = true;
 const METRONOME_KEY = "syncle.metronome";
@@ -47,7 +59,9 @@ const QUALITY_KEY = "syncle.quality";
 // Players on low-end hardware, on battery, or who prefer a calmer
 // canvas can flip to PERFORMANCE from the StartCard / HUD / Lobby
 // tile; the choice persists across sessions in `QUALITY_KEY`.
-const DEFAULT_QUALITY: RenderQuality = "high";
+// Exported so VIDEO's "Reset to defaults" can snap back without
+// each call site having to duplicate the literal.
+export const DEFAULT_QUALITY: RenderQuality = "high";
 const PERSPECTIVE_KEY = "syncle.perspective";
 // 2D (osu!-style flat lanes) is the default: parallel rails,
 // constant note size, no perspective depth. Chosen as the default
@@ -63,7 +77,9 @@ const PERSPECTIVE_KEY = "syncle.perspective";
 // purely visual - gameplay math (timing windows, hit registration,
 // scoring) is identical in both modes, so it's stored as a per-
 // player preference and never synced over the multiplayer wire.
-const DEFAULT_PERSPECTIVE_MODE: PerspectiveMode = "2d";
+// Exported so VIDEO's "Reset to defaults" can snap back without
+// each call site having to duplicate the literal.
+export const DEFAULT_PERSPECTIVE_MODE: PerspectiveMode = "2d";
 const NOTE_SHAPE_KEY = "syncle.noteShape";
 // Rectangles are the shipping default - they match the brutalist
 // theme of the rest of the app (hard-edged cards, buttons, borders,
@@ -73,7 +89,9 @@ const NOTE_SHAPE_KEY = "syncle.noteShape";
 // Local-only setting like Quality / FPS / Perspective - never
 // synced over the multiplayer wire, two players in the same room
 // can run different note shapes with zero impact on fairness.
-const DEFAULT_NOTE_SHAPE: NoteShape = "rect";
+// Exported so VIDEO's "Reset to defaults" can snap back without
+// each call site having to duplicate the literal.
+export const DEFAULT_NOTE_SHAPE: NoteShape = "rect";
 
 /* -----------------------------------------------------------------------
  * Storage-health signal - fires the first time a settings / resume /
@@ -421,3 +439,223 @@ export function saveMetronome(on: boolean): void {
  * the top-of-file comment on the removed `STRICT_INPUTS_KEY` for
  * the full rationale.
  */
+
+/* -----------------------------------------------------------------------
+ * Lane keybinds.
+ *
+ * Each of the 4 lanes accepts up to TWO keys: a "primary" slot and a
+ * "secondary" slot. The historical default - kept on first launch and
+ * after a reset - is the osu!mania 4K layout that has always shipped:
+ *
+ *   Lane 0 (red)    : KeyD  +  ArrowLeft
+ *   Lane 1 (yellow) : KeyF  +  ArrowDown
+ *   Lane 2 (green)  : KeyJ  +  ArrowUp
+ *   Lane 3 (blue)   : KeyK  +  ArrowRight
+ *
+ * Codes are `KeyboardEvent.code` values (physical-position, layout-
+ * independent), NOT `KeyboardEvent.key` (which is the printed character
+ * and varies with the active OS keyboard layout). Game inputs care about
+ * the position of the key under the player's finger, not what character
+ * a French AZERTY layout would have produced - that's the whole point
+ * of the `.code` property and matches what other rhythm games do.
+ *
+ * An empty string `""` means "unbound" - the lane is still playable as
+ * long as at least one slot per lane is non-empty (the editor lets the
+ * player wipe a slot if they want a single-key lane, or both if they
+ * want to disable a lane entirely - the press handler simply skips
+ * unmapped codes).
+ *
+ * Storage is purely local: bindings never sync over the multiplayer
+ * wire, just like the visual settings (FPS lock / Quality / View /
+ * Shape). Two players in the same room can run completely different
+ * bindings - gameplay math is identical and scores stay comparable.
+ * ------------------------------------------------------------------- */
+export type KeyBinding = readonly [string, string];
+export type KeyBindings = readonly [KeyBinding, KeyBinding, KeyBinding, KeyBinding];
+
+const KEYBINDS_KEY = "syncle.keybinds";
+
+export const DEFAULT_KEYBINDS: KeyBindings = [
+  ["KeyD", "ArrowLeft"],
+  ["KeyF", "ArrowDown"],
+  ["KeyJ", "ArrowUp"],
+  ["KeyK", "ArrowRight"],
+];
+
+/**
+ * Codes the user can never bind to a lane. These would either trap
+ * the browser (Tab focus, F-keys for devtools / fullscreen),
+ * reserved for game meta-commands (Escape pause, M metronome,
+ * N feedback), or are physically awkward / unlikely to be intended
+ * (Win / Cmd / PrintScreen). The keybinds editor's capture handler
+ * silently ignores keydowns for these codes so the slot stays in
+ * "press a key" state until the player picks something usable.
+ */
+export const RESERVED_KEYBIND_CODES: ReadonlySet<string> = new Set([
+  "Escape",
+  "Tab",
+  "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+  "ContextMenu",
+  "PrintScreen",
+  "ScrollLock",
+  "Pause",
+  "MetaLeft", "MetaRight",
+  "KeyM",
+  "KeyN",
+]);
+
+/**
+ * Build a fast `code -> lane` lookup from a `KeyBindings`. Empty slots
+ * are skipped. Both `setKeybind` and the editor enforce uniqueness
+ * across slots, so each non-empty code maps to exactly one lane in
+ * practice; this helper is hot (called per keydown via a ref) so it
+ * stays a plain object lookup.
+ */
+export function keybindsToLaneMap(bindings: KeyBindings): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (let lane = 0; lane < bindings.length; lane++) {
+    for (const code of bindings[lane]) {
+      if (!code) continue;
+      out[code] = lane;
+    }
+  }
+  return out;
+}
+
+/**
+ * Human-readable label for a `KeyboardEvent.code`. Used by the
+ * keybinds editor button captions, the StartCard `KeyCap` row, the
+ * countdown overlay's "press X / Y / Z / W" hint, and the canvas
+ * receptor letter (via `deriveLaneLabels`). Returns the empty string
+ * for unbound slots so callers can short-circuit to a placeholder
+ * dash.
+ *
+ * Letter / digit / numpad codes get their bare character; arrows
+ * become the unicode glyph (matches the rest of the UI's arrow
+ * rendering). Symbol keys get their printed glyph for QWERTY
+ * (acceptable approximation - this is purely a label, not an input
+ * mapping). Modifier keys keep their L-/R- prefix so the editor
+ * doesn't claim "Shift" when only one Shift is bound.
+ */
+export function formatKeyCode(code: string): string {
+  if (!code) return "";
+  if (code.length === 4 && code.startsWith("Key")) return code.slice(3);
+  if (code.length === 6 && code.startsWith("Digit")) return code.slice(5);
+  if (code.length === 7 && code.startsWith("Numpad")) return "Num" + code.slice(6);
+  switch (code) {
+    case "ArrowLeft":   return "\u2190";
+    case "ArrowDown":   return "\u2193";
+    case "ArrowUp":     return "\u2191";
+    case "ArrowRight":  return "\u2192";
+    case "Space":        return "Space";
+    case "Enter":        return "Enter";
+    case "Backspace":    return "Bksp";
+    case "Backquote":    return "`";
+    case "Minus":        return "-";
+    case "Equal":        return "=";
+    case "BracketLeft":  return "[";
+    case "BracketRight": return "]";
+    case "Backslash":    return "\\";
+    case "Semicolon":    return ";";
+    case "Quote":        return "'";
+    case "Comma":        return ",";
+    case "Period":       return ".";
+    case "Slash":        return "/";
+    case "ShiftLeft":    return "L-Shift";
+    case "ShiftRight":   return "R-Shift";
+    case "ControlLeft":  return "L-Ctrl";
+    case "ControlRight": return "R-Ctrl";
+    case "AltLeft":      return "L-Alt";
+    case "AltRight":     return "R-Alt";
+    case "CapsLock":     return "Caps";
+    case "Insert":       return "Ins";
+    case "Delete":       return "Del";
+    case "Home":         return "Home";
+    case "End":          return "End";
+    case "PageUp":       return "PgUp";
+    case "PageDown":     return "PgDn";
+    case "NumpadAdd":      return "Num+";
+    case "NumpadSubtract": return "Num-";
+    case "NumpadMultiply": return "Num*";
+    case "NumpadDivide":   return "Num/";
+    case "NumpadEnter":    return "NumEnter";
+    case "NumpadDecimal":  return "Num.";
+    default: return code;
+  }
+}
+
+/**
+ * Return a copy of `bindings` with `(lane, slot)` set to `code`. If
+ * `code` is currently bound to any OTHER slot, that other slot is
+ * cleared to "" so each non-empty code maps to exactly one lane.
+ * Setting `code = ""` is the editor's "unbind this slot" path.
+ *
+ * Pure / immutable - never mutates the input tuple, safe to use as a
+ * `setState` reducer.
+ */
+export function setKeybind(
+  bindings: KeyBindings,
+  lane: number,
+  slot: 0 | 1,
+  code: string,
+): KeyBindings {
+  const next = bindings.map((pair) => [pair[0], pair[1]]) as [
+    [string, string], [string, string], [string, string], [string, string],
+  ];
+  if (code) {
+    for (let l = 0; l < next.length; l++) {
+      for (const s of [0, 1] as const) {
+        if (next[l][s] === code && (l !== lane || s !== slot)) {
+          next[l][s] = "";
+        }
+      }
+    }
+  }
+  next[lane][slot] = code;
+  return next as unknown as KeyBindings;
+}
+
+/**
+ * Primary lane labels derived from the current bindings. Each lane's
+ * primary slot wins; if the primary is empty, the secondary takes
+ * over. Both empty -> the historical default letter (D/F/J/K) so the
+ * canvas receptor never renders blank. Used by the renderer (via
+ * `RenderOptions.laneLabels`), the StartCard `KeyCap` row, and the
+ * countdown overlay's keyboard hint.
+ */
+export function deriveLaneLabels(bindings: KeyBindings): string[] {
+  const fallbacks = ["D", "F", "J", "K"];
+  return bindings.map((pair, i) => {
+    const primary = pair[0] || pair[1];
+    return primary ? formatKeyCode(primary) : fallbacks[i];
+  });
+}
+
+export function loadKeybinds(): KeyBindings {
+  if (typeof window === "undefined") return DEFAULT_KEYBINDS;
+  try {
+    const raw = window.localStorage.getItem(KEYBINDS_KEY);
+    if (!raw) return DEFAULT_KEYBINDS;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length !== 4) return DEFAULT_KEYBINDS;
+    const out: [string, string][] = [];
+    for (const lane of parsed) {
+      if (!Array.isArray(lane) || lane.length !== 2) return DEFAULT_KEYBINDS;
+      const a = typeof lane[0] === "string" ? lane[0] : "";
+      const b = typeof lane[1] === "string" ? lane[1] : "";
+      out.push([a, b]);
+    }
+    return out as unknown as KeyBindings;
+  } catch {
+    return DEFAULT_KEYBINDS;
+  }
+}
+
+export function saveKeybinds(b: KeyBindings): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(KEYBINDS_KEY, JSON.stringify(b));
+  } catch {
+    reportStorageFailure();
+  }
+}

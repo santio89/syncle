@@ -48,11 +48,21 @@ import {
   loadNoteShape,
   saveNoteShape,
   nextNoteShape,
+  DEFAULT_FPS_LOCK,
+  DEFAULT_QUALITY,
+  DEFAULT_PERSPECTIVE_MODE,
+  DEFAULT_NOTE_SHAPE,
+  loadKeybinds,
+  saveKeybinds,
+  keybindsToLaneMap,
+  deriveLaneLabels,
+  formatKeyCode,
   onStorageFailure,
   type FpsLock,
   type RenderQuality,
   type PerspectiveMode,
   type NoteShape,
+  type KeyBindings,
 } from "@/lib/game/settings";
 import {
   clearSoloResume,
@@ -68,6 +78,7 @@ import { RefreshSongButton } from "@/components/RefreshSongButton";
 import ScrollStrip from "@/components/ScrollStrip";
 import TouchLanes from "@/components/TouchLanes";
 import { VideoSettingsPopover } from "@/components/VideoSettingsPopover";
+import { GameplaySettingsPopover } from "@/components/GameplaySettingsPopover";
 
 type Phase =
   | "idle"
@@ -104,14 +115,13 @@ const LEAD_IN_SECONDS = 2;
 const TOTAL_START_DELAY =
   PROMPT_SECONDS + COUNTDOWN_SECONDS + LEAD_IN_SECONDS;
 
-// Each lane accepts EITHER its letter key OR the matching arrow key.
-// 4 lanes only - osu!mania 4K layout.
-const KEY_TO_LANE: Record<string, number> = {
-  KeyD: 0, ArrowLeft: 0,
-  KeyF: 1, ArrowDown: 1,
-  KeyJ: 2, ArrowUp: 2,
-  KeyK: 3, ArrowRight: 3,
-};
+// Lane key map is now player-configurable - see `lib/game/settings`
+// `KeyBindings` (4 lanes x 2 slots, persisted to localStorage). The
+// shipping default is the osu!mania 4K layout (D/F/J/K + arrow keys);
+// the keybinds editor inside `GameplaySettingsPopover` lets the
+// player rebind any slot at any time. The keydown handler reads the
+// live map off `keybindsMapRef` so rebinds take effect on the next
+// keypress without re-mounting the listener.
 
 export default function Game() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -299,6 +309,39 @@ export default function Game() {
    *  agnostic - it only holds lane endpoints + widths, not tile
    *  silhouettes). */
   const [noteShape, setNoteShape] = useState<NoteShape>(loadNoteShape);
+  /** Per-lane keybinds (4 lanes x 2 slots each). Persisted across
+   *  sessions; defaults to the osu!mania 4K layout (D/F/J/K + arrow
+   *  keys). The keydown / keyup handlers read off `keybindsMapRef`
+   *  for hot-path lookups so a rebind from inside `GameplaySettings
+   *  Popover` takes effect on the very next keypress with zero
+   *  listener remount. The renderer reads `laneLabels` (derived from
+   *  `keybinds` in `renderOptsRef` below) so the receptor letter
+   *  follows the player's primary-slot binding. */
+  const [keybinds, setKeybindsState] = useState<KeyBindings>(loadKeybinds);
+  const keybindsMapRef = useRef<Record<string, number>>(keybindsToLaneMap(keybinds));
+  useEffect(() => {
+    keybindsMapRef.current = keybindsToLaneMap(keybinds);
+  }, [keybinds]);
+  const onChangeKeybinds = useCallback((next: KeyBindings) => {
+    setKeybindsState(next);
+    saveKeybinds(next);
+  }, []);
+
+  // Single "Reset to defaults" affordance for the VIDEO popover.
+  // Snaps all four video sub-settings (FPS lock / Quality / View /
+  // Shape) back to their shipping defaults in one click. State
+  // setters drive the existing save-on-change `useEffect`s above,
+  // so we don't need to call each `save*` helper here - the
+  // effects pick up the new value next tick and persist it.
+  // Centralised here (rather than being inlined at each
+  // <VideoSettingsPopover onReset={...}>) so the HUD and StartCard
+  // branches share one reference instead of drifting over time.
+  const onResetVideoSettings = useCallback(() => {
+    setFpsLock(DEFAULT_FPS_LOCK);
+    setQuality(DEFAULT_QUALITY);
+    setPerspectiveMode(DEFAULT_PERSPECTIVE_MODE);
+    setNoteShape(DEFAULT_NOTE_SHAPE);
+  }, []);
   /** Persistent banner when localStorage / sessionStorage refuses a
    *  write (typical causes: Safari Private Browsing quota, exhausted
    *  per-origin quota, an extension that blocks storage). Surfaces a
@@ -443,6 +486,18 @@ export default function Game() {
     renderOptsRef.current.noteShape = noteShape;
     saveNoteShape(noteShape);
   }, [noteShape]);
+
+  // Mirror per-lane primary key labels into the renderer whenever
+  // the keybinds change, so the canvas receptor letter (drawn by
+  // `drawLaneGate` on top of each gate) follows the player's primary-
+  // slot binding. Falls back per-lane to the historical D/F/J/K
+  // letter when the primary slot is empty (single-key custom binding
+  // still gets a legible label). `deriveLaneLabels` is cheap and the
+  // labels rarely change, so we recompute and store the tuple
+  // directly on `renderOptsRef.current` - no allocation per frame.
+  useEffect(() => {
+    renderOptsRef.current.laneLabels = deriveLaneLabels(keybinds);
+  }, [keybinds]);
 
   // Force-load the JetBrains Mono ExtraBold weight used by the lane-gate
   // letters drawn on the canvas. next/font only downloads weights that are
@@ -1184,7 +1239,7 @@ export default function Game() {
         return;
       }
       if (e.repeat) return;
-      const lane = KEY_TO_LANE[e.code];
+      const lane = keybindsMapRef.current[e.code];
       if (lane === undefined) return;
       e.preventDefault();
       // If a non-text control like the volume slider or a checkbox
@@ -1220,7 +1275,7 @@ export default function Game() {
       // no-op for unheld lanes) and keeps the input model crisp
       // regardless of focus.
       if (phase === "paused") return;
-      const lane = KEY_TO_LANE[e.code];
+      const lane = keybindsMapRef.current[e.code];
       if (lane === undefined) return;
       releaseLane(lane, e.timeStamp);
     };
@@ -1672,6 +1727,9 @@ export default function Game() {
             onCycleNoteShape={() =>
               setNoteShape((cur) => nextNoteShape(cur))
             }
+            onResetVideoSettings={onResetVideoSettings}
+            keybinds={keybinds}
+            onChangeKeybinds={onChangeKeybinds}
             songTitle={displayMeta?.title ?? null}
             songArtist={displayMeta?.artist ?? null}
             songDuration={displayMeta?.duration ?? null}
@@ -1725,6 +1783,9 @@ export default function Game() {
               onCycleNoteShape={() =>
                 setNoteShape((cur) => nextNoteShape(cur))
               }
+            onResetVideoSettings={onResetVideoSettings}
+            keybinds={keybinds}
+            onChangeKeybinds={onChangeKeybinds}
             songSource={songSource}
             chartMode={chartMode}
             onChangeMode={setChartMode}
@@ -1762,36 +1823,55 @@ export default function Game() {
                 {countdownStage.n}
               </p>
             )}
-            {/* Keyboard hint footer. The four arrow keys are rendered
-                with the brutalist <ArrowIcon> SVG (same family used for
-                the osu! external-link chip, lobby return arrows, etc.)
-                instead of the unicode `←↓↑→` glyphs - those render as
-                thin, unweighted strokes in most monospace fonts and
-                clash visually with the chunky D F J K letters next to
-                them. The icon inherits `currentColor` so the
-                bone-50/60 paragraph color carries through, and `1em`
-                sizing keeps the icons in lockstep with the surrounding
-                text. */}
+            {/* Keyboard hint footer. The four primary labels read off
+                the live keybinds (default = D F J K). The secondary
+                row keeps the brutalist <ArrowIcon> SVG ONLY when all
+                four secondary slots are the default arrow keys -
+                those SVGs sit better next to the chunky letter row
+                than the unicode `\u2190\u2193\u2191\u2192` glyphs (thin
+                strokes in monospace fonts). For custom secondary
+                bindings we fall back to text so we never lie to the
+                player about which physical keys actually fire each
+                lane (e.g. a player who rebound K to Numpad6 sees
+                "NUM6", not a misleading "→"). */}
             <p className="mt-2 inline-flex items-center justify-center gap-1.5 font-mono text-[0.79rem] uppercase tracking-widest text-bone-50/60">
               {touchOnly ? (
                 "tap the four lanes"
-              ) : (
-                <>
-                  <span>D F J K</span>
-                  <span aria-hidden>·</span>
-                  <span>or</span>
-                  <span aria-hidden>·</span>
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label="left, down, up, right arrow keys"
-                  >
-                    <ArrowIcon direction="left" strokeWidth={2.75} />
-                    <ArrowIcon direction="down" strokeWidth={2.75} />
-                    <ArrowIcon direction="up" strokeWidth={2.75} />
-                    <ArrowIcon direction="right" strokeWidth={2.75} />
-                  </span>
-                </>
-              )}
+              ) : (() => {
+                const primaries = keybinds.map((p, i) =>
+                  p[0] ? formatKeyCode(p[0]) : (p[1] ? formatKeyCode(p[1]) : ["D","F","J","K"][i]),
+                );
+                const defaultArrows = ["ArrowLeft", "ArrowDown", "ArrowUp", "ArrowRight"];
+                const secondariesAreDefault = keybinds.every(
+                  (p, i) => p[1] === defaultArrows[i],
+                );
+                const anySecondary = keybinds.some((p) => !!p[1]);
+                return (
+                  <>
+                    <span>{primaries.join(" ")}</span>
+                    {anySecondary && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span>or</span>
+                        <span aria-hidden>·</span>
+                        {secondariesAreDefault ? (
+                          <span
+                            className="inline-flex items-center gap-1"
+                            aria-label="left, down, up, right arrow keys"
+                          >
+                            <ArrowIcon direction="left" strokeWidth={2.75} />
+                            <ArrowIcon direction="down" strokeWidth={2.75} />
+                            <ArrowIcon direction="up" strokeWidth={2.75} />
+                            <ArrowIcon direction="right" strokeWidth={2.75} />
+                          </span>
+                        ) : (
+                          <span>{keybinds.map((p) => p[1] ? formatKeyCode(p[1]) : "-").join(" ")}</span>
+                        )}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </p>
           </div>
         </Overlay>
@@ -2084,6 +2164,9 @@ function StartCard({
   onCyclePerspectiveMode,
   noteShape,
   onCycleNoteShape,
+  onResetVideoSettings,
+  keybinds,
+  onChangeKeybinds,
   songSource,
   chartMode,
   onChangeMode,
@@ -2112,6 +2195,12 @@ function StartCard({
   /** Master toggle for hit/miss/release SFX - same setting as the in-game HUD's feedback toggle (key: N). */
   sfx: boolean;
   onToggleSfx: () => void;
+  /** Per-lane keybinds (4 lanes x 2 slots). Surfaces inside the
+   *  `GameplaySettingsPopover` editor + the `KeyCap` row below the
+   *  hero song info. Persisted across sessions and shared with the
+   *  in-game HUD chip so a rebind here carries over and vice versa. */
+  keybinds: KeyBindings;
+  onChangeKeybinds: (next: KeyBindings) => void;
   /** Render frame-rate cap (off / 30 / 60). Same value as the in-game
    *  HUD's LOCK pill - they share state via the parent so a choice made
    *  here persists into gameplay and back. */
@@ -2134,6 +2223,12 @@ function StartCard({
    *  pre-game → in-game transition and vice versa. */
   noteShape: NoteShape;
   onCycleNoteShape: () => void;
+  /** One-click "Reset to defaults" for the VIDEO popover. Snaps
+   *  FPS / Quality / View / Shape back to their shipping values
+   *  in one shot. Shared handler owned by the `Game` component so
+   *  the pre-match StartCard and the in-match HUD both call the
+   *  exact same reset - no drift between the two popovers. */
+  onResetVideoSettings: () => void;
   songSource: "osu" | "fallback" | null;
   chartMode: ChartMode;
   onChangeMode: (m: ChartMode) => void;
@@ -2313,17 +2408,48 @@ function StartCard({
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-4 gap-2">
-        <KeyCap primary="D" direction="left" color="#ff3b6b" />
-        <KeyCap primary="F" direction="down" color="#ffd23f" />
-        <KeyCap primary="J" direction="up" color="#3dff8a" />
-        <KeyCap primary="K" direction="right" color="#3da9ff" />
-      </div>
-      <p className="mt-2 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
-        {touchOnly
-          ? "tap the four lanes when notes hit the line · hold for sustains"
-          : "D F J K or arrow keys · hold for long notes"}
-      </p>
+      {(() => {
+        // KeyCap row mirrors the player's primary lane bindings so a
+        // rebind from the Gameplay popover updates this hero strip
+        // immediately (D F J K only by default; "Numpad6" / "Space" /
+        // arbitrary chars all render fine inside the cap because
+        // KeyCap doesn't constrain `primary` length). The arrow
+        // direction stays fixed to the lane (gameplay direction is
+        // 0=left / 1=down / 2=up / 3=right regardless of which key
+        // triggers it) so the cap caption never lies about the
+        // actual lane geometry.
+        const labels = deriveLaneLabels(keybinds);
+        const directions: ArrowDirection[] = ["left", "down", "up", "right"];
+        const colors = ["#ff3b6b", "#ffd23f", "#3dff8a", "#3da9ff"];
+        const allDefaultPrimary = keybinds.every(
+          (p, i) => p[0] === ["KeyD", "KeyF", "KeyJ", "KeyK"][i],
+        );
+        const allDefaultSecondary = keybinds.every(
+          (p, i) => p[1] === ["ArrowLeft", "ArrowDown", "ArrowUp", "ArrowRight"][i],
+        );
+        const customCaption = !allDefaultPrimary || !allDefaultSecondary;
+        return (
+          <>
+            <div className="mt-6 grid grid-cols-4 gap-2">
+              {[0, 1, 2, 3].map((lane) => (
+                <KeyCap
+                  key={lane}
+                  primary={labels[lane]}
+                  direction={directions[lane]}
+                  color={colors[lane]}
+                />
+              ))}
+            </div>
+            <p className="mt-2 text-center font-mono text-[10.5px] uppercase tracking-widest text-bone-50/50">
+              {touchOnly
+                ? "tap the four lanes when notes hit the line \u00b7 hold for sustains"
+                : customCaption
+                  ? "press your bound keys \u00b7 hold for long notes"
+                  : "D F J K or arrow keys \u00b7 hold for long notes"}
+            </p>
+          </>
+        );
+      })()}
       {touchOnly && (
         <p className="mt-1 hidden text-center font-mono text-[10.5px] uppercase tracking-widest text-accent/70 portrait:block">
           ↻ rotate to landscape for more room
@@ -2414,59 +2540,46 @@ function StartCard({
           onCyclePerspectiveMode={onCyclePerspectiveMode}
           noteShape={noteShape}
           onCycleNoteShape={onCycleNoteShape}
+          onReset={onResetVideoSettings}
           className="sm:col-span-2"
         />
-        <label
-          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer"
-          data-tooltip="Audible click track on every beat (key: M)"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Metronome
-            </span>
-            <input
-              type="checkbox"
-              checked={metronome}
-              onChange={onToggleMetronome}
-              className="h-[1.05rem] w-[1.05rem] accent-accent"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press M to toggle in-game
-          </span>
-        </label>
-        <label
-          className="flex flex-col justify-between gap-1 border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 cursor-pointer"
-          data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-              Feedback
-            </span>
-            <input
-              type="checkbox"
-              checked={sfx}
-              onChange={onToggleSfx}
-              className="h-[1.05rem] w-[1.05rem] accent-accent"
-            />
-          </div>
-          <span className="font-mono text-[9.5px] text-bone-50/40">
-            press N to toggle in-game
-          </span>
-        </label>
+        {/* Gameplay popover - sibling to VIDEO. Collapses Metronome
+            / Feedback / Keybinds behind a single click target so the
+            settings grid stays a tight pair of full-width gateways
+            instead of sprawling into a 5-tile mishmash. Spans the
+            full width of the 2-col grid for visual prominence and to
+            keep the settings panel rhythmically symmetric (VIDEO
+            above, GAMEPLAY below, both `sm:col-span-2`). */}
+        <GameplaySettingsPopover
+          variant="card"
+          metronome={metronome}
+          onToggleMetronome={onToggleMetronome}
+          sfx={sfx}
+          onToggleSfx={onToggleSfx}
+          keybinds={keybinds}
+          onChangeKeybinds={onChangeKeybinds}
+          className="sm:col-span-2"
+        />
 
-        {/* Music volume - full-width slider tucked into the 2x2 toggle
-            grid as `sm:col-span-2` so it sits IMMEDIATELY under the
-            settings tiles (the volume slider is itself a setting,
-            and players reach for it in the same "tweak before I
-            start" pass as Quality / FPS lock / Metronome). */}
+        {/* Master volume - full-width slider tucked into the 2x2
+            toggle grid as `sm:col-span-2` so it sits IMMEDIATELY
+            under the settings tiles (the volume slider is itself a
+            setting, and players reach for it in the same "tweak
+            before I start" pass as Quality / FPS lock / Metronome).
+            Label is "Volume" (not "Music volume") because the
+            slider routes through BOTH the song bus AND the SFX
+            bus inside `AudioEngine.setVolume()` - dropping it to
+            0 mutes the track AND every input-feedback cue,
+            metronome click, and milestone chime. The old
+            "Music volume" wording misled players into expecting
+            music-only control. */}
         <div
           className="border-2 border-bone-50/30 bg-ink-900/50 px-3 py-2 sm:col-span-2"
-          data-tooltip="Song playback volume - separate from feedback SFX"
+          data-tooltip="Master volume - song, feedback, metronome"
         >
         <div className="flex items-center justify-between gap-3">
           <span className="font-mono text-[10.5px] uppercase tracking-widest text-bone-50/70">
-            Music volume
+            Volume
           </span>
           <span className="font-mono text-[10.5px] text-bone-50/40 tabular-nums">
             {Math.round(volume * 100)}%
@@ -2480,7 +2593,7 @@ function StartCard({
           value={volume}
           onChange={(e) => onVolume(parseFloat(e.target.value))}
           className="mt-1.5 h-1 w-full cursor-pointer accent-accent"
-          aria-label="Music volume"
+          aria-label="Volume"
         />
         </div>
       </div>
@@ -2775,8 +2888,11 @@ function HUD({
   onCyclePerspectiveMode,
   noteShape,
   onCycleNoteShape,
+  onResetVideoSettings,
   sfx,
   onToggleSfx,
+  keybinds,
+  onChangeKeybinds,
   songTitle,
   songArtist,
   songDuration,
@@ -2811,9 +2927,19 @@ function HUD({
    *  tile so the same choice applies everywhere. */
   noteShape: NoteShape;
   onCycleNoteShape: () => void;
+  /** One-click "Reset to defaults" for the in-match VIDEO popover.
+   *  Same handler the pre-match StartCard uses - resets FPS /
+   *  Quality / View / Shape in one pass. */
+  onResetVideoSettings: () => void;
   /** Feedback SFX toggle (hit / miss / release / milestone). */
   sfx: boolean;
   onToggleSfx: () => void;
+  /** Per-lane keybinds (4 lanes x 2 slots). Surfaces inside the
+   *  in-match `GameplaySettingsPopover` chip so the player can
+   *  rebind mid-song; the change takes effect on the next keypress
+   *  (the engine reads via `keybindsMapRef`). */
+  keybinds: KeyBindings;
+  onChangeKeybinds: (next: KeyBindings) => void;
   songTitle: string | null;
   songArtist: string | null;
   /** Track duration in seconds, or null if not yet known. */
@@ -3056,54 +3182,16 @@ function HUD({
             )}
           </div>
         )}
-        {/* Metronome tile - `<label>` so clicking anywhere on the
-            tile (caption included) toggles the checkbox. Native
-            checkbox uses `accent-accent` for the brand color and
-            sits flush right; `pointer-events-auto` is needed
-            because the parent HUD wrapper is `pointer-events-none`. */}
-        <label
-          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Audible click track on every beat (key: M)"
-        >
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            Metronome
-          </span>
-          <input
-            type="checkbox"
-            checked={metronome}
-            onChange={onToggleMetronome}
-            className="h-[14px] w-[14px] cursor-pointer accent-accent"
-            aria-label="Toggle metronome"
-            aria-keyshortcuts="M"
-          />
-        </label>
-        <label
-          className="pointer-events-auto flex cursor-pointer items-center justify-between gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Hit / miss / release sound effects on every key press (key: N)"
-        >
-          <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/70 sm:text-[10.2px]">
-            Feedback
-          </span>
-          <input
-            type="checkbox"
-            checked={sfx}
-            onChange={onToggleSfx}
-            className="h-[14px] w-[14px] cursor-pointer accent-accent"
-            aria-label="Toggle input sound effects"
-            aria-keyshortcuts="N"
-          />
-        </label>
-        {/* VIDEO gateway chip - collapses the four pure-visual knobs
-            (FPS lock, Quality, View, Shape) behind a single click
-            target. Same HUD chip vocabulary as Metronome / Feedback
-            above (border, padding, mono caption) so the row reads as
-            one cohesive stack. Shows the live `fps` value under the
-            caption to preserve the old standalone FPS-lock tile's
-            headline metric. Hidden below `sm` to match the
-            individual tiles it replaced - narrow-viewport players
-            still get Metronome / Feedback / Vol in this rail; they
-            just pick their video preferences in the StartCard
-            before the run.
+        {/* VIDEO + GAMEPLAY gateway chips - paired full-width chips
+            in the right rail. VIDEO collapses the four pure-visual
+            knobs (FPS lock, Quality, View, Shape) behind a single
+            click target and shows the live `fps` value under the
+            caption (preserves the old standalone FPS-lock tile's
+            headline metric). GAMEPLAY collapses Metronome /
+            Feedback / Keybinds. Hidden below `sm` to match the
+            tiles they replaced - narrow-viewport players still get
+            Volume in this rail; they pick their gameplay + video
+            preferences in the StartCard before the run.
 
             Strict Inputs is no longer surfaced in the solo HUD
             because it is now a multiplayer-only setting. */}
@@ -3118,7 +3206,19 @@ function HUD({
             onCyclePerspectiveMode={onCyclePerspectiveMode}
             noteShape={noteShape}
             onCycleNoteShape={onCycleNoteShape}
+            onReset={onResetVideoSettings}
             fps={fps}
+          />
+        </div>
+        <div className="hidden sm:block">
+          <GameplaySettingsPopover
+            variant="chip"
+            metronome={metronome}
+            onToggleMetronome={onToggleMetronome}
+            sfx={sfx}
+            onToggleSfx={onToggleSfx}
+            keybinds={keybinds}
+            onChangeKeybinds={onChangeKeybinds}
           />
         </div>
         {/* Volume tile - same border / padding / typography as the
@@ -3130,7 +3230,7 @@ function HUD({
             tile on the narrow mobile card. */}
         <div
           className="flex items-center gap-2 border border-bone-50/30 bg-ink-900/40 px-2.5 py-2"
-          data-tooltip="Song playback volume - separate from feedback SFX"
+          data-tooltip="Master volume - song, feedback, metronome"
         >
           <span className="font-mono text-[9.2px] uppercase tracking-widest text-bone-50/60 sm:text-[10.2px]">
             vol
@@ -3143,7 +3243,7 @@ function HUD({
             value={volume}
             onChange={(e) => onVolume(parseFloat(e.target.value))}
             className="pointer-events-auto h-1 min-w-0 flex-1 cursor-pointer accent-accent"
-            aria-label="Music volume"
+            aria-label="Volume"
           />
           <span className="hidden sm:inline font-mono text-[9.2px] tabular-nums text-bone-50/40 w-7 text-right">
             {Math.round(volume * 100)}

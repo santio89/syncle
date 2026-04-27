@@ -115,6 +115,17 @@ export interface RenderOptions {
    * next frame.
    */
   noteShape: NoteShapeMode;
+  /**
+   * Optional per-lane primary key labels (length 4) overriding the
+   * default `LANE_LABEL` constant ("D" / "F" / "J" / "K"). When
+   * supplied, each lane's gate paints its slot's primary character
+   * - the player's currently-bound key for that lane - so the
+   * receptor letter always matches what the keybinds editor shows.
+   * Falls back to `LANE_LABEL[lane]` per index when the entry is
+   * missing or empty, so a single-key custom binding (e.g. only
+   * the secondary slot bound) still renders a legible label.
+   */
+  laneLabels?: readonly string[];
 }
 
 /**
@@ -1659,7 +1670,15 @@ function drawHighway(
   // stay circles in 3D - osu!-style receptor discs don't tilt into
   // ellipses, the perspective is carried by the surrounding rails.
   const perspective3D = opts.perspectiveMode === "3d";
+  // Resolve the per-gate label once per draw-pass so the inner loop
+  // doesn't repeat the `?? LANE_LABEL` fallback per lane. `opts.laneLabels`
+  // is filled in by Game.tsx / MultiGame.tsx from the player's
+  // current keybinds (`deriveLaneLabels`); when the array (or a slot
+  // entry) is missing the gate paints the historical default letter
+  // so an unbound primary still renders something legible.
+  const laneLabels = opts.laneLabels;
   for (let i = 0; i < MAIN_LANE_COUNT; i++) {
+    const label = (laneLabels && laneLabels[i]) || LANE_LABEL[i];
     drawLaneGate(
       ctx,
       i,
@@ -1685,6 +1704,7 @@ function drawHighway(
       opts.noteShape,
       cache,
       perspective3D,
+      label,
     );
   }
 }
@@ -2139,6 +2159,15 @@ function drawLaneGate(
    * ignored in circle mode.
    */
   perspective3D: boolean,
+  /**
+   * Primary key character painted on top of the receptor. Threaded
+   * from the call site so we don't need to plumb the full
+   * `RenderOptions` (or recompute the label fallback) inside this
+   * inner draw helper. Resolved upstream against
+   * `opts.laneLabels ?? LANE_LABEL[lane]` so a missing or empty
+   * entry still renders a sensible default letter.
+   */
+  label: string,
 ) {
   const color = LANE_COLORS[lane];
 
@@ -2343,7 +2372,7 @@ function drawLaneGate(
   ctx.font = "800 22px var(--font-mono), ui-monospace, monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(LANE_LABEL[lane], x, y + LETTER_DY);
+  ctx.fillText(label, x, y + LETTER_DY);
 
   // Brutalist arrow indicator under the letter - drawn as a real canvas
   // path (not a font glyph) so it's pixel-identical to the SVG arrows used
